@@ -176,6 +176,43 @@ download_binary() {
   ok "installed ${EPICPANEL_BIN}"
 }
 
+# download_tool installs one additional release asset (CLI or agent) with
+# checksum verification, into a destination path.
+download_tool() {
+  local asset="$1" dest="$2" base tmp sumfile want got
+  if [ "${EPICPANEL_VERSION}" = "latest" ]; then
+    base="https://github.com/${EPICPANEL_REPO}/releases/latest/download"
+  else
+    base="https://github.com/${EPICPANEL_REPO}/releases/download/${EPICPANEL_VERSION}"
+  fi
+  command -v curl >/dev/null 2>&1 || pkg_install curl
+  tmp="$(mktemp)"
+  if ! curl -fsSL "${base}/${asset}" -o "${tmp}"; then
+    rm -f "${tmp}"
+    fail "Could not download ${base}/${asset}."
+  fi
+  sumfile="$(mktemp)"
+  if curl -fsSL "${base}/checksums.txt" -o "${sumfile}" 2>/dev/null; then
+    want="$(grep -E "  ${asset}\$| ${asset}\$" "${sumfile}" | awk '{print $1}' | head -n1 || true)"
+    if [ -n "${want}" ]; then
+      got="$(sha256sum "${tmp}" | awk '{print $1}')"
+      [ "${want}" = "${got}" ] || { rm -f "${tmp}" "${sumfile}"; fail "checksum mismatch for ${asset}"; }
+    fi
+  fi
+  rm -f "${sumfile}"
+  install -m 0755 "${tmp}" "${dest}"
+  rm -f "${tmp}"
+  ok "installed ${dest}"
+}
+
+install_cli_and_agent() {
+  step "EpicPanel CLI and agent"
+  # The CLI (epicpanel update/status/doctor/software) and the agent (host
+  # management) are separate release assets installed alongside the panel.
+  download_tool "epicpanel-cli_linux_${ARCH}" "${EPICPANEL_BIN}-cli" || true
+  download_tool "epicpanel-agentd_linux_${ARCH}" "${EPICPANEL_BIN}-agentd" || true
+}
+
 write_env() {
   step "Configuration"
   if [ ! -f "${EPICPANEL_ENV}" ]; then
@@ -259,6 +296,7 @@ main() {
   provision_database
   create_user_and_dirs
   download_binary
+  install_cli_and_agent
   write_env
   install_service
   start_and_verify

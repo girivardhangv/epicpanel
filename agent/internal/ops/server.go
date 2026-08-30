@@ -49,16 +49,17 @@ type Server struct {
 }
 
 type Options struct {
-	Log        *slog.Logger
-	OpsToken   string
-	SitesRoot  string
-	NginxDir   string
-	PHPDirs    string
-	CertsDir   string
-	AcctDir    string
-	MySQL      dbops.AdminConfig
-	Postgres   dbops.AdminConfig
-	Version    string
+	Log          *slog.Logger
+	OpsToken     string
+	SitesRoot    string
+	NginxDir     string
+	PHPDirs      string
+	CertsDir     string
+	AcctDir      string
+	SoftwareDir  string
+	MySQL        dbops.AdminConfig
+	Postgres     dbops.AdminConfig
+	Version      string
 }
 
 // New builds the ops server; a missing ops token disables it (older enrollments).
@@ -66,11 +67,11 @@ func New(opts Options) (*Server, error) {
 	if opts.OpsToken == "" {
 		return nil, errors.New("ops token missing; re-enroll required for remote management")
 	}
-	nginx, err := platform.NewWebServer()
+	nginx, err := platform.NewWebServerDir(opts.NginxDir)
 	if err != nil {
 		return nil, err
 	}
-	php, err := platform.NewPHPRuntime()
+	php, err := platform.NewPHPRuntimeDir(splitDirList(opts.PHPDirs))
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +114,7 @@ func New(opts Options) (*Server, error) {
 		acctDir:   opts.AcctDir,
 		mysql:     mysqlOps,
 		postgres:  pgOps,
-		sw:        software.NewManager(opts.Log),
+		sw:        software.NewManagerDir(opts.Log, opts.SoftwareDir),
 		nginx:     nginx,
 		php:       php,
 		fs:        fs,
@@ -162,6 +163,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/agent/v1/fs/write", auth(s.handleFSWrite))
 	mux.HandleFunc("/agent/v1/fs/remove", auth(s.handleFSRemove))
 	mux.HandleFunc("/agent/v1/fs/user", auth(s.handleFSUser))
+	mux.HandleFunc("/agent/v1/fs/chown", auth(s.handleFSChown))
+	mux.HandleFunc("/agent/v1/limits/set", auth(s.handleLimitsSet))
 	mux.HandleFunc("/agent/v1/logs/read", auth(s.handleLogsRead))
 	mux.HandleFunc("/agent/v1/install/nginx", auth(s.handleInstallNginx))
 	mux.HandleFunc("/agent/v1/install/php", auth(s.handleInstallPHP))
@@ -188,7 +191,7 @@ func (s *Server) ListenAndServe(addr string) error {
 		Handler:           s.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       60 * time.Second,
-		WriteTimeout:      600 * time.Second, // install endpoints download large archives
+		WriteTimeout:      3600 * time.Second, // install endpoints download large archives / compile from source
 		IdleTimeout:       120 * time.Second,
 	}
 	return s.srv.ListenAndServe()
@@ -315,6 +318,7 @@ func (s *Server) handlePHPVersions(w http.ResponseWriter, r *http.Request) {
 type phpPoolRequest struct {
 	SiteSlug string            `json:"site_slug"`
 	Version  string            `json:"version"`
+	User     string            `json:"user,omitempty"`
 	Settings map[string]string `json:"settings"`
 	Remove   bool              `json:"remove"`
 }
@@ -325,7 +329,8 @@ func (s *Server) handlePHPPool(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	preq := platform.PHPPoolRequest{
-		SiteSlug: req.SiteSlug, Version: req.Version, Settings: req.Settings, Remove: req.Remove,
+		SiteSlug: req.SiteSlug, Version: req.Version, User: req.User,
+		Settings: req.Settings, Remove: req.Remove,
 	}
 	if req.Remove {
 		if err := s.php.RemovePool(r.Context(), preq); err != nil {
@@ -423,6 +428,57 @@ func (s *Server) handleFSUser(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, map[string]any{"ensured": true})
 }
 
+type chownRequest struct {
+	Path     string `json:"path"`
+	Username string `json:"username"`
+}
+
+// handleFSChown hands a website's directory tree to its isolated OS user.
+// The path must resolve inside the sites root (validated by FSOps).
+func (s *Server) handleFSChown(w http.ResponseWriter, r *http.Request) {
+	var req chownRequest
+	if !s.decode(w, r, &req) {
+		return
+	}
+	if err := EnsureSiteUser(req.Username); err != nil {
+		s.writeError(w, r, &apiError{Status: 422, Code: "FS_OPERATION_FAILED", Message: safe(err)})
+		return
+	}
+	if err := platform.ChownSiteTree(s.sitesRoot, req.Path, req.Username); err != nil {
+		s.writeError(w, r, &apiError{Status: 422, Code: "FS_CHOWN_FAILED", Message: safe(err)})
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"chowned": true})
+}
+
+type limitsRequest struct {
+	Slug          string `json:"slug"`
+	CPULimitPct   int    `json:"cpu_limit_pct"`
+	MemoryLimitMB int    `json:"memory_limit_mb"`
+}
+
+// handleLimitsSet applies per-site CPU/memory limits. Linux: cgroup v2 slice.
+// Windows: Job Object. Zero values clear the limit (unlimited).
+func (s *Server) handleLimitsSet(w http.ResponseWriter, r *http.Request) {
+	var req limitsRequest
+	if !s.decode(w, r, &req) {
+		return
+	}
+	if !platform.ValidSiteSlug(req.Slug) {
+		s.writeError(w, r, badRequest("invalid site slug"))
+		return
+	}
+	if req.CPULimitPct < 0 || req.CPULimitPct > 100 || req.MemoryLimitMB < 0 {
+		s.writeError(w, r, badRequest("invalid limits (cpu 0..100, memory >= 0)"))
+		return
+	}
+	if err := platform.ApplySiteLimits(req.Slug, req.CPULimitPct, req.MemoryLimitMB); err != nil {
+		s.writeError(w, r, &apiError{Status: 422, Code: "LIMITS_APPLY_FAILED", Message: safe(err)})
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"applied": true, "cpu_limit_pct": req.CPULimitPct, "memory_limit_mb": req.MemoryLimitMB})
+}
+
 func (s *Server) handleLogsRead(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
 	maxBytes := int64(128 * 1024)
@@ -492,6 +548,20 @@ func firstPHPdir(phpDirs string) string {
 		}
 	}
 	return ""
+}
+
+// splitDirList splits a semicolon-separated directory list.
+func splitDirList(dirs string) []string {
+	if dirs == "" {
+		return nil
+	}
+	out := []string{}
+	for _, d := range strings.Split(dirs, ";") {
+		if d = strings.TrimSpace(d); d != "" {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 // handleSSLOrder issues a certificate for a site. Explicit operator action;
@@ -663,13 +733,45 @@ func parsePositiveInt(v string) (int64, error) {
 	return n, nil
 }
 
-// EnsureSiteUser is the platform-level entry the handler uses.
+// EnsureSiteUser is the platform-level entry the handler uses. It accepts the
+// shared site user (epicpanel-sites) and per-site isolated accounts (web_*)
+// so provisioning can give each website its own OS user.
 func EnsureSiteUser(name string) error {
-	if name == "" || name != platform.SiteUser {
-		return badRequest("only the shared site user can be managed")
+	if !validSiteUsername(name) {
+		return badRequest("invalid site user name (expected epicpanel-sites or web_*")
 	}
 	if runtime.GOOS == "windows" {
 		return errors.New("site users are not applicable on windows")
 	}
 	return platform.EnsureSiteUserImpl(name)
+}
+
+// validSiteUsername mirrors the panel's generated names: the shared user or a
+// web_<slug> account, lowercase alnum/underscore/dot/hyphen, <= 32 chars, no
+// leading digit or trailing separator. Defense in depth: only names we
+// generate are ever passed to useradd.
+func validSiteUsername(name string) bool {
+	if name == "" || len(name) > 32 {
+		return false
+	}
+	if name == platform.SiteUser {
+		return true
+	}
+	if !strings.HasPrefix(name, "web_") || len(name) < 5 {
+		return false
+	}
+	if strings.Contains(name, "..") {
+		return false
+	}
+	if strings.HasSuffix(name, ".") || strings.HasSuffix(name, "-") || strings.HasSuffix(name, "_") {
+		return false
+	}
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_', r == '.', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }

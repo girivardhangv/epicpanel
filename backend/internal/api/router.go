@@ -106,6 +106,7 @@ func (s *Server) mountV1(r chi.Router) {
 		v1.Post("/websites/{id}/retry", s.requireAuth(s.RequirePermission("websites.edit", s.csrf(s.handleWebsitesRetry))))
 		v1.Get("/websites/{id}/logs", s.requireAuth(s.RequirePermission("websites.logs.view", s.handleWebsitesLogs)))
 		v1.Get("/websites/{id}/health", s.requireAuth(s.RequirePermission("websites.view", s.handleWebsitesHealth)))
+		v1.Put("/websites/{id}/limits", s.requireAuth(s.RequirePermission("websites.config.manage", s.csrf(s.handleWebsitesLimits))))
 
 		// Phase 4 — SSL certificates.
 		v1.Get("/websites/{id}/certificate", s.requireAuth(s.RequirePermission("websites.view", s.handleCertificateGet)))

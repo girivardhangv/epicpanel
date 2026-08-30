@@ -25,10 +25,12 @@ func newWebServer() (WebServerOps, error) {
 	if dir == "" {
 		dir = `C:\nginx`
 	}
+	return newWebServerDir(dir)
+}
+
+func newWebServerDir(dir string) (WebServerOps, error) {
 	bin := filepath.Join(dir, "nginx.exe")
 	if _, err := os.Stat(bin); err != nil {
-		// Not installed at the conventional location: typed nil, methods are
-		// nil-receiver safe.
 		return (*windowsWebServer)(nil), nil
 	}
 	return &windowsWebServer{nginxDir: dir}, nil
@@ -231,6 +233,7 @@ func (w *windowsWebServer) Reload(ctx context.Context) error {
 // Site user management is a POSIX concept; on Windows the site directories
 // rely on inherited ACLs (documented limitation).
 func chownSiteTree(root, user string) error  { return errUnsupported }
+func chownTree(root, user string) error      { return errUnsupported }
 func ensureSiteUser(name string) error       { return errUnsupported }
 func userExists(name string) bool            { return false }
 

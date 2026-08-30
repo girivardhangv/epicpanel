@@ -20,10 +20,17 @@ import (
 // in because the panel resolves them from the servers table.
 type Client struct {
 	HTTP *http.Client
+	// HTTPLong is used for long-running operations (software installs /
+	// removals that download and compile large archives). The default HTTP
+	// client's 20s timeout would abort a multi-minute MariaDB/PHP install.
+	HTTPLong *http.Client
 }
 
 func New() *Client {
-	return &Client{HTTP: &http.Client{Timeout: 20 * time.Second}}
+	return &Client{
+		HTTP: &http.Client{Timeout: 20 * time.Second},
+		HTTPLong: &http.Client{Timeout: 60 * time.Minute},
+	}
 }
 
 type request struct {
@@ -36,6 +43,16 @@ type request struct {
 type urlValues []struct{ k, v string }
 
 func (c *Client) do(ctx context.Context, baseURL, opsToken string, r request, out any) error {
+	return c.doWith(ctx, baseURL, opsToken, c.HTTP, r, out)
+}
+
+// doLong is like do but uses the long-timeout client for operations that can
+// take minutes (software installs/removals with downloads + compilation).
+func (c *Client) doLong(ctx context.Context, baseURL, opsToken string, r request, out any) error {
+	return c.doWith(ctx, baseURL, opsToken, c.HTTPLong, r, out)
+}
+
+func (c *Client) doWith(ctx context.Context, baseURL, opsToken string, client *http.Client, r request, out any) error {
 	if baseURL == "" {
 		return errUnreachable(fmt.Errorf("agent endpoint is not configured (agent must be enrolled with ops support)"))
 	}
@@ -71,7 +88,7 @@ func (c *Client) do(ctx context.Context, baseURL, opsToken string, r request, ou
 	}
 	req.Header.Set("Authorization", "Bearer "+opsToken)
 
-	resp, err := c.HTTP.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return errUnreachable(err)
 	}
@@ -252,6 +269,7 @@ func (c *Client) PHPVersions(ctx context.Context, baseURL, token string) ([]PHPV
 type PHPPoolRequest struct {
 	SiteSlug string            `json:"site_slug"`
 	Version  string            `json:"version"`
+	User     string            `json:"user,omitempty"` // per-site OS user the pool runs as (Linux)
 	Settings map[string]string `json:"settings,omitempty"`
 	Remove   bool              `json:"remove,omitempty"`
 }
@@ -302,6 +320,33 @@ func (c *Client) FSUser(ctx context.Context, baseURL, token, username string) er
 		method: http.MethodPost, path: "/agent/v1/fs/user",
 		body:   map[string]string{"username": username},
 	}, nil)
+}
+
+// FSChown changes ownership of a path tree to a user (Linux only). Used to
+// hand a website's directory tree to its isolated account. The path must
+// resolve inside the agent's sites root.
+func (c *Client) FSChown(ctx context.Context, baseURL, token, path, username string) error {
+	return c.do(ctx, baseURL, token, request{
+		method: http.MethodPost, path: "/agent/v1/fs/chown",
+		body:   map[string]string{"path": path, "username": username},
+	}, nil)
+}
+
+// SetLimits applies per-site CPU/memory limits. Linux: cgroup v2 (systemd
+// slice per site). Windows: Job Object. Zero values mean "unlimited".
+func (c *Client) SetLimits(ctx context.Context, baseURL, token, slug string, cpuPct, memMB int) error {
+	return c.do(ctx, baseURL, token, request{
+		method: http.MethodPost, path: "/agent/v1/limits/set",
+		body: map[string]any{
+			"slug": slug, "cpu_limit_pct": cpuPct, "memory_limit_mb": memMB,
+		},
+	}, nil)
+}
+
+// ResourceLimit represents a per-website CPU/memory ceiling.
+type ResourceLimit struct {
+	CPULimitPct   int `json:"cpu_limit_pct"`
+	MemoryLimitMB int `json:"memory_limit_mb"`
 }
 
 // LogsRead returns a bounded tail of a log file inside the sites root.
@@ -458,10 +503,13 @@ type SoftwareComponent struct {
 	DisplayName string `json:"display_name"`
 	Category    string `json:"category"`
 	Installed   bool   `json:"installed"`
+	Managed     bool   `json:"managed"`
+	Location    string `json:"location,omitempty"`
 	Version     string `json:"version,omitempty"`
 	Service     string `json:"service,omitempty"`
 	Running     bool   `json:"running"`
 	Supported   bool   `json:"supported"`
+	Source      string `json:"source,omitempty"`
 }
 
 type SoftwareOS struct {
@@ -474,6 +522,7 @@ type SoftwareOS struct {
 type SoftwareListResult struct {
 	OS         SoftwareOS          `json:"os"`
 	Components []SoftwareComponent `json:"components"`
+	Dir        string              `json:"dir"`
 }
 
 func (c *Client) SoftwareList(ctx context.Context, baseURL, token string) (*SoftwareListResult, error) {
@@ -485,14 +534,16 @@ func (c *Client) SoftwareList(ctx context.Context, baseURL, token string) (*Soft
 }
 
 func (c *Client) SoftwareInstall(ctx context.Context, baseURL, token, name string) error {
-	return c.do(ctx, baseURL, token, request{
+	// Long timeout: downloads and compiles can take many minutes.
+	return c.doLong(ctx, baseURL, token, request{
 		method: http.MethodPost, path: "/agent/v1/software/install",
 		body: map[string]string{"name": name},
 	}, nil)
 }
 
 func (c *Client) SoftwareRemove(ctx context.Context, baseURL, token, name string) error {
-	return c.do(ctx, baseURL, token, request{
+	// Long timeout: teardown of self-contained installs can take a while.
+	return c.doLong(ctx, baseURL, token, request{
 		method: http.MethodPost, path: "/agent/v1/software/remove",
 		body: map[string]string{"name": name},
 	}, nil)

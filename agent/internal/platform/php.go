@@ -21,6 +21,7 @@ type PHPVersion struct {
 type PHPPoolRequest struct {
 	SiteSlug string            // filesystem-safe slug
 	Version  string            // e.g. "8.4"
+	User     string            // per-site OS user the pool runs as (Linux; "" = shared site user)
 	Settings map[string]string // validated php_admin_value subset
 	Remove   bool              // tear the pool down instead
 }

@@ -87,3 +87,43 @@ func TestLogsForSite(t *testing.T) {
 		t.Error("non-site document root must not yield log paths")
 	}
 }
+
+func TestSiteUserName(t *testing.T) {
+	cases := map[string]string{
+		"example.com":     "web_example.com",
+		"Shop.Example.COM": "web_shop.example.com",
+		"my-site.co.uk":   "web_my-site.co.uk",
+		"*.example.com":   "web_wildcard.example.com",
+	}
+	for in, want := range cases {
+		if got := SiteUserName(in); got != want {
+			t.Errorf("SiteUserName(%q)=%q want %q", in, got, want)
+		}
+	}
+	// Deterministic and within Linux's 32-char username limit.
+	got := SiteUserName("averyveryverylongsubdomain-that-goes-on.example.com")
+	if len(got) > 32 {
+		t.Errorf("username too long: %q (%d)", got, len(got))
+	}
+	if !ValidateSiteUserName(got) {
+		t.Errorf("generated name should validate: %q", got)
+	}
+}
+
+func TestValidateSiteUserName(t *testing.T) {
+	valid := []string{"web_example.com", "web_my-site.co.uk", SiteUser}
+	for _, n := range valid {
+		if !ValidateSiteUserName(n) {
+			t.Errorf("should accept %q", n)
+		}
+	}
+	invalid := []string{
+		"", "web", "web_", "root", "web_EXAMPLE", "web_;rm -rf /", "web_example.com/x",
+		"web-", "web_.", "9web_example", "web_user with space", "web_example..com",
+	}
+	for _, n := range invalid {
+		if ValidateSiteUserName(n) {
+			t.Errorf("should reject %q", n)
+		}
+	}
+}

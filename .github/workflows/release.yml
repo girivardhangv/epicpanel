@@ -67,6 +67,8 @@ jobs:
 
       - name: Cross-compile CLI binaries
         working-directory: agent
+        env:
+          VERSION: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           for t in linux/amd64 linux/arm64 windows/amd64 windows/arm64; do
@@ -74,7 +76,7 @@ jobs:
             ext=""; [ "$os" = "windows" ] && ext=".exe"
             out="dist/epicpanel-cli_${os}_${arch}${ext}"
             GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 \
-              go build -trimpath -ldflags "-s -w" -o "$out" ./cmd/epicpanel
+              go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o "$out" ./cmd/epicpanel
           done
 
       - name: Checksums

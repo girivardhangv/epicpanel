@@ -26,6 +26,54 @@ const (
 // (one user for all sites in this phase; per-site users are a later step).
 const SiteUser = "epicpanel-sites"
 
+// SiteUserName derives a stable, valid Linux username for a website's isolated
+// account, e.g. "web_example-com". Linux usernames are limited to 32 chars,
+// must not start with a digit and may only contain [a-z0-9_-]. We keep the
+// deterministic per-site user (web_<slug>) so file ownership, FPM pools and
+// limits stay tied to one account per site.
+func SiteUserName(domain string) string {
+	base := strings.TrimLeft(Slug(domain), ".")
+	if base == "" {
+		base = "default"
+	}
+	name := "web_" + base
+	if len(name) > 30 {
+		name = name[:30]
+	}
+	name = strings.Trim(name, "-_")
+	return name
+}
+
+// ValidateSiteUserName rejects anything that is not a safe, derived account
+// name. Only names we generate (or the legacy shared user) are permitted.
+// Linux usernames may contain dots (POSIX allows [a-z0-9._-], not starting
+// with a dash); the web_ prefix and the char whitelist keep the surface tight.
+func ValidateSiteUserName(name string) bool {
+	if name == SiteUser {
+		return true
+	}
+	if len(name) < 5 || len(name) > 32 {
+		return false
+	}
+	if !strings.HasPrefix(name, "web_") {
+		return false
+	}
+	if strings.Contains(name, "..") {
+		return false
+	}
+	if strings.HasSuffix(name, ".") || strings.HasSuffix(name, "-") || strings.HasSuffix(name, "_") {
+		return false
+	}
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_', r == '.', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // PathPlan is the resolved filesystem layout for one website, expressed in
 // the AGENT's OS syntax (paths live on the managed server, not the panel).
 type PathPlan struct {

@@ -31,11 +31,24 @@ const (
 func newWebServer() (WebServerOps, error) {
 	bin, err := exec.LookPath("nginx")
 	if err != nil {
-		// nginx not installed: report honestly via a typed-nil instance
-		// whose methods are nil-receiver safe.
 		return (*linuxWebServer)(nil), nil
 	}
 	confDir := "/etc/nginx"
+	style := "conf.d"
+	if fi, err := os.Stat(filepath.Join(confDir, sitesEnabled)); err == nil && fi.IsDir() {
+		style = "sites-enabled"
+	}
+	return &linuxWebServer{bin: bin, confDir: confDir, style: style}, nil
+}
+
+func newWebServerDir(dir string) (WebServerOps, error) {
+	// Linux: self-contained nginx may be at <dir>/sbin/nginx; fallback to
+	// system detection if not found.
+	bin := filepath.Join(dir, "sbin", "nginx")
+	if _, err := os.Stat(bin); err != nil {
+		return newWebServer()
+	}
+	confDir := filepath.Join(dir, "conf")
 	style := "conf.d"
 	if fi, err := os.Stat(filepath.Join(confDir, sitesEnabled)); err == nil && fi.IsDir() {
 		style = "sites-enabled"
@@ -240,6 +253,11 @@ func (n *linuxWebServer) Reload(ctx context.Context) error {
 
 // chownSiteTree hands the site directory to the site user (best effort).
 func chownSiteTree(root, user string) error {
+	return chownTree(root, user)
+}
+
+// chownTree recursively hands ownership of root to the user (Linux).
+func chownTree(root, user string) error {
 	u, err := lookupUser(user)
 	if err != nil {
 		return err

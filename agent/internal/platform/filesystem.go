@@ -93,6 +93,24 @@ func (f *fsOps) Remove(path string) error {
 	return os.RemoveAll(resolved)
 }
 
+// ChownSiteTree changes ownership of a tree inside the sites root to a user.
+// The path is validated against the sites root before any chown happens.
+// Implementation is platform-specific (filesystem_linux.go /
+// filesystem_windows.go); the Linux build delegates to the syscall walker.
+func ChownSiteTree(sitesRoot, path, user string) error {
+	root := strings.TrimRight(strings.TrimSpace(sitesRoot), `/\`)
+	if root == "" {
+		return errors.New("sites root is not configured")
+	}
+	clean := filepath.Clean(path)
+	norm := func(p string) string { return strings.ReplaceAll(p, "\\", "/") }
+	normRoot := norm(root)
+	if norm(clean) != normRoot && !strings.HasPrefix(norm(clean)+"/", normRoot+"/") {
+		return errors.New("path escapes the sites root")
+	}
+	return chownTree(clean, user)
+}
+
 // ReadLogBounded returns the tail of a log file without ever holding more
 // than maxBytes in memory. Shared across platforms; callers have already
 // validated the path.

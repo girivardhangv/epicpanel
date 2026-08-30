@@ -144,6 +144,9 @@ export interface WebsiteView {
   status: WebsiteStatus;
   php_version: string;
   web_server: string;
+  os_user?: string;
+  cpu_limit_pct?: number;
+  memory_limit_mb?: number;
   php_settings?: Record<string, string>;
   active_job_status?: string;
   created_at: string;
@@ -415,10 +418,13 @@ export interface SoftwareComponent {
   display_name: string;
   category: string;
   installed: boolean;
+  managed?: boolean;
+  location?: string;
   version?: string;
   service?: string;
   running: boolean;
   supported: boolean;
+  source?: string;
 }
 
 export interface SoftwareOS {
@@ -431,6 +437,7 @@ export interface SoftwareOS {
 export interface SoftwareListResult {
   os: SoftwareOS;
   components: SoftwareComponent[];
+  dir?: string;
 }
 
 export interface AuditEvent {

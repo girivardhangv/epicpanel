@@ -51,6 +51,11 @@ type WebServerOps interface {
 // lowercase letters, digits, dots and hyphens only — the panel derives it
 // from a validated domain, but the agent never trusts that.
 func validSiteName(name string) bool {
+	return ValidSiteSlug(name)
+}
+
+// ValidSiteSlug is the exported slug validator used by ops handlers.
+func ValidSiteSlug(name string) bool {
 	if name == "" || len(name) > 200 {
 		return false
 	}

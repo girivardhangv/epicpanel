@@ -8,8 +8,16 @@ package platform
 // returned when nginx is not installed so Status can report honestly.
 func NewWebServer() (WebServerOps, error) { return newWebServer() }
 
+// NewWebServerDir returns the web-server control surface rooted at an explicit
+// nginx directory (used when the agent manages its own self-contained copy).
+func NewWebServerDir(dir string) (WebServerOps, error) { return newWebServerDir(dir) }
+
 // NewPHPRuntime returns the PHP runtime surface for this platform.
 func NewPHPRuntime() (PHPOps, error) { return newPHPRuntime() }
+
+// NewPHPRuntimeDir returns the PHP runtime surface rooted at explicit
+// directories (used when the agent manages its own self-contained copies).
+func NewPHPRuntimeDir(dirs []string) (PHPOps, error) { return newPHPRuntimeDir(dirs) }
 
 // NewFSOps returns the constrained filesystem surface rooted at sitesRoot.
 func NewFSOps(sitesRoot string) (FSOps, error) { return newFSOps(sitesRoot) }

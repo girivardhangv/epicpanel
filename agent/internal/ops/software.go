@@ -13,8 +13,9 @@ import (
 func (s *Server) handleSoftwareList(w http.ResponseWriter, r *http.Request) {
 	comps := s.sw.List(r.Context())
 	s.writeJSON(w, http.StatusOK, map[string]any{
-		"os":          s.sw.OS(),
-		"components":  comps,
+		"os":         s.sw.OS(),
+		"components": comps,
+		"dir":        s.sw.Dir(),
 	})
 }
 

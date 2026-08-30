@@ -689,6 +689,14 @@ function SoftwareTab({ serverId }: { serverId: string }) {
         <p className="text-sm text-slate-500">
           Detected on <span className="font-medium text-slate-700">{data.os.Distro || data.os.Family}</span> ·{" "}
           package manager <span className="font-mono text-xs">{data.os.PackageManager}</span>
+          {data.dir && (
+            <>
+              {" "}·{" "}
+              <span className="font-mono text-xs" title="EpicPanel-owned software directory">
+                {data.dir}
+              </span>
+            </>
+          )}
         </p>
         <Button size="sm" variant="ghost" onClick={() => void listQuery.refetch()}>
           Re-scan
@@ -710,9 +718,26 @@ function SoftwareTab({ serverId }: { serverId: string }) {
               .map((c) => (
                 <div key={c.name} className="flex items-center justify-between rounded-lg bg-slate-50 px-4 py-2.5">
                   <div>
-                    <p className="text-sm font-medium text-slate-800">{c.display_name}</p>
+                    <p className="text-sm font-medium text-slate-800">
+                      {c.display_name}
+                      {c.managed && (
+                        <span className="ml-2">
+                          <Badge tone="info">managed</Badge>
+                        </span>
+                      )}
+                      {!c.managed && c.installed && (
+                        <span className="ml-2">
+                          <Badge tone="neutral">system</Badge>
+                        </span>
+                      )}
+                    </p>
                     <p className="text-xs text-slate-500">
                       {c.installed ? `v${c.version || "?"}${c.running ? " · running" : " · stopped"}` : c.supported ? "Not installed" : "Not installable here"}
+                      {c.location && (
+                        <span className="block max-w-md truncate font-mono" title={c.location}>
+                          {c.location}
+                        </span>
+                      )}
                     </p>
                   </div>
                   {canManage && (
@@ -722,12 +747,12 @@ function SoftwareTab({ serverId }: { serverId: string }) {
                           Install
                         </Button>
                       )}
-                      {c.installed && c.supported && (
+                      {c.installed && c.managed && (
                         <Button size="sm" variant="ghost" disabled={!!active} onClick={() => run(c.name, "remove")}>
                           Remove
                         </Button>
                       )}
-                      {c.installed && c.service && (
+                      {c.installed && c.service && c.managed && (
                         <div className="flex gap-1">
                           <Button size="sm" variant="outline" onClick={() => svc(c.name, c.running ? "stop" : "start")}>
                             {c.running ? "Stop" : "Start"}

@@ -8,7 +8,7 @@ import { useToast } from "../../components/ui/Toast";
 import { errMessage } from "../ServersPage";
 import { WebsiteStatusBadge } from "../WebsitesPage";
 import { serviceTone } from "../../lib/health";
-import type { LogPage } from "../../types/api";
+import type { LogPage, WebsiteView } from "../../types/api";
 import { Card, CardBody, CardHeader, Badge } from "../../components/ui/Card";
 import { Button } from "../../components/ui/Button";
 import { Modal } from "../../components/ui/Modal";
@@ -157,6 +157,7 @@ export function WebsiteDetailPage() {
               <InfoRow label="Server" value={`${w.server_name} (${w.server_os})`} />
               <InfoRow label="Web server" value={w.web_server} />
               <InfoRow label="PHP" value={w.php_version || "static site"} />
+              {w.os_user && <InfoRow label="Isolation user" value={w.os_user} mono />}
               <InfoRow label="Document root" value={w.document_root} mono />
               <InfoRow
                 label="Aliases"
@@ -242,6 +243,13 @@ export function WebsiteDetailPage() {
           <CardBody className="space-y-3">
             <SSLCard websiteId={w.id} />
             <NotConfigured what="DNS management" how="Ships in a later phase" />
+          </CardBody>
+        </Card>
+
+        <Card>
+          <CardHeader title="Resource limits" subtitle="Per-site CPU & memory ceilings (Phase 9)" />
+          <CardBody>
+            <ResourceLimitsCard websiteId={w.id} website={w} />
           </CardBody>
         </Card>
       </div>
@@ -647,6 +655,89 @@ function DeleteWebsiteCard({
         </Modal>
       )}
     </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Resource limits (Phase 9)
+// ---------------------------------------------------------------------------
+
+function ResourceLimitsCard({ websiteId, website }: { websiteId: string; website: WebsiteView }) {
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const { hasPermission } = useAuth();
+  const canManage = hasPermission("websites.config.manage");
+
+  const [cpu, setCpu] = useState(website.cpu_limit_pct ?? 0);
+  const [mem, setMem] = useState(website.memory_limit_mb ?? 0);
+
+  const save = useMutation({
+    mutationFn: () => websitesApi.updateLimits(websiteId, cpu, mem),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["websites", websiteId] });
+      toast.success("Resource limits applied");
+    },
+    onError: (e) => toast.error(errMessage(e, "Failed to apply limits")),
+  });
+
+  const cpuOk = cpu >= 0 && cpu <= 100;
+  const memOk = mem >= 0;
+  const changed = cpu !== (website.cpu_limit_pct ?? 0) || mem !== (website.memory_limit_mb ?? 0);
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <label className="block">
+          <span className="text-xs font-medium text-slate-600">CPU limit (%)</span>
+          <input
+            type="number"
+            min={0}
+            max={100}
+            value={cpu}
+            disabled={!canManage}
+            onChange={(e) => setCpu(Number(e.target.value) || 0)}
+            className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus-ring disabled:bg-slate-50"
+          />
+          <span className="mt-1 block text-xs text-slate-400">0 = unlimited</span>
+        </label>
+        <label className="block">
+          <span className="text-xs font-medium text-slate-600">Memory limit (MB)</span>
+          <input
+            type="number"
+            min={0}
+            value={mem}
+            disabled={!canManage}
+            onChange={(e) => setMem(Number(e.target.value) || 0)}
+            className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus-ring disabled:bg-slate-50"
+          />
+          <span className="mt-1 block text-xs text-slate-400">0 = unlimited</span>
+        </label>
+      </div>
+
+      {website.server_os !== "windows" ? (
+        <p className="text-xs text-slate-400">
+          Enforced on the server via cgroups (per-site slice). PHP-FPM pool runs as the
+          isolated account <span className="font-mono">{website.os_user || "—"}</span>.
+        </p>
+      ) : (
+        <p className="text-xs text-amber-600">
+          Resource limits are not yet enforceable on Windows servers; values are saved but not applied.
+        </p>
+      )}
+
+      {canManage && (
+        <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
+          <Button
+            size="sm"
+            loading={save.isPending}
+            disabled={!changed || !cpuOk || !memOk}
+            onClick={() => save.mutate()}
+          >
+            Apply limits
+          </Button>
+        </div>
+      )}
+    </div>
   );
 }
 

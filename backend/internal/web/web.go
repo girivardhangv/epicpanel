@@ -16,7 +16,7 @@ import (
 //go:embed all:dist
 var distFS embed.FS
 
-const cspHeader = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+const cspHeader = "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; " +
 	"img-src 'self' data:; frame-ancestors 'none'"
 
 // Handler serves the embedded SPA with an index.html fallback for client

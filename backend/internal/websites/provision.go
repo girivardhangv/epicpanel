@@ -39,6 +39,9 @@ func (s *Service) handleProvision(ctx context.Context, job *jobs.Job, progress j
 	docRoot := payloadString(job.Payload, "document_root", w.DocumentRoot)
 	phpVersion := payloadString(job.Payload, "php_version", w.PHPVersion)
 	aliases := payloadStrings(job.Payload, "aliases")
+	osUser := payloadString(job.Payload, "os_user", w.OSUser)
+	cpuPct := payloadInt(job.Payload, "cpu_limit_pct", 0)
+	memMB := payloadInt(job.Payload, "memory_limit_mb", 0)
 
 	progress(5, "Validating website configuration")
 	if w.Status == StatusDeleting {
@@ -51,11 +54,20 @@ func (s *Service) handleProvision(ctx context.Context, job *jobs.Job, progress j
 		return err
 	}
 
-	progress(30, "Creating website system user")
-	if target.OS != "windows" {
-		if err := s.deps.Agent.FSUser(ctx, target.AgentURL, target.OpsToken, SiteUser); err != nil {
+	// Per-site OS user (cPanel-style isolation). The account owns the site
+	// files and runs the PHP-FPM pool; other sites' accounts cannot read it.
+	// On Windows the account concept does not apply — ACLs are inherited.
+	if target.OS != "windows" && osUser != "" && osUser != SiteUser {
+		progress(30, "Creating isolated account "+osUser)
+		if err := s.deps.Agent.FSUser(ctx, target.AgentURL, target.OpsToken, osUser); err != nil {
 			// A missing site user must not block provisioning; nginx and
 			// PHP still run, isolation is weaker (reported honestly).
+			s.deps.Log.Warn("per-site account setup failed", "account", osUser, "err", err)
+		} else {
+			_ = s.deps.Agent.FSChown(ctx, target.AgentURL, target.OpsToken, plan.SiteRoot, osUser)
+		}
+	} else if target.OS != "windows" {
+		if err := s.deps.Agent.FSUser(ctx, target.AgentURL, target.OpsToken, SiteUser); err != nil {
 			s.deps.Log.Warn("site user setup failed; continuing without it", "err", err)
 		}
 	}
@@ -66,6 +78,7 @@ func (s *Service) handleProvision(ctx context.Context, job *jobs.Job, progress j
 		pool, perr := s.deps.Agent.PHPPool(ctx, target.AgentURL, target.OpsToken, agentclient.PHPPoolRequest{
 			SiteSlug: slug,
 			Version:  phpVersion,
+			User:     osUser, // pool runs as the isolated account
 			Settings: mergedSettings(cfg.PHPSettings, job.Payload["php_settings"]),
 		})
 		if perr != nil {
@@ -74,6 +87,13 @@ func (s *Service) handleProvision(ctx context.Context, job *jobs.Job, progress j
 		fastcgi = pool.Address
 		if err := s.savePHPAddress(ctx, w.ID, fastcgi); err != nil {
 			return err
+		}
+	}
+
+	progress(55, "Applying resource limits")
+	if cpuPct > 0 || memMB > 0 {
+		if err := s.deps.Agent.SetLimits(ctx, target.AgentURL, target.OpsToken, slug, cpuPct, memMB); err != nil {
+			s.deps.Log.Warn("resource limits could not be applied", "site", slug, "err", err)
 		}
 	}
 
@@ -352,6 +372,13 @@ func payloadStrings(payload map[string]any, key string) []string {
 		}
 	}
 	return out
+}
+
+func payloadInt(payload map[string]any, key string, def int) int {
+	if v, ok := payload[key].(float64); ok {
+		return int(v)
+	}
+	return def
 }
 
 func idsOf(payload any) []string {

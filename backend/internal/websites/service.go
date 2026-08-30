@@ -76,6 +76,9 @@ type Website struct {
 	Status       string   `json:"status"`
 	PHPVersion   string   `json:"php_version"`
 	WebServer    string   `json:"web_server"`
+	OSUser       string   `json:"os_user"`     // per-site system user (Linux only)
+	CPULimitPct  int      `json:"cpu_limit_pct"`   // 0 = unlimited; 1..100 = quota %
+	MemoryLimitMB int     `json:"memory_limit_mb"` // 0 = unlimited; MB ceiling
 	PHPSettings  map[string]string `json:"php_settings,omitempty"`
 	ActiveJob    string   `json:"active_job_status,omitempty"` // queued|running|"" when idle
 	CreatedAt    string   `json:"created_at"`
@@ -85,6 +88,8 @@ type Website struct {
 const websiteCols = `
 	w.id, w.server_id, w.domain_id, COALESCE(w.name,''), w.document_root, w.status,
 	COALESCE(w.php_version,''), COALESCE(w.web_server,'nginx'),
+	COALESCE(w.os_user,''),
+	COALESCE(rc.cpu_limit_pct,0), COALESCE(rc.memory_limit_mb,0),
 	COALESCE(rc.php_settings,'{}'::jsonb)::text,
 	w.created_at::text, w.updated_at::text`
 
@@ -95,7 +100,8 @@ func scanWebsite(rows pgx.Rows) (*Website, error) {
 	var serverLastSeen *string
 	var serverStatus string
 	if err := rows.Scan(&w.ID, &w.ServerID, &w.DomainID, &w.Name, &w.DocumentRoot, &w.Status,
-		&w.PHPVersion, &w.WebServer, &settingsRaw, &w.CreatedAt, &w.UpdatedAt,
+		&w.PHPVersion, &w.WebServer, &w.OSUser, &w.CPULimitPct, &w.MemoryLimitMB,
+		&settingsRaw, &w.CreatedAt, &w.UpdatedAt,
 		&w.Domain, &serverName, &serverOS, &serverStatus, &serverLastSeen); err != nil {
 		return nil, err
 	}
@@ -331,11 +337,12 @@ func (s *Service) Create(ctx context.Context, actor Actor, in CreateInput) (*Cre
 	defer tx.Rollback(ctx)
 
 	var websiteID string
+	osUser := SiteUserName(dom.Domain)
 	err = tx.QueryRow(ctx, `
-		INSERT INTO websites (server_id, domain_id, name, document_root, status, php_version, web_server)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO websites (server_id, domain_id, name, document_root, status, php_version, web_server, os_user)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id`,
-		in.ServerID, in.DomainID, dom.Domain, docRoot, StatusProvisioning, in.PHPVersion, WebServerNginx).
+		in.ServerID, in.DomainID, dom.Domain, docRoot, StatusProvisioning, in.PHPVersion, WebServerNginx, osUser).
 		Scan(&websiteID)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -359,6 +366,9 @@ func (s *Service) Create(ctx context.Context, actor Actor, in CreateInput) (*Cre
 		"php_version":   in.PHPVersion,
 		"aliases":       aliasNames,
 		"slug":          Slug(dom.Domain),
+		"os_user":       osUser,
+		"cpu_limit_pct": 0,
+		"memory_limit_mb": 0,
 	}
 	// Same transaction as the website row: the job's FK needs the committed
 	// (well, in-flight) website — pool-level inserts cannot see it.
@@ -602,6 +612,48 @@ func (s *Service) Update(ctx context.Context, actor Actor, id string, in UpdateI
 	}
 	s.audit(ctx, actor, audit.ActionWebsiteUpdated, id, w.Domain, map[string]any{"job_id": job.ID})
 	return job, nil
+}
+
+// ---------------------------------------------------------------------------
+// Resource limits (Phase 9)
+// ---------------------------------------------------------------------------
+
+// UpdateLimits persists per-site CPU/memory ceilings and applies them on the
+// agent (cgroup v2 on Linux, Job Object on Windows). Zero = unlimited.
+func (s *Service) UpdateLimits(ctx context.Context, actor Actor, id string, cpuPct, memMB int) error {
+	w, err := s.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if cpuPct < 0 || cpuPct > 100 {
+		return apierror.BadRequest("cpu_limit_pct must be 0 (unlimited) or 1..100")
+	}
+	if memMB < 0 {
+		return apierror.BadRequest("memory_limit_mb cannot be negative")
+	}
+
+	if _, err := s.deps.Pool.Exec(ctx, `
+		UPDATE website_runtime_config
+		SET cpu_limit_pct = $2, memory_limit_mb = $3, updated_at = now()
+		WHERE website_id = $1`, id, cpuPct, memMB); err != nil {
+		return apierror.From(err)
+	}
+
+	// Apply on the agent if the site is managed and the server is reachable.
+	if w.ServerOS != "windows" {
+		if target, terr := s.deps.Servers.OpsTarget(ctx, w.ServerID); terr == nil && target.Manageable {
+			if aerr := s.deps.Agent.SetLimits(ctx, target.AgentURL, target.OpsToken,
+				Slug(w.Domain), cpuPct, memMB); aerr != nil {
+				// Persist anyway; surface the agent failure to the operator.
+				s.deps.Log.Warn("limits persisted but not applied on agent", "site", w.Domain, "err", aerr)
+				return apierror.New(502, "LIMITS_AGENT_FAILED",
+					"limits saved but the agent could not apply them: "+aerr.Error())
+			}
+		}
+	}
+	s.audit(ctx, actor, audit.ActionWebsiteLimitsUpdated, id, w.Domain,
+		map[string]any{"cpu_limit_pct": cpuPct, "memory_limit_mb": memMB})
+	return nil
 }
 
 // ---------------------------------------------------------------------------

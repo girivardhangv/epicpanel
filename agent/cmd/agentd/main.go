@@ -27,6 +27,7 @@ import (
 	"github.com/epicbyte/epicpanel/agent/internal/monitoring"
 	"github.com/epicbyte/epicpanel/agent/internal/ops"
 	"github.com/epicbyte/epicpanel/agent/internal/platform"
+	"github.com/epicbyte/epicpanel/agent/internal/software"
 )
 
 var (
@@ -52,6 +53,8 @@ func main() {
 			"URL the panel uses to reach the management endpoint (default: http://<outbound-ip>:<port>)")
 		sitesRoot = flag.String("sites-root", envOr("EPICPANEL_SITES_ROOT", platform.DefaultSitesRoot()),
 			"Root directory that holds all website files; the panel cannot touch anything outside it")
+		softwareDir = flag.String("software-dir", envOr("EPICPANEL_SOFTWARE_DIR", software.DefaultSoftwareDir()),
+			"EpicPanel-owned software root; self-contained installs live here")
 		collectSecs = flag.Int("collect-interval", envIntOr("EPICPANEL_AGENT_COLLECT_INTERVAL", 15),
 			"Telemetry collection interval in seconds (clamped to 10..300)")
 		nginxDir = flag.String("nginx-dir", envOr("EPICPANEL_NGINX_DIR", ""),
@@ -123,14 +126,26 @@ func main() {
 	// panel issued at enrollment; without it the channel stays disabled and
 	// the operator is told to re-enroll.
 	if creds.OpsToken != "" {
+		// Point the platform web server / PHP runtime at our self-contained
+		// installs by default so the panel manages copies it owns, never the
+		// host's existing software.
+		nginxDir := *nginxDir
+		if nginxDir == "" {
+			nginxDir = filepath.Join(*softwareDir, "nginx")
+		}
+		phpDirs := *phpDirs
+		if phpDirs == "" {
+			phpDirs = filepath.Join(*softwareDir, "php")
+		}
 		opsSrv, err := ops.New(ops.Options{
-			Log:       log,
-			OpsToken:  creds.OpsToken,
-			SitesRoot: *sitesRoot,
-			NginxDir:  *nginxDir,
-			PHPDirs:   *phpDirs,
-			CertsDir:  "", // ops defaults to <nginx>/conf/ssl
-			AcctDir:   filepath.Join(*dataDir, "acme"),
+			Log:         log,
+			OpsToken:    creds.OpsToken,
+			SitesRoot:   *sitesRoot,
+			NginxDir:    nginxDir,
+			PHPDirs:     phpDirs,
+			SoftwareDir: *softwareDir,
+			CertsDir:    "", // ops defaults to <nginx>/conf/ssl
+			AcctDir:     filepath.Join(*dataDir, "acme"),
 			MySQL: dbops.AdminConfig{
 				Host: *mysqlHost, Port: *mysqlPort, User: *mysqlUser, Password: *mysqlPass,
 			},

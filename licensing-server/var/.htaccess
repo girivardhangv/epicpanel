@@ -1,0 +1,3 @@
+# Deny direct access to the SQLite database file.
+Require all denied
+Satisfy All

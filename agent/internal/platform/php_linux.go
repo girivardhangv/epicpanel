@@ -18,6 +18,12 @@ type linuxPHP struct{}
 
 func newPHPRuntime() (PHPOps, error) { return &linuxPHP{}, nil }
 
+func newPHPRuntimeDir(dirs []string) (PHPOps, error) {
+	// Linux PHP is distro-managed under /etc/php; the explicit dir variant is
+	// only meaningful for self-contained installs, so ignore it here.
+	return &linuxPHP{}, nil
+}
+
 func (p *linuxPHP) Versions(ctx context.Context) ([]PHPVersion, error) {
 	out := []PHPVersion{}
 	entries, err := os.ReadDir("/etc/php")
@@ -68,6 +74,9 @@ func (p *linuxPHP) socketFor(slug string) string {
 func (p *linuxPHP) poolConf(req PHPPoolRequest) string {
 	slug := req.SiteSlug
 	user := SiteUser
+	if req.User != "" && userExists(req.User) {
+		user = req.User // per-site isolated account
+	}
 	if !userExists(user) {
 		user = "www-data" // weaker isolation, still functional; warned upstream
 	}

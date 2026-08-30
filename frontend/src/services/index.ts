@@ -220,6 +220,12 @@ export const websitesApi = {
     post<{ job: JobView }>(`/websites/${encodeURIComponent(id)}/certificate`, { auto_renew: autoRenew }),
   removeCertificate: (id: string) =>
     del<{ removed: boolean }>(`/websites/${encodeURIComponent(id)}/certificate`),
+  updateLimits: (id: string, cpuLimitPct: number, memoryLimitMB: number) =>
+    request<{ cpu_limit_pct: number; memory_limit_mb: number; applied: boolean }>(
+      "PUT",
+      `/websites/${encodeURIComponent(id)}/limits`,
+      { body: { cpu_limit_pct: cpuLimitPct, memory_limit_mb: memoryLimitMB } },
+    ),
 };
 
 export const jobsApi = {

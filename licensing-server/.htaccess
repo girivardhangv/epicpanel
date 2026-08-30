@@ -1,0 +1,17 @@
+# EpicPanel licensing API — works with Apache/LiteSpeed under any hosting panel.
+# Routes every request (e.g. /v1/activate) to index.php.
+
+Options -Indexes
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteBase /
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^ index.php [QSA,L]
+</IfModule>
+
+# Never serve the CLI tool or the PHP source over HTTP.
+<FilesMatch "^(cli\.php|lib\.php)$">
+    Require all denied
+</FilesMatch>

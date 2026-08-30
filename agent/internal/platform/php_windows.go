@@ -40,6 +40,13 @@ func newPHPRuntime() (PHPOps, error) {
 	return &windowsPHP{procs: map[string]*exec.Cmd{}, phpDirs: dirs}, nil
 }
 
+func newPHPRuntimeDir(dirs []string) (PHPOps, error) {
+	if len(dirs) == 0 {
+		return newPHPRuntime()
+	}
+	return &windowsPHP{procs: map[string]*exec.Cmd{}, phpDirs: dirs}, nil
+}
+
 // Versions probes the configured roots. Version numbers come from the
 // directory name when it parses, otherwise from `php-cgi -v`.
 func (p *windowsPHP) Versions(ctx context.Context) ([]PHPVersion, error) {

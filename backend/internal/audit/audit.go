@@ -52,6 +52,7 @@ const (
 	ActionWebsiteRetryRequested  = "websites.retry_requested"
 	ActionWebsiteProvisioned    = "websites.provisioned"
 	ActionWebsiteDeleted        = "websites.deleted"
+	ActionWebsiteLimitsUpdated  = "websites.limits_updated"
 	ActionJobFailed             = "jobs.failed"
 )
 

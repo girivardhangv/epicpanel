@@ -182,6 +182,29 @@ func (s *Server) handleWebsitesReload(w http.ResponseWriter, r *http.Request) {
 	JSON(w, r, http.StatusOK, map[string]any{"reloaded": true})
 }
 
+type updateLimitsRequest struct {
+	CPULimitPct   int `json:"cpu_limit_pct"`
+	MemoryLimitMB int `json:"memory_limit_mb"`
+}
+
+func (s *Server) handleWebsitesLimits(w http.ResponseWriter, r *http.Request) {
+	var req updateLimitsRequest
+	if err := Decode(r, &req); err != nil {
+		Error(w, r, err)
+		return
+	}
+	if err := s.deps.Websites.UpdateLimits(r.Context(), s.actorFrom(r),
+		chi.URLParam(r, "id"), req.CPULimitPct, req.MemoryLimitMB); err != nil {
+		Error(w, r, err)
+		return
+	}
+	JSON(w, r, http.StatusOK, map[string]any{
+		"cpu_limit_pct":   req.CPULimitPct,
+		"memory_limit_mb": req.MemoryLimitMB,
+		"applied":         true,
+	})
+}
+
 func (s *Server) handleWebsitesRetry(w http.ResponseWriter, r *http.Request) {
 	job, err := s.deps.Websites.Retry(r.Context(), s.actorFrom(r), chi.URLParam(r, "id"))
 	if err != nil {

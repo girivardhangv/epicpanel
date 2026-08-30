@@ -79,6 +79,6 @@ jobs:
             backend/dist/*
             agent/dist/*
             checksums.txt
-            installer/install.sh
-            installer/install.ps1
+            install.sh
+            install.ps1
           generate_release_notes: true

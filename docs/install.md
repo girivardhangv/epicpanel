@@ -63,11 +63,13 @@ For a polished public install you additionally want:
 
 ### Serving `https://get.epichostly.in`
 
-`curl | bash` needs that URL to return the script. Simplest options:
+`curl | bash` needs that URL to return the script. The scripts live at the repo
+root (`install.sh`, `install.ps1`) so your Cloudflare Worker can serve them.
+Simplest options:
 - A tiny redirect/rewrite on your web host to the GitHub raw script:
-  `https://raw.githubusercontent.com/girivardhangv/epicpanel/main/installer/install.sh`
-- Or serve `installer/install.sh` from a static host / CDN at that URL.
-- Windows: the same host should return `installer/install.ps1` for `irm`.
+  `https://raw.githubusercontent.com/girivardhangv/epicpanel/main/install.sh`
+- Or serve `install.sh` from a static host / CDN at that URL.
+- Windows: the same host should return `install.ps1` for `irm`.
 
 Detect the OS on the edge (User-Agent) or use two endpoints (`/install.sh`,
 `/install.ps1`) and document both commands.

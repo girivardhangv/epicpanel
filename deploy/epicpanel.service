@@ -1,0 +1,21 @@
+[Unit]
+Description=EpicPanel hosting control panel
+Documentation=https://epichostly.in
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=epicpanel
+Group=epicpanel
+EnvironmentFile=/etc/epicpanel/epicpanel.env
+ExecStart=/usr/local/bin/epicpanel
+Restart=on-failure
+RestartSec=3
+WorkingDirectory=/opt/epicpanel
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

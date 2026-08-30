@@ -1,0 +1,84 @@
+name: release
+
+# Builds EpicPanel for all supported targets, embeds the web UI, and publishes
+# a GitHub Release with checksums. The installers download from these assets.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Build web UI
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Stage web UI into the panel (for go:embed)
+        run: |
+          rm -rf backend/internal/web/dist
+          mkdir -p backend/internal/web/dist
+          cp -r frontend/dist/* backend/internal/web/dist/
+
+      - name: Cross-compile panel binaries
+        working-directory: backend
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          for t in linux/amd64 linux/arm64 windows/amd64 windows/arm64; do
+            os="${t%/*}"; arch="${t#*/}"
+            ext=""; [ "$os" = "windows" ] && ext=".exe"
+            out="dist/epicpanel_${os}_${arch}${ext}"
+            echo "building $out"
+            GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 \
+              go build -trimpath -ldflags "-s -w -X main.Version=${VERSION}" -o "$out" ./cmd/panel
+          done
+
+      - name: Cross-compile agent binaries
+        working-directory: agent
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          for t in linux/amd64 linux/arm64 windows/amd64 windows/arm64; do
+            os="${t%/*}"; arch="${t#*/}"
+            ext=""; [ "$os" = "windows" ] && ext=".exe"
+            out="dist/epicpanel-agentd_${os}_${arch}${ext}"
+            GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 \
+              go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o "$out" ./cmd/agentd
+          done
+
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          ( cd backend/dist && sha256sum epicpanel_* ) > checksums.txt
+          ( cd agent/dist   && sha256sum epicpanel-agentd_* ) >> checksums.txt
+          cat checksums.txt
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            backend/dist/*
+            agent/dist/*
+            checksums.txt
+            installer/install.sh
+            installer/install.ps1
+          generate_release_notes: true

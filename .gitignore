@@ -1,0 +1,39 @@
+# Node
+node_modules/
+frontend/dist/
+frontend/coverage/
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+backend/data/
+.epicpanel-agent/
+*.out
+
+# Panel runtime state & local config with secrets
+data/
+panel.json
+
+# Local development data (portable PostgreSQL, downloads, DB files) & logs
+.devdata/
+.devlogs/
+
+# Embedded web assets are produced by CI; keep only the committed placeholder
+backend/internal/web/dist/*
+!backend/internal/web/dist/index.html
+
+# Personal AI-tool config (may contain provider tokens)
+opencode.json
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Env files with real values (keep .env.example)
+.env
+.env.local

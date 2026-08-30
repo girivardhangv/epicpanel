@@ -1,0 +1,825 @@
+# Hosting Control Panel — Foundation, Installer, Licensing & Authentication
+
+## Objective
+
+Build the production-grade foundation of a commercial hosting control panel designed to manage both **Linux and Windows servers**.
+
+The product must have a modern, professional interface comparable in quality to leading hosting/server management panels, while maintaining a clean architecture that can scale into a large platform.
+
+Do not build random features just to demonstrate functionality. Build a solid foundation first.
+
+---
+
+# 1. Core Architecture
+
+Use this architecture:
+
+```text
+React + TypeScript
+        │
+        │ HTTPS
+        ▼
+     Go API
+        │
+        ▼
+   Go Server Agent
+        │
+   ┌────┴────┐
+   ▼         ▼
+ Linux     Windows
+```
+
+### Frontend
+
+Use:
+
+* React
+* TypeScript
+* Vite
+* Tailwind CSS
+* Accessible component system
+* React Router
+* TanStack Query or equivalent server-state solution
+* Form validation
+* Responsive layouts
+
+The frontend must be a proper application rather than a collection of static pages.
+
+### Backend
+
+Use:
+
+* Go
+* REST API
+* PostgreSQL
+* Proper migrations
+* Structured logging
+* Configuration management
+* Background jobs where appropriate
+
+### Server Agent
+
+Use Go and design it to compile for:
+
+* Linux AMD64
+* Linux ARM64
+* Windows AMD64
+* Windows ARM64 where practical
+
+The agent must provide a secure abstraction layer over operating-system functionality.
+
+Do NOT allow the frontend to execute shell commands directly.
+
+---
+
+# 2. Repository Structure
+
+Create a clean monorepo structure similar to:
+
+```text
+/
+├── frontend/
+│   ├── src/
+│   │   ├── app/
+│   │   ├── components/
+│   │   ├── layouts/
+│   │   ├── pages/
+│   │   ├── features/
+│   │   ├── hooks/
+│   │   ├── lib/
+│   │   ├── services/
+│   │   └── types/
+│   └── ...
+│
+├── backend/
+│   ├── cmd/
+│   ├── internal/
+│   │   ├── auth/
+│   │   ├── users/
+│   │   ├── roles/
+│   │   ├── permissions/
+│   │   ├── licensing/
+│   │   ├── installer/
+│   │   ├── audit/
+│   │   ├── server/
+│   │   └── config/
+│   └── migrations/
+│
+├── agent/
+│   ├── cmd/
+│   ├── internal/
+│   │   ├── platform/
+│   │   ├── services/
+│   │   ├── filesystem/
+│   │   ├── webserver/
+│   │   └── system/
+│   └── ...
+│
+├── shared/
+├── docs/
+└── scripts/
+```
+
+Keep business logic out of HTTP handlers.
+
+Use clear interfaces between layers.
+
+---
+
+# 3. First-Run Installer
+
+The panel must NOT immediately expose the dashboard after installation.
+
+Create a first-run installation flow.
+
+When the panel is accessed for the first time:
+
+```text
+Checking Installation
+        ↓
+System Requirements
+        ↓
+License Activation
+        ↓
+Database Configuration
+        ↓
+Panel Configuration
+        ↓
+Create Administrator
+        ↓
+Security Configuration
+        ↓
+Installation Complete
+        ↓
+Login
+```
+
+The installer should detect whether the application has already been initialized.
+
+Once installation is complete, the installer must become inaccessible.
+
+Protect installation state server-side, not merely through frontend routing.
+
+---
+
+# 4. License System
+
+This is a commercial product.
+
+Implement a proper licensing foundation.
+
+The panel should require a valid license before completing installation.
+
+Create a licensing abstraction such as:
+
+```text
+LicenseService
+├── activate
+├── validate
+├── deactivate
+├── refresh
+└── status
+```
+
+The license should be associated with an installation/server identity.
+
+Store only the necessary license information locally.
+
+Do not hard-code license keys or bypass mechanisms.
+
+The architecture must allow the licensing server to be hosted separately from the control panel.
+
+Example conceptual flow:
+
+```text
+Panel
+  │
+  │ License Key + Installation Identity
+  ▼
+Licensing API
+  │
+  ├── Valid
+  ├── Expired
+  ├── Suspended
+  └── Invalid
+```
+
+Implement graceful handling for temporary licensing-server outages.
+
+Do not make the panel permanently unusable because of a short-lived network failure if the license was previously validated.
+
+Use a configurable license-validation policy.
+
+---
+
+# 5. Administrator Creation
+
+During installation create the first administrator.
+
+Require:
+
+* Username/email
+* Strong password
+* Password confirmation
+
+Password requirements must be enforced server-side.
+
+Never store plaintext passwords.
+
+Use a modern password hashing algorithm such as Argon2id.
+
+The first account must receive the highest administrative role through the authorization system rather than through hard-coded frontend logic.
+
+---
+
+# 6. Authentication
+
+Implement production-grade authentication.
+
+Support:
+
+* Login
+* Logout
+* Session/token management
+* Password hashing
+* Password change
+* Password reset architecture
+* Account lock/rate limiting
+* Session revocation
+* CSRF protection where applicable
+* Secure cookies where applicable
+* Login auditing
+
+Do not store authentication secrets in localStorage if a safer server-managed cookie/session approach is appropriate.
+
+Implement:
+
+```text
+POST /api/auth/login
+POST /api/auth/logout
+GET  /api/auth/me
+POST /api/auth/change-password
+POST /api/auth/refresh
+```
+
+Do not expose sensitive information through authentication error messages.
+
+---
+
+# 7. RBAC Foundation
+
+Implement authorization as a first-class system.
+
+Create:
+
+```text
+Users
+Roles
+Permissions
+UserRoles
+RolePermissions
+```
+
+Example permissions:
+
+```text
+dashboard.view
+
+server.view
+server.manage
+
+users.view
+users.create
+users.edit
+users.delete
+
+roles.view
+roles.create
+roles.edit
+roles.delete
+
+websites.view
+websites.create
+websites.edit
+websites.delete
+
+databases.view
+databases.create
+databases.delete
+
+settings.view
+settings.manage
+
+license.view
+license.manage
+```
+
+Do not implement authorization by checking:
+
+```text
+if user.email == "admin@example.com"
+```
+
+or similar hard-coded conditions.
+
+Everything must go through the permission system.
+
+The architecture must later support resource-level permissions.
+
+---
+
+# 8. Audit Logging
+
+Create an audit system from the beginning.
+
+Record security-sensitive actions such as:
+
+* Login
+* Logout
+* Failed login
+* Password change
+* User creation
+* Role changes
+* Permission changes
+* License activation
+* License changes
+* Server configuration changes
+
+Store:
+
+```text
+actor
+action
+resource
+resource_id
+timestamp
+IP
+user_agent
+metadata
+```
+
+Do not store passwords, tokens, API secrets, or other sensitive credentials in audit logs.
+
+---
+
+# 9. Server Agent Foundation
+
+The Go agent must communicate securely with the panel.
+
+Design an authenticated agent protocol.
+
+The panel should be able to identify:
+
+```text
+Server ID
+Hostname
+Operating System
+Architecture
+Agent Version
+CPU
+RAM
+Disk
+Network
+```
+
+Create a platform abstraction:
+
+```text
+Platform
+├── Linux
+└── Windows
+```
+
+and service abstractions:
+
+```text
+ServiceManager
+Filesystem
+ProcessManager
+WebServer
+Firewall
+SystemInfo
+Scheduler
+```
+
+Do not assume Linux commands exist on Windows.
+
+Do not assume Windows APIs exist on Linux.
+
+Use OS-specific implementations behind common interfaces.
+
+---
+
+# 10. Web Server Abstraction
+
+Create:
+
+```text
+WebServer
+├── Nginx
+├── Apache
+└── IIS
+```
+
+Do not implement IIS immediately if unnecessary, but make the architecture capable of adding it.
+
+Initial target:
+
+```text
+Linux → Nginx
+Windows → Nginx
+```
+
+Keep web-server configuration generation isolated from the rest of the application.
+
+Never construct configuration files by blindly concatenating untrusted user input.
+
+Validate domains, paths, ports, usernames, and other inputs.
+
+---
+
+# 11. UI / UX
+
+The interface is extremely important.
+
+Build a professional control-panel UI.
+
+Design goals:
+
+* Modern
+* Clean
+* Fast
+* Information-dense without being cluttered
+* Responsive
+* Accessible
+* Consistent
+* Professional enough for a commercial product
+
+Use a proper design system.
+
+Define:
+
+* Typography
+* Spacing
+* Cards
+* Buttons
+* Forms
+* Tables
+* Badges
+* Alerts
+* Modals
+* Dropdowns
+* Navigation
+* Empty states
+* Loading states
+* Error states
+
+Do not make every page look like a generic dashboard template.
+
+---
+
+# 12. Main Application Layout
+
+Create:
+
+```text
+┌────────────────────────────────────────────────────┐
+│ Logo        Search          Notifications   User  │
+├────────────┬───────────────────────────────────────┤
+│            │                                       │
+│ Dashboard  │                                       │
+│ Servers    │        Main Application Area          │
+│ Websites   │                                       │
+│ Databases  │                                       │
+│ DNS        │                                       │
+│ SSL        │                                       │
+│ Files      │                                       │
+│ Backups    │                                       │
+│ Monitoring │                                       │
+│            │                                       │
+│ Settings   │                                       │
+│            │                                       │
+└────────────┴───────────────────────────────────────┘
+```
+
+Navigation should be permission-aware.
+
+Users should only see modules they are allowed to access.
+
+---
+
+# 13. Dashboard
+
+Build the initial dashboard with realistic architecture, but do not fake live server data.
+
+Include:
+
+* Server status
+* CPU usage
+* Memory usage
+* Disk usage
+* Network activity
+* Active services
+* Recent activity
+* Security events
+* Quick actions
+
+Clearly distinguish:
+
+```text
+Real data
+Loading
+Unavailable
+Not configured
+```
+
+Never present fabricated metrics as real data.
+
+---
+
+# 14. Installation UI
+
+The installer should have a polished step-based interface.
+
+Example:
+
+```text
+01 Requirements
+02 License
+03 Database
+04 Configuration
+05 Administrator
+06 Security
+07 Finish
+```
+
+Show progress.
+
+Validate each step server-side.
+
+Allow the user to go back where safe.
+
+Do not expose secrets in URLs or browser logs.
+
+---
+
+# 15. Security Requirements
+
+Treat security as a core feature.
+
+Implement:
+
+* Input validation
+* Output encoding
+* SQL injection protection through parameterized queries/ORM
+* CSRF protection where applicable
+* Authentication rate limiting
+* Secure password hashing
+* Secure session handling
+* Permission checks on every protected API endpoint
+* Audit logging
+* Secret management
+* HTTPS-aware configuration
+* Security headers
+* Request size limits
+* Safe error handling
+
+Never return stack traces or internal implementation details to production users.
+
+Never trust frontend permission checks.
+
+Every permission must be enforced by the backend.
+
+---
+
+# 16. API Design
+
+Use versioned APIs:
+
+```text
+/api/v1/auth/...
+/api/v1/users/...
+/api/v1/roles/...
+/api/v1/permissions/...
+/api/v1/license/...
+/api/v1/servers/...
+```
+
+Use consistent response formats.
+
+Implement proper HTTP status codes.
+
+Document the API.
+
+---
+
+# 17. Database
+
+Create migrations for at least:
+
+```text
+users
+roles
+permissions
+user_roles
+role_permissions
+sessions
+licenses
+installations
+audit_logs
+system_settings
+```
+
+Use UUIDs or another appropriate non-sequential public identifier strategy.
+
+Add appropriate indexes.
+
+Use foreign keys and constraints.
+
+Never rely solely on application-level validation.
+
+---
+
+# 18. Configuration
+
+Support configuration through environment variables and/or configuration files.
+
+Never hard-code:
+
+* Database passwords
+* JWT secrets
+* Encryption keys
+* License credentials
+* API secrets
+
+Provide a safe configuration mechanism for development and production.
+
+---
+
+# 19. Error Handling
+
+Create a consistent error model.
+
+Example:
+
+```json
+{
+  "error": {
+    "code": "AUTH_INVALID_CREDENTIALS",
+    "message": "Invalid credentials",
+    "request_id": "..."
+  }
+}
+```
+
+Do not expose internal errors to users.
+
+Generate request IDs for troubleshooting.
+
+---
+
+# 20. Testing
+
+Create tests for the foundation.
+
+At minimum:
+
+### Backend
+
+* Authentication
+* Password hashing
+* Login rate limiting
+* RBAC
+* Permission enforcement
+* License validation
+* Installer state
+* Audit logging
+
+### Frontend
+
+* Login
+* Protected routes
+* Permission-based navigation
+* Installer flow
+* Error states
+
+### Agent
+
+* Platform detection
+* Linux implementation
+* Windows implementation
+* Secure communication
+
+---
+
+# 21. Development Principles
+
+Follow these rules throughout implementation:
+
+1. Do not build everything at once.
+2. Do not create fake functionality and present it as production-ready.
+3. Do not bypass security for convenience.
+4. Do not put business logic into React components.
+5. Do not put business logic directly into HTTP handlers.
+6. Do not allow arbitrary shell execution from the UI.
+7. Do not hard-code administrator identities.
+8. Do not hard-code license validation.
+9. Do not assume the operating system is Linux.
+10. Keep Linux and Windows implementations behind interfaces.
+11. Keep the API backward-compatible as much as practical.
+12. Prefer small, testable modules.
+13. Add migrations rather than manually modifying production databases.
+14. Document architectural decisions.
+
+---
+
+# 22. Initial Deliverable
+
+For this phase, implement ONLY the foundation:
+
+### Must work
+
+* First-run installer
+* System requirements check
+* License activation interface and backend abstraction
+* Installation state
+* Database setup
+* Administrator creation
+* Login
+* Logout
+* Session management
+* RBAC
+* Permission enforcement
+* Audit logging
+* Initial server-agent registration
+* Server information
+* Professional dashboard shell
+* Professional navigation
+* Error/loading/empty states
+* Linux/Windows platform abstraction
+
+### Do NOT implement yet
+
+* Full website management
+* DNS management
+* Email hosting
+* File manager
+* Backups
+* Billing
+* Advanced monitoring
+* Container management
+* Reseller system
+
+Those will be separate modules after the foundation is stable.
+
+---
+
+# 23. Definition of Done
+
+The foundation is complete only when a fresh installation can perform this complete flow:
+
+```text
+Fresh Server
+    ↓
+Install Panel
+    ↓
+Requirements Check
+    ↓
+Enter License
+    ↓
+Validate License
+    ↓
+Configure Database
+    ↓
+Create Administrator
+    ↓
+Initialize Panel
+    ↓
+Installer Locks
+    ↓
+Login
+    ↓
+Authenticated Dashboard
+    ↓
+RBAC Permissions Applied
+    ↓
+Agent Registered
+    ↓
+Server Information Visible
+```
+
+The implementation must be production-minded, modular, secure, cross-platform, and ready for the next development phase.
+
+Before writing substantial code, inspect the repository and existing architecture. Reuse existing infrastructure where appropriate instead of creating duplicate systems.
+
+At the end, provide:
+
+1. What was implemented
+2. Repository/file changes
+3. Database migrations
+4. API endpoints
+5. Security considerations
+6. How to run it locally
+7. How to perform a fresh installation
+8. Known limitations
+9. Recommended next module

@@ -406,6 +406,33 @@ export interface DBEnginesView {
   postgres: DBEngineStatus;
 }
 
+// ---------------------------------------------------------------------------
+// Phase 7 — software manager
+// ---------------------------------------------------------------------------
+
+export interface SoftwareComponent {
+  name: string;
+  display_name: string;
+  category: string;
+  installed: boolean;
+  version?: string;
+  service?: string;
+  running: boolean;
+  supported: boolean;
+}
+
+export interface SoftwareOS {
+  Distro: string;
+  Family: string;
+  Arch: string;
+  PackageManager: string;
+}
+
+export interface SoftwareListResult {
+  os: SoftwareOS;
+  components: SoftwareComponent[];
+}
+
 export interface AuditEvent {
   id: number;
   actor_type: string;

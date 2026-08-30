@@ -25,6 +25,8 @@ const (
 	TypeNotifyAlert        = "notify_alert"
 	TypeProvisionDatabase  = "provision_database"
 	TypeDeleteDatabase     = "delete_database"
+	TypeInstallSoftware    = "install_software"
+	TypeRemoveSoftware     = "remove_software"
 )
 
 // Job statuses.

@@ -329,3 +329,20 @@ endpoint to test notification delivery without external services.
 
 `GET /agent/v1/db/engines`, `POST /agent/v1/db/{create,drop}`,
 `POST /agent/v1/db/user/{create,drop,password}` — all bearer-auth, validated.
+
+---
+
+## Phase 7 — Software Manager
+
+| Method | Path | Permission | Notes |
+| ------ | ---- | ---------- | ----- |
+| GET | `/servers/{id}/software` | server.view | Live-detected components + host OS/pkg-manager |
+| POST | `/servers/{id}/software/install` | server.manage | `{name}` → `{job}` (runs as a job) |
+| POST | `/servers/{id}/software/remove` | server.manage | `{name}` → `{job}` |
+| POST | `/servers/{id}/software/service` | server.manage | `{name, action}` start/stop/restart/enable/disable/status |
+
+Components are detected live from the agent (no stale cache). Install/remove run
+as `install_software` / `remove_software` jobs. The agent executes only a fixed
+allowlist of binaries with provider-defined argv — never a request string. The
+`epicpanel` CLI (`software list|install|remove|service`, `status`, `doctor`)
+reuses the same engine.

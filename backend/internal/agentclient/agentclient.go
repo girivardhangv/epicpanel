@@ -449,6 +449,63 @@ func (c *Client) DBUserPassword(ctx context.Context, baseURL, token, engine, use
 }
 
 // ---------------------------------------------------------------------------
+// Software manager (Phase 7)
+// ---------------------------------------------------------------------------
+
+// SoftwareComponent is one detected/managed piece of server software.
+type SoftwareComponent struct {
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name"`
+	Category    string `json:"category"`
+	Installed   bool   `json:"installed"`
+	Version     string `json:"version,omitempty"`
+	Service     string `json:"service,omitempty"`
+	Running     bool   `json:"running"`
+	Supported   bool   `json:"supported"`
+}
+
+type SoftwareOS struct {
+	Distro         string `json:"Distro"`
+	Family         string `json:"Family"`
+	Arch           string `json:"Arch"`
+	PackageManager string `json:"PackageManager"`
+}
+
+type SoftwareListResult struct {
+	OS         SoftwareOS          `json:"os"`
+	Components []SoftwareComponent `json:"components"`
+}
+
+func (c *Client) SoftwareList(ctx context.Context, baseURL, token string) (*SoftwareListResult, error) {
+	var out SoftwareListResult
+	err := c.do(ctx, baseURL, token, request{
+		method: http.MethodGet, path: "/agent/v1/software/list",
+	}, &out)
+	return &out, err
+}
+
+func (c *Client) SoftwareInstall(ctx context.Context, baseURL, token, name string) error {
+	return c.do(ctx, baseURL, token, request{
+		method: http.MethodPost, path: "/agent/v1/software/install",
+		body: map[string]string{"name": name},
+	}, nil)
+}
+
+func (c *Client) SoftwareRemove(ctx context.Context, baseURL, token, name string) error {
+	return c.do(ctx, baseURL, token, request{
+		method: http.MethodPost, path: "/agent/v1/software/remove",
+		body: map[string]string{"name": name},
+	}, nil)
+}
+
+func (c *Client) SoftwareService(ctx context.Context, baseURL, token, name, action string) error {
+	return c.do(ctx, baseURL, token, request{
+		method: http.MethodPost, path: "/agent/v1/software/service",
+		body: map[string]string{"name": name, "action": action},
+	}, nil)
+}
+
+// ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
 

@@ -26,6 +26,7 @@ import type {
   ServerCapabilities,
   ServerView,
   ServiceHealth,
+  SoftwareListResult,
   UserView,
   WebsiteCertificate,
   WebsiteHealthView,
@@ -113,6 +114,15 @@ export const serversApi = {
     }),
   dbEngines: (id: string) =>
     get<DBEnginesView>(`/servers/${encodeURIComponent(id)}/db-engines`),
+  // Phase 7 — software manager.
+  software: (id: string) =>
+    get<SoftwareListResult>(`/servers/${encodeURIComponent(id)}/software`),
+  installSoftware: (id: string, name: string) =>
+    post<{ job: JobView }>(`/servers/${encodeURIComponent(id)}/software/install`, { name }),
+  removeSoftware: (id: string, name: string) =>
+    post<{ job: JobView }>(`/servers/${encodeURIComponent(id)}/software/remove`, { name }),
+  softwareService: (id: string, name: string, action: string) =>
+    post<{ ok: boolean }>(`/servers/${encodeURIComponent(id)}/software/service`, { name, action }),
 };
 
 // --- Phase 6: managed databases ---------------------------------------------

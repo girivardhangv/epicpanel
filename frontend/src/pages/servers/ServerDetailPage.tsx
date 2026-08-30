@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { alertsApi, monitoringApi, serversApi, websitesApi, type MetricsRange } from "../../services";
+import { alertsApi, jobsApi, monitoringApi, serversApi, websitesApi, type MetricsRange } from "../../services";
 import { useAuth } from "../../features/auth/AuthContext";
 import { useToast } from "../../components/ui/Toast";
 import { errMessage } from "../ServersPage";
@@ -21,7 +21,7 @@ import {
   formatUptime,
 } from "../../lib/format";
 
-const TABS = ["Overview", "Monitoring", "Services", "Processes", "Websites", "Activity"] as const;
+const TABS = ["Overview", "Monitoring", "Software", "Services", "Processes", "Websites", "Activity"] as const;
 type Tab = (typeof TABS)[number];
 
 const RANGES: MetricsRange[] = ["1h", "6h", "24h", "7d", "30d"];
@@ -88,6 +88,7 @@ export function ServerDetailPage() {
 
       {tab === "Overview" && <OverviewTab serverId={id} canMonitor={canMonitor} />}
       {tab === "Monitoring" && canMonitor && <MonitoringTab serverId={id} />}
+      {tab === "Software" && <SoftwareTab serverId={id} />}
       {tab === "Services" && hasPermission("monitoring.services.view") && <ServicesTab serverId={id} />}
       {tab === "Processes" && hasPermission("monitoring.processes.view") && <ProcessesTab serverId={id} />}
       {tab === "Websites" && <WebsitesTab serverId={id} />}
@@ -623,4 +624,128 @@ function useMutationToast(onDone: () => void) {
       .finally(() => setPendingId(null));
   };
   return { acknowledge, pendingId };
+}
+
+// ---------------------------------------------------------------------------
+// Software manager (Phase 7)
+// ---------------------------------------------------------------------------
+
+function SoftwareTab({ serverId }: { serverId: string }) {
+  const { hasPermission } = useAuth();
+  const toast = useToast();
+  const canManage = hasPermission("server.manage");
+  const [active, setActive] = useState<{ name: string; jobId: string; op: "install" | "remove" } | null>(null);
+
+  const listQuery = useQuery({
+    queryKey: ["servers", serverId, "software"],
+    queryFn: () => serversApi.software(serverId),
+    refetchInterval: active ? 3000 : 20000,
+  });
+
+  const jobQuery = useQuery({
+    queryKey: ["jobs", active?.jobId],
+    queryFn: () => jobsApi.get(active!.jobId),
+    enabled: !!active,
+    refetchInterval: 2000,
+  });
+
+  useEffect(() => {
+    const j = jobQuery.data;
+    if (active && j && (j.status === "completed" || j.status === "failed")) {
+      if (j.status === "completed") {
+        toast.success(`${active.name} ${active.op === "install" ? "installed" : "removed"}`);
+      } else {
+        toast.error(j.error || `${active.op} failed`);
+      }
+      setActive(null);
+      void listQuery.refetch();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobQuery.data]);
+
+  const run = (name: string, op: "install" | "remove") => {
+    const call = op === "install" ? serversApi.installSoftware(serverId, name) : serversApi.removeSoftware(serverId, name);
+    call
+      .then((res) => setActive({ name, jobId: res.job.id, op }))
+      .catch((e) => toast.error(errMessage(e, `${op} failed`)));
+  };
+
+  const svc = (name: string, action: string) => {
+    serversApi
+      .softwareService(serverId, name, action)
+      .then(() => void listQuery.refetch())
+      .catch((e) => toast.error(errMessage(e, `${action} failed`)));
+  };
+
+  if (listQuery.isLoading) return <Spinner label="Detecting software…" />;
+  if (listQuery.isError) return <ErrorState error={listQuery.error} onRetry={() => void listQuery.refetch()} />;
+
+  const data = listQuery.data!;
+  const categories = Array.from(new Set(data.components.map((c) => c.category)));
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-slate-500">
+          Detected on <span className="font-medium text-slate-700">{data.os.Distro || data.os.Family}</span> ·{" "}
+          package manager <span className="font-mono text-xs">{data.os.PackageManager}</span>
+        </p>
+        <Button size="sm" variant="ghost" onClick={() => void listQuery.refetch()}>
+          Re-scan
+        </Button>
+      </div>
+
+      {active && (
+        <div className="rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-sm text-indigo-800">
+          {active.op === "install" ? "Installing" : "Removing"} {active.name}… {jobQuery.data?.message || ""} ({jobQuery.data?.progress ?? 0}%)
+        </div>
+      )}
+
+      {categories.map((cat) => (
+        <Card key={cat}>
+          <CardHeader title={cat} />
+          <CardBody className="space-y-2">
+            {data.components
+              .filter((c) => c.category === cat)
+              .map((c) => (
+                <div key={c.name} className="flex items-center justify-between rounded-lg bg-slate-50 px-4 py-2.5">
+                  <div>
+                    <p className="text-sm font-medium text-slate-800">{c.display_name}</p>
+                    <p className="text-xs text-slate-500">
+                      {c.installed ? `v${c.version || "?"}${c.running ? " · running" : " · stopped"}` : c.supported ? "Not installed" : "Not installable here"}
+                    </p>
+                  </div>
+                  {canManage && (
+                    <div className="flex items-center gap-2">
+                      {!c.installed && c.supported && (
+                        <Button size="sm" loading={active?.name === c.name} disabled={!!active} onClick={() => run(c.name, "install")}>
+                          Install
+                        </Button>
+                      )}
+                      {c.installed && c.supported && (
+                        <Button size="sm" variant="ghost" disabled={!!active} onClick={() => run(c.name, "remove")}>
+                          Remove
+                        </Button>
+                      )}
+                      {c.installed && c.service && (
+                        <div className="flex gap-1">
+                          <Button size="sm" variant="outline" onClick={() => svc(c.name, c.running ? "stop" : "start")}>
+                            {c.running ? "Stop" : "Start"}
+                          </Button>
+                          {c.running && (
+                            <Button size="sm" variant="outline" onClick={() => svc(c.name, "restart")}>
+                              Restart
+                            </Button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+          </CardBody>
+        </Card>
+      ))}
+    </div>
+  );
 }

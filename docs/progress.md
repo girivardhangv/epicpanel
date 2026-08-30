@@ -618,3 +618,56 @@ for installer DSN changes.
 4. Connection is localhost-only by design; remote DB access / external hosts
    are out of scope.
 5. No phpMyAdmin/Adminer web admin bundled (candidate for a later phase).
+
+---
+
+## 12. Phase 7 — Software Manager (shipped)
+
+> Philosophy: install EpicPanel first; install the hosting stack later, from
+> the UI, only when the administrator chooses.
+
+### 12.1 Agent engine (`agent/internal/software`)
+
+- **OS + package-manager abstraction** (`os.go`): detects Debian/Ubuntu → apt,
+  RHEL/Rocky/Alma/Fedora → dnf, SUSE → zypper, Windows → winget. No
+  Ubuntu-specific commands scattered through the code.
+- **Allowlisted execution** (`exec.go`): only a fixed set of binaries may run,
+  always with provider-defined argv — never a string from a request. Timeouts,
+  exit-code capture, no shell. This is the core safety guarantee.
+- **Provider registry** (`provider.go`): Nginx, Apache, MariaDB, Redis, PHP,
+  Node.js, Java, Docker — each with per-manager install argv, a service name,
+  and a detect command. Remove is derived from install.
+- **Manager** (`manager.go`): List (live detect: presence + version + running),
+  Install (then enable+start the service), Remove, Service (start/stop/restart/
+  enable/disable/status).
+
+### 12.2 Panel (`internal/software`)
+
+- Component state is **detected live from the agent** (no stale cache).
+- Install/remove run as **jobs** (`install_software` / `remove_software`,
+  migration `0007_phase7_software.sql`) so long operations never block HTTP and
+  the UI can poll real progress. Service control is a direct quick op.
+- API: `GET /servers/{id}/software`, `POST /servers/{id}/software/{install,
+  remove,service}` — gated `server.view` / `server.manage`, audited.
+
+### 12.3 UI + CLI
+
+- **Software tab** on the server detail page: components grouped by category
+  with Install / Remove / Start / Stop / Restart, live re-scan, and job
+  progress.
+- **`epicpanel` CLI** (`agent/cmd/epicpanel`): `status`, `doctor`, and
+  `software list|install|remove|service` — reusing the **same** `software.Manager`
+  engine as the web UI (no duplicated logic). `doctor` prints ✓/✗ checks with
+  fix hints for panel service, health, privileges, OS, and each component.
+
+### 12.4 Phase 7 known limitations (documented honestly)
+
+1. Installs require the agent to run as root/admin (package managers need it).
+2. Providers use distro default packages (e.g. `docker.io`, `nodejs`); pinned
+   versions / third-party repos (nodesource, official Docker repo, ondrej PHP)
+   are future refinements.
+3. Dependency resolution (e.g. "install Laravel → ensure PHP+Composer+DB") is
+   not yet built; components are installed individually.
+4. Windows software install relies on winget being present.
+5. No config backup/rollback around installs yet (the nginx site path has it;
+   package installs do not).

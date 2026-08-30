@@ -31,6 +31,7 @@ import (
 	"github.com/epicbyte/epicpanel/backend/internal/rbac"
 	"github.com/epicbyte/epicpanel/backend/internal/servers"
 	"github.com/epicbyte/epicpanel/backend/internal/settings"
+	"github.com/epicbyte/epicpanel/backend/internal/software"
 	"github.com/epicbyte/epicpanel/backend/internal/users"
 	"github.com/epicbyte/epicpanel/backend/internal/websites"
 	"github.com/epicbyte/epicpanel/backend/migrations"
@@ -160,6 +161,18 @@ func main() {
 	})
 	databasesSvc.RegisterHandlers(runner)
 	srvDeps.Databases = databasesSvc
+
+	// Phase 7 — software manager (installs run as jobs; state detected live).
+	softwareSvc := software.New(software.Deps{
+		Pool:    pool,
+		Log:     log,
+		Agent:   agentCli,
+		Servers: srvDeps.Servers,
+		Jobs:    jobsStore,
+		Audit:   auditSvc,
+	})
+	softwareSvc.RegisterHandlers(runner)
+	srvDeps.Software = softwareSvc
 
 	// Phase 3 — monitoring, telemetry & server health.
 	internalMetrics := metrics.Default()

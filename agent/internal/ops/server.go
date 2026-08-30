@@ -22,6 +22,7 @@ import (
 	"github.com/epicbyte/epicpanel/agent/internal/dbops"
 	"github.com/epicbyte/epicpanel/agent/internal/install"
 	"github.com/epicbyte/epicpanel/agent/internal/platform"
+	"github.com/epicbyte/epicpanel/agent/internal/software"
 	"github.com/epicbyte/epicpanel/agent/internal/ssl"
 )
 
@@ -38,6 +39,7 @@ type Server struct {
 	acctDir   string
 	mysql     dbops.Ops
 	postgres  dbops.Ops
+	sw        *software.Manager
 	nginx     platform.WebServerOps
 	php       platform.PHPOps
 	fs        platform.FSOps
@@ -111,6 +113,7 @@ func New(opts Options) (*Server, error) {
 		acctDir:   opts.AcctDir,
 		mysql:     mysqlOps,
 		postgres:  pgOps,
+		sw:        software.NewManager(opts.Log),
 		nginx:     nginx,
 		php:       php,
 		fs:        fs,
@@ -170,6 +173,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/agent/v1/db/user/create", auth(s.handleDBUserCreate))
 	mux.HandleFunc("/agent/v1/db/user/drop", auth(s.handleDBUserDrop))
 	mux.HandleFunc("/agent/v1/db/user/password", auth(s.handleDBUserPassword))
+	mux.HandleFunc("/agent/v1/software/list", auth(s.handleSoftwareList))
+	mux.HandleFunc("/agent/v1/software/install", auth(s.handleSoftwareInstall))
+	mux.HandleFunc("/agent/v1/software/remove", auth(s.handleSoftwareRemove))
+	mux.HandleFunc("/agent/v1/software/service", auth(s.handleSoftwareService))
 
 	return http.MaxBytesHandler(mux, maxBodyBytes)
 }

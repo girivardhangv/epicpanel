@@ -65,11 +65,23 @@ jobs:
               go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o "$out" ./cmd/agentd
           done
 
+      - name: Cross-compile CLI binaries
+        working-directory: agent
+        run: |
+          set -euo pipefail
+          for t in linux/amd64 linux/arm64 windows/amd64 windows/arm64; do
+            os="${t%/*}"; arch="${t#*/}"
+            ext=""; [ "$os" = "windows" ] && ext=".exe"
+            out="dist/epicpanel-cli_${os}_${arch}${ext}"
+            GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 \
+              go build -trimpath -ldflags "-s -w" -o "$out" ./cmd/epicpanel
+          done
+
       - name: Checksums
         run: |
           set -euo pipefail
           ( cd backend/dist && sha256sum epicpanel_* ) > checksums.txt
-          ( cd agent/dist   && sha256sum epicpanel-agentd_* ) >> checksums.txt
+          ( cd agent/dist   && sha256sum epicpanel-agentd_* epicpanel-cli_* ) >> checksums.txt
           cat checksums.txt
 
       - name: Publish release

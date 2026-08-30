@@ -133,6 +133,12 @@ func (s *Server) mountV1(r chi.Router) {
 		v1.Post("/databases/{id}/users/{userId}/password", s.requireAuth(s.RequirePermission("databases.users.manage", s.csrf(s.handleDatabaseUserPassword))))
 		v1.Get("/servers/{id}/db-engines", s.requireAuth(s.RequirePermission("server.view", s.handleServerDBEngines)))
 
+		// Phase 7 — software manager.
+		v1.Get("/servers/{id}/software", s.requireAuth(s.RequirePermission("server.view", s.handleSoftwareList)))
+		v1.Post("/servers/{id}/software/install", s.requireAuth(s.RequirePermission("server.manage", s.csrf(s.handleSoftwareInstall))))
+		v1.Post("/servers/{id}/software/remove", s.requireAuth(s.RequirePermission("server.manage", s.csrf(s.handleSoftwareRemove))))
+		v1.Post("/servers/{id}/software/service", s.requireAuth(s.RequirePermission("server.manage", s.csrf(s.handleSoftwareService))))
+
 		// Background jobs (provisioning progress). Viewing a job leaks only
 		// progress; the underlying resource permissions gate the UI flows.
 		v1.Get("/jobs/{id}", s.requireAuth(s.RequirePermission("websites.view", s.handleJobsGet)))

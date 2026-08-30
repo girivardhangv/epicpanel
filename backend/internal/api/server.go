@@ -25,6 +25,7 @@ import (
 	"github.com/epicbyte/epicpanel/backend/internal/rbac"
 	"github.com/epicbyte/epicpanel/backend/internal/servers"
 	"github.com/epicbyte/epicpanel/backend/internal/settings"
+	"github.com/epicbyte/epicpanel/backend/internal/software"
 	"github.com/epicbyte/epicpanel/backend/internal/users"
 	"github.com/epicbyte/epicpanel/backend/internal/web"
 	"github.com/epicbyte/epicpanel/backend/internal/websites"
@@ -62,6 +63,9 @@ type Deps struct {
 
 	// Phase 6 — managed databases
 	Databases *databases.Service
+
+	// Phase 7 — software manager
+	Software *software.Service
 
 	Version    string
 }

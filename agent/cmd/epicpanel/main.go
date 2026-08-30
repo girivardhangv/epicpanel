@@ -343,19 +343,19 @@ func installStaged(tmp, dest string) error {
 
 func panelBinaryPath() string {
 	if runtime.GOOS == "windows" {
-		return `C:\Program Files\EpicPanel\epicpanel.exe`
+		return `C:\Program Files\EpicPanel\epicpanel-panel.exe`
 	}
 	if v := os.Getenv("EPICPANEL_BIN"); v != "" {
 		return v
 	}
-	return "/usr/local/bin/epicpanel"
+	return "/usr/local/bin/epicpanel-panel"
 }
 
 func agentdBinaryPath() string {
 	if runtime.GOOS == "windows" {
-		return `C:\Program Files\EpicPanel\agentd.exe`
+		return `C:\Program Files\EpicPanel\epicpanel-agentd.exe`
 	}
-	if v := os.Getenv("EPICPANEL_AGENTD_BIN"); v != "" {
+	if v := os.Getenv("EPICPANEL_AGENTD"); v != "" {
 		return v
 	}
 	return "/usr/local/bin/epicpanel-agentd"
@@ -367,7 +367,7 @@ func cliSelfPath() string {
 		return exe
 	}
 	if runtime.GOOS == "windows" {
-		return `C:\Program Files\EpicPanel\epicpanel-cli.exe`
+		return `C:\Program Files\EpicPanel\epicpanel.exe`
 	}
 	return "/usr/local/bin/epicpanel"
 }

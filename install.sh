@@ -13,7 +13,9 @@ EPICPANEL_REPO="${EPICPANEL_REPO:-girivardhangv/epicpanel}"
 EPICPANEL_VERSION="${EPICPANEL_VERSION:-latest}"   # a release tag, or "latest"
 EPICPANEL_PORT="${EPICPANEL_PORT:-8080}"
 EPICPANEL_HOME="/opt/epicpanel"
-EPICPANEL_BIN="/usr/local/bin/epicpanel"
+EPICPANEL_BIN="/usr/local/bin/epicpanel-panel"     # the panel daemon
+EPICPANEL_CLI="/usr/local/bin/epicpanel"           # the CLI (epicpanel update/status/...)
+EPICPANEL_AGENTD="/usr/local/bin/epicpanel-agentd" # the host agent
 EPICPANEL_ETC="/etc/epicpanel"
 EPICPANEL_DATA="/var/lib/epicpanel"
 EPICPANEL_LOG="/var/log/epicpanel"
@@ -209,8 +211,8 @@ install_cli_and_agent() {
   step "EpicPanel CLI and agent"
   # The CLI (epicpanel update/status/doctor/software) and the agent (host
   # management) are separate release assets installed alongside the panel.
-  download_tool "epicpanel-cli_linux_${ARCH}" "${EPICPANEL_BIN}-cli" || true
-  download_tool "epicpanel-agentd_linux_${ARCH}" "${EPICPANEL_BIN}-agentd" || true
+  download_tool "epicpanel-cli_linux_${ARCH}" "${EPICPANEL_CLI}" || true
+  download_tool "epicpanel-agentd_linux_${ARCH}" "${EPICPANEL_AGENTD}" || true
 }
 
 write_env() {

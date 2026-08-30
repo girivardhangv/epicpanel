@@ -94,7 +94,15 @@ func (m *Manager) Install(ctx context.Context, name string) (CommandResult, erro
 		return res, err
 	}
 	if !res.OK() {
-		return res, fmt.Errorf("install failed (exit %d): %s", res.ExitCode, firstLine(res.Stderr))
+		detail := strings.TrimSpace(res.Stderr)
+		if detail == "" {
+			detail = strings.TrimSpace(res.Stdout)
+		}
+		hint := ""
+		if m.os.PackageManager == "winget" {
+			hint = " (on Windows the EpicPanel agent must run as Administrator to install software)"
+		}
+		return res, fmt.Errorf("install failed: %s%s", lastLines(detail, 3), hint)
 	}
 	if p.Service != "" {
 		_, _ = Run(ctx, "systemctl", "enable", "--now", p.Service)
@@ -190,6 +198,24 @@ func firstLine(s string) string {
 		return s[:i]
 	}
 	return s
+}
+
+// lastLines returns the final n non-empty lines (package managers report the
+// real error at the end), so the UI shows something actionable.
+func lastLines(s string, n int) string {
+	lines := []string{}
+	for _, l := range strings.Split(strings.TrimSpace(s), "\n") {
+		if t := strings.TrimSpace(l); t != "" {
+			lines = append(lines, t)
+		}
+	}
+	if len(lines) == 0 {
+		return "no output"
+	}
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, " | ")
 }
 
 func truncate(s string, n int) string {

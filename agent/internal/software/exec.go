@@ -98,10 +98,21 @@ func runCmd(ctx context.Context, name string, args ...string) (CommandResult, er
 // runCmdLong executes a command with a long (build-sized) timeout. Used for
 // source compilation where configure/make can take well over 15 minutes.
 func runCmdLong(ctx context.Context, name string, args ...string) (CommandResult, error) {
+	return runCmdLongDir(ctx, "", name, args...)
+}
+
+// runCmdLongDir is runCmdLong with an explicit working directory. Build
+// commands (./configure, make) must run from the source tree root because the
+// configure script sources relative files (e.g. nginx's `. auto/options`); a
+// wrong CWD produces `cannot open auto/options` even with a perfect download.
+func runCmdLongDir(ctx context.Context, dir, name string, args ...string) (CommandResult, error) {
 	cctx, cancel := context.WithTimeout(ctx, 60*time.Minute)
 	defer cancel()
 
 	cmd := exec.CommandContext(cctx, name, args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

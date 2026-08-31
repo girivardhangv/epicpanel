@@ -92,7 +92,7 @@ func (m *Manager) compileFromSource(ctx context.Context, p Provider, rel Release
 			filepath.Join(srcDir, "configure"),
 			"--prefix=" + compDir,
 		}, p.Build.ConfigureArgs...)
-		if err := m.runBuildCmd(ctx, logFile, configureArgs[0], configureArgs[1:]...); err != nil {
+		if err := m.runBuildCmd(ctx, logFile, srcDir, configureArgs[0], configureArgs[1:]...); err != nil {
 			return fmt.Errorf("configure %s failed — see build log at %s", p.Name, logPath)
 		}
 	}
@@ -104,7 +104,7 @@ func (m *Manager) compileFromSource(ctx context.Context, p Provider, rel Release
 	}
 	makeArgs := []string{"-j", strconv.Itoa(ncpu)}
 	makeArgs = append(makeArgs, p.Build.MakeFlags...)
-	if err := m.runBuildCmd(ctx, logFile, "make", makeArgs...); err != nil {
+	if err := m.runBuildCmd(ctx, logFile, srcDir, "make", makeArgs...); err != nil {
 		return fmt.Errorf("make %s failed — see build log at %s", p.Name, logPath)
 	}
 
@@ -114,7 +114,7 @@ func (m *Manager) compileFromSource(ctx context.Context, p Provider, rel Release
 		// instead of the --prefix from configure.
 		installArgs = append(installArgs, "PREFIX="+compDir)
 	}
-	if err := m.runBuildCmd(ctx, logFile, "make", installArgs...); err != nil {
+	if err := m.runBuildCmd(ctx, logFile, srcDir, "make", installArgs...); err != nil {
 		return fmt.Errorf("make install %s failed — see build log at %s", p.Name, logPath)
 	}
 
@@ -162,11 +162,12 @@ func (m *Manager) ensureBuildDeps(ctx context.Context, p Provider, logFile *os.F
 	return nil
 }
 
-// runBuildCmd executes a build command with a long timeout and logs full output.
-// On failure, the entire log is preserved at the build log path.
-func (m *Manager) runBuildCmd(ctx context.Context, logFile *os.File, cmd string, args ...string) error {
+// runBuildCmd executes a build command with a long timeout in the given
+// working directory (the source tree root) and logs full output. On failure,
+// the entire log is preserved at the build log path.
+func (m *Manager) runBuildCmd(ctx context.Context, logFile *os.File, dir, cmd string, args ...string) error {
 	_ = writeLog(logFile, "> "+cmd+" "+strings.Join(args, " ")+"\n")
-	res, err := runCmdLong(ctx, cmd, args...)
+	res, err := runCmdLongDir(ctx, dir, cmd, args...)
 	if err != nil {
 		_ = writeLog(logFile, "[ERROR] "+err.Error()+"\n")
 		_ = writeLog(logFile, "stdout:\n"+truncate(res.Stdout, 4096)+"\n")

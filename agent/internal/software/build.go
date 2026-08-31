@@ -200,6 +200,19 @@ func writeLog(f *os.File, msg string) error {
 func (m *Manager) postInstallConfig(ctx context.Context, p Provider, srcDir, compDir string) error {
 	_ = ctx
 	switch p.Name {
+	case "nginx":
+		// nginx's default nginx.conf references logs/* and the various
+		// *_temp directories relative to the prefix. make install creates
+		// conf/ + sbin/ + html/ but NOT these runtime dirs, so a bare
+		// install dies at startup with "could not open error log file".
+		for _, d := range []string{
+			"logs", "client_body_temp", "proxy_temp", "fastcgi_temp",
+			"uwsgi_temp", "scgi_temp",
+		} {
+			if err := os.MkdirAll(filepath.Join(compDir, d), 0o755); err != nil {
+				return err
+			}
+		}
 	case "php":
 		// php.ini: prefer the production template shipped in the source tree.
 		ini := filepath.Join(compDir, "lib", "php.ini")

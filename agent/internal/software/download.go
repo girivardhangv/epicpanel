@@ -75,9 +75,18 @@ func downloadOnce(url, wantSHA string) (string, error) {
 	defer tmp.Close()
 
 	h := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(tmp, h), resp.Body); err != nil {
+	n, err := io.Copy(io.MultiWriter(tmp, h), resp.Body)
+	if err != nil {
 		os.Remove(tmp.Name())
 		return "", err
+	}
+	// Detect truncated downloads: a server that reports Content-Length but
+	// delivers fewer bytes (flaky/limited connections) must be retried, not
+	// silently extracted into a broken source tree (e.g. nginx with configure
+	// present but auto/options missing).
+	if resp.ContentLength > 0 && n != resp.ContentLength {
+		os.Remove(tmp.Name())
+		return "", fmt.Errorf("truncated download from %s (got %d of %d bytes)", url, n, resp.ContentLength)
 	}
 	if err := tmp.Sync(); err != nil {
 		os.Remove(tmp.Name())

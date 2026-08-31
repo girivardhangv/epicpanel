@@ -32,6 +32,10 @@ type BuildSpec struct {
 	ConfigureArgs []string // args after ./configure (prefix handled by the engine)
 	MakeFlags     []string // extra flags for `make`, e.g. {"MALLOC=libc"}
 	NoConfigure   bool     // true when the component has no ./configure (Redis)
+	// CriticalFiles must exist in the extracted source tree (relative to the
+	// tree root) before building; a missing file means the download was
+	// truncated/corrupt and the build aborts with a clear message.
+	CriticalFiles []string
 	DepsApt       []string // apt packages required to build
 	DepsDnf       []string // dnf packages required to build
 	DepsZypper    []string // zypper packages required to build
@@ -105,7 +109,8 @@ func builtinProviders() []Provider {
 					"--without-select_module",
 					"--without-poll_module",
 				},
-				DepsApt:    []string{"build-essential", "libpcre2-dev", "libssl-dev", "zlib1g-dev", "libgd-dev"},
+				CriticalFiles: []string{"configure", "auto/options"},
+				DepsApt:       []string{"build-essential", "libpcre2-dev", "libssl-dev", "zlib1g-dev", "libgd-dev"},
 				DepsDnf:    []string{"gcc", "make", "pcre2-devel", "openssl-devel", "zlib-devel", "gd-devel"},
 				DepsZypper: []string{"gcc", "make", "pcre2-devel", "libopenssl-devel", "zlib-devel", "gd-devel"},
 				VersionArgs: []string{"-v"}, VersionStderr: true,
@@ -130,7 +135,8 @@ func builtinProviders() []Provider {
 					"--with-mpm=prefork",
 					"--with-included-apr",
 				},
-				DepsApt:    []string{"build-essential", "libtool", "libpcre2-dev", "libssl-dev", "zlib1g-dev", "libxml2-dev"},
+				CriticalFiles: []string{"configure"},
+				DepsApt:       []string{"build-essential", "libtool", "libpcre2-dev", "libssl-dev", "zlib1g-dev", "libxml2-dev"},
 				DepsDnf:    []string{"gcc", "make", "libtool", "pcre2-devel", "openssl-devel", "zlib-devel", "libxml2-devel", "apr-devel", "apr-util-devel"},
 				DepsZypper: []string{"gcc", "make", "libtool", "pcre2-devel", "libopenssl-devel", "zlib-devel", "libxml2-devel", "libapr1-devel", "libapr-util1-devel"},
 			},
@@ -193,7 +199,8 @@ func builtinProviders() []Provider {
 					"--enable-opcache",
 					"--disable-cgi",
 				},
-				DepsApt:    []string{"build-essential", "autoconf", "libxml2-dev", "libsqlite3-dev", "libcurl4-openssl-dev", "libssl-dev", "libonig-dev", "libzip-dev", "zlib1g-dev", "libreadline-dev", "pkg-config"},
+				CriticalFiles: []string{"configure"},
+				DepsApt:       []string{"build-essential", "autoconf", "libxml2-dev", "libsqlite3-dev", "libcurl4-openssl-dev", "libssl-dev", "libonig-dev", "libzip-dev", "zlib1g-dev", "libreadline-dev", "pkg-config"},
 				DepsDnf:    []string{"gcc", "make", "autoconf", "libxml2-devel", "sqlite-devel", "libcurl-devel", "openssl-devel", "oniguruma-devel", "libzip-devel", "zlib-devel", "readline-devel", "pkgconfig"},
 				DepsZypper: []string{"gcc", "make", "autoconf", "libxml2-devel", "sqlite3-devel", "libcurl-devel", "libopenssl-devel", "oniguruma-devel", "libzip-devel", "zlib-devel", "readline-devel", "pkg-config"},
 				VersionArgs: []string{"-r", "echo PHP_VERSION;"}, VersionStderr: false,

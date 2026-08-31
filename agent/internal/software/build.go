@@ -59,6 +59,16 @@ func (m *Manager) compileFromSource(ctx context.Context, p Provider, rel Release
 		}
 	}
 
+	// Verify the extracted tree is complete enough to build. A missing
+	// critical file means the download was truncated/corrupt (nginx.org has
+	// dropped connections mid-stream before); fail with a clear message so
+	// the user can simply retry rather than debug a confusing configure error.
+	for _, cf := range p.Build.CriticalFiles {
+		if _, err := os.Stat(filepath.Join(srcDir, filepath.FromSlash(cf))); err != nil {
+			return fmt.Errorf("source tree for %s is incomplete (missing %s) — download was likely truncated; retry the install", p.Name, cf)
+		}
+	}
+
 	// 3. Build log file (persisted for debugging).
 	_ = os.MkdirAll(compDir, 0o755)
 	logPath := filepath.Join(compDir, "build.log")

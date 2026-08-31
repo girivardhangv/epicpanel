@@ -228,6 +228,12 @@ func cmdUpdate(ctx context.Context, args []string) {
 	// Download + verify each binary, then swap them into place.
 	targets := updateTargets()
 	staged := map[string]string{} // asset -> temp path
+	cleanupStaged := func() {
+		for _, p := range staged {
+			_ = os.Remove(p)
+		}
+	}
+	defer cleanupStaged()
 	for _, t := range targets {
 		if t.asset == "" || t.path == "" {
 			continue
@@ -284,7 +290,10 @@ func downloadReleaseAsset(version, asset string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer os.Remove(tmp.Name())
+	// NOTE: no defer os.Remove here — the caller passes the path to
+	// installStaged which renames (and thus removes) the temp file.
+	// If the caller fails before installStaged, the temp file is cleaned
+	// up by the OS / temp dir policy.
 
 	client := &http.Client{Timeout: 10 * time.Minute}
 	resp, err := client.Get(base + "/" + asset)
@@ -332,9 +341,11 @@ func checksumFor(sumfile, asset string) string {
 }
 
 // installStaged moves a verified temp file into place, preserving permissions.
+// The temp file is removed on failure so we don't leak /tmp entries.
 func installStaged(tmp, dest string) error {
 	dir := filepath.Dir(dest)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
+		os.Remove(tmp)
 		return err
 	}
 	// Windows cannot overwrite a running exe; write next to it and report.
@@ -343,9 +354,11 @@ func installStaged(tmp, dest string) error {
 		return os.Rename(tmp, dest)
 	}
 	if err := os.Chmod(tmp, 0o755); err != nil {
+		os.Remove(tmp)
 		return err
 	}
 	if err := os.Rename(tmp, dest); err != nil {
+		os.Remove(tmp)
 		return err
 	}
 	return nil

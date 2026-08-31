@@ -138,8 +138,12 @@ func (m *Manager) serviceStart(ctx context.Context, p Provider) error {
 	if spec.mode == ServiceNone {
 		return nil
 	}
-	if _, err := Run(ctx, "systemctl", "start", spec.unit); err != nil {
+	res, err := Run(ctx, "systemctl", "start", spec.unit)
+	if err != nil {
 		return err
+	}
+	if !res.OK() {
+		return fmt.Errorf("start %s: %s", spec.unit, detail(res))
 	}
 	return nil
 }
@@ -152,7 +156,14 @@ func (m *Manager) serviceStop(ctx context.Context, p Provider) (CommandResult, e
 	if spec.mode == ServiceNone {
 		return CommandResult{ExitCode: 0}, nil
 	}
-	return Run(ctx, "systemctl", "stop", spec.unit)
+	res, err := Run(ctx, "systemctl", "stop", spec.unit)
+	if err != nil {
+		return res, err
+	}
+	if !res.OK() {
+		return res, fmt.Errorf("stop %s: %s", spec.unit, detail(res))
+	}
+	return res, nil
 }
 
 func (m *Manager) serviceRestart(ctx context.Context, p Provider) error {
@@ -163,8 +174,14 @@ func (m *Manager) serviceRestart(ctx context.Context, p Provider) error {
 	if spec.mode == ServiceNone {
 		return nil
 	}
-	_, err = Run(ctx, "systemctl", "restart", spec.unit)
-	return err
+	res, err := Run(ctx, "systemctl", "restart", spec.unit)
+	if err != nil {
+		return err
+	}
+	if !res.OK() {
+		return fmt.Errorf("restart %s: %s", spec.unit, detail(res))
+	}
+	return nil
 }
 
 func (m *Manager) serviceReload(ctx context.Context, p Provider) error {
@@ -175,9 +192,13 @@ func (m *Manager) serviceReload(ctx context.Context, p Provider) error {
 	if spec.mode == ServiceNone {
 		return nil
 	}
-	if _, err := Run(ctx, "systemctl", "reload", spec.unit); err != nil {
-		_, err = Run(ctx, "systemctl", "restart", spec.unit)
+	res, err := Run(ctx, "systemctl", "reload", spec.unit)
+	if err != nil {
 		return err
+	}
+	if !res.OK() {
+		// Some units lack a reload action; a restart is the closest semantic.
+		return m.serviceRestart(ctx, p)
 	}
 	return nil
 }
@@ -190,8 +211,14 @@ func (m *Manager) serviceEnable(ctx context.Context, p Provider) error {
 	if spec.mode == ServiceNone {
 		return nil
 	}
-	_, err = Run(ctx, "systemctl", "enable", spec.unit)
-	return err
+	res, err := Run(ctx, "systemctl", "enable", spec.unit)
+	if err != nil {
+		return err
+	}
+	if !res.OK() {
+		return fmt.Errorf("enable %s: %s", spec.unit, detail(res))
+	}
+	return nil
 }
 
 func (m *Manager) serviceDisable(ctx context.Context, p Provider) error {
@@ -202,8 +229,30 @@ func (m *Manager) serviceDisable(ctx context.Context, p Provider) error {
 	if spec.mode == ServiceNone {
 		return nil
 	}
-	_, err = Run(ctx, "systemctl", "disable", spec.unit)
-	return err
+	res, err := Run(ctx, "systemctl", "disable", spec.unit)
+	if err != nil {
+		return err
+	}
+	if !res.OK() {
+		return fmt.Errorf("disable %s: %s", spec.unit, detail(res))
+	}
+	return nil
+}
+
+// detail returns the last non-empty line of a failed command's output so the
+// operator sees the real systemd reason instead of a bare exit code.
+func detail(res CommandResult) string {
+	s := strings.TrimSpace(res.Stderr)
+	if s == "" {
+		s = strings.TrimSpace(res.Stdout)
+	}
+	lines := strings.Split(s, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if t := strings.TrimSpace(lines[i]); t != "" {
+			return t
+		}
+	}
+	return fmt.Sprintf("exit code %d", res.ExitCode)
 }
 
 var _ = fmt.Sprintf

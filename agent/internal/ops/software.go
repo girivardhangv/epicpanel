@@ -64,7 +64,11 @@ func (s *Server) handleSoftwareService(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, &apiError{Status: 422, Code: "SOFTWARE_SERVICE_FAILED", Message: safe(err)})
 		return
 	}
-	s.writeJSON(w, http.StatusOK, map[string]any{"ok": res.OK(), "output": tail(res.Stdout, res.Stderr)})
+	if !res.OK() {
+		s.writeError(w, r, &apiError{Status: 422, Code: "SOFTWARE_SERVICE_FAILED", Message: tail(res.Stdout, res.Stderr)})
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // tail returns a short combined output snippet for operator feedback.

@@ -201,6 +201,14 @@ export function WebsiteDetailPage() {
                   onError={(e) => toast.error(errMessage(e, "Alias update failed"))}
                 />
               )}
+              {hasPermission("websites.config.manage") && (
+                <Link
+                  to={`/app/websites/${w.id}/files`}
+                  className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 focus-ring"
+                >
+                  File Manager
+                </Link>
+              )}
             </div>
           </CardBody>
         </Card>

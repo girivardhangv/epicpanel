@@ -47,6 +47,12 @@ const NAV_SECTIONS: Array<{ title: string; items: NavItem[] }> = [
         icon: <AtSign className="h-4 w-4" />,
       },
       {
+        to: "/app/dns",
+        label: "DNS",
+        permission: "domains.view",
+        icon: <Globe className="h-4 w-4" />,
+      },
+      {
         to: "/app/databases",
         label: "Databases",
         permission: "databases.view",

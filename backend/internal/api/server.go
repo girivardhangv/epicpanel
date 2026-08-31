@@ -14,7 +14,9 @@ import (
 	"github.com/epicbyte/epicpanel/backend/internal/auth"
 	"github.com/epicbyte/epicpanel/backend/internal/config"
 	"github.com/epicbyte/epicpanel/backend/internal/databases"
+	"github.com/epicbyte/epicpanel/backend/internal/dns"
 	"github.com/epicbyte/epicpanel/backend/internal/domains"
+	"github.com/epicbyte/epicpanel/backend/internal/files"
 	"github.com/epicbyte/epicpanel/backend/internal/httpx"
 	"github.com/epicbyte/epicpanel/backend/internal/installer"
 	"github.com/epicbyte/epicpanel/backend/internal/jobs"
@@ -66,6 +68,10 @@ type Deps struct {
 
 	// Phase 7 — software manager
 	Software *software.Service
+
+	// Phase 8 — DNS management + File Manager
+	DNS   *dns.Service
+	Files *files.Service
 
 	Version    string
 }

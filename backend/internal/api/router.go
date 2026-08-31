@@ -108,6 +108,24 @@ func (s *Server) mountV1(r chi.Router) {
 		v1.Get("/websites/{id}/health", s.requireAuth(s.RequirePermission("websites.view", s.handleWebsitesHealth)))
 		v1.Put("/websites/{id}/limits", s.requireAuth(s.RequirePermission("websites.config.manage", s.csrf(s.handleWebsitesLimits))))
 
+		// Phase 8 — File Manager (per website, agent-constrained).
+		v1.Get("/websites/{id}/files", s.requireAuth(s.RequirePermission("websites.config.manage", s.handleFilesList)))
+		v1.Get("/websites/{id}/files/read", s.requireAuth(s.RequirePermission("websites.config.manage", s.handleFilesRead)))
+		v1.Post("/websites/{id}/files/write", s.requireAuth(s.RequirePermission("websites.config.manage", s.csrf(s.handleFilesWrite))))
+		v1.Post("/websites/{id}/files/mkdir", s.requireAuth(s.RequirePermission("websites.config.manage", s.csrf(s.handleFilesMkdir))))
+		v1.Post("/websites/{id}/files/remove", s.requireAuth(s.RequirePermission("websites.config.manage", s.csrf(s.handleFilesRemove))))
+		v1.Post("/websites/{id}/files/rename", s.requireAuth(s.RequirePermission("websites.config.manage", s.csrf(s.handleFilesRename))))
+
+		// Phase 8 — DNS management.
+		v1.Get("/dns/zones", s.requireAuth(s.RequirePermission("domains.view", s.handleDNSZonesList)))
+		v1.Post("/dns/zones", s.requireAuth(s.RequirePermission("domains.create", s.csrf(s.handleDNSZoneCreate))))
+		v1.Get("/dns/zones/{id}", s.requireAuth(s.RequirePermission("domains.view", s.handleDNSZoneGet)))
+		v1.Delete("/dns/zones/{id}", s.requireAuth(s.RequirePermission("domains.delete", s.csrf(s.handleDNSZoneDelete))))
+		v1.Post("/dns/zones/{id}/sync", s.requireAuth(s.RequirePermission("domains.manage", s.csrf(s.handleDNSZoneSync))))
+		v1.Get("/dns/zones/{zoneId}/records", s.requireAuth(s.RequirePermission("domains.view", s.handleDNSRecordsList)))
+		v1.Post("/dns/zones/{zoneId}/records", s.requireAuth(s.RequirePermission("domains.manage", s.csrf(s.handleDNSRecordCreate))))
+		v1.Delete("/dns/records/{id}", s.requireAuth(s.RequirePermission("domains.manage", s.csrf(s.handleDNSRecordDelete))))
+
 		// Phase 4 — SSL certificates.
 		v1.Get("/websites/{id}/certificate", s.requireAuth(s.RequirePermission("websites.view", s.handleCertificateGet)))
 		v1.Post("/websites/{id}/certificate", s.requireAuth(s.RequirePermission("websites.config.manage", s.csrf(s.handleCertificateRequest))))

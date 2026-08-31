@@ -451,6 +451,48 @@ export interface AuditEvent {
   created_at: string;
 }
 
+export interface FSEntry {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  size: number;
+  mode?: string;
+  mod_time?: string;
+}
+
+export interface FSListResult {
+  entries: FSEntry[];
+  path: string;
+}
+
+export interface DNSZone {
+  id: string;
+  server_id?: string;
+  domain: string;
+  provider: string;
+  status: string;
+  provider_zone_id?: string;
+  error?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DNSRecord {
+  id: string;
+  zone_id: string;
+  name: string;
+  type: string;
+  value: string;
+  priority: number;
+  ttl: number;
+  proxied: boolean;
+  status: string;
+  provider_record_id?: string;
+  error?: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface UserView {
   id: string;
   username: string;

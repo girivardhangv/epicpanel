@@ -20,7 +20,9 @@ import (
 	"github.com/epicbyte/epicpanel/backend/internal/config"
 	"github.com/epicbyte/epicpanel/backend/internal/databases"
 	"github.com/epicbyte/epicpanel/backend/internal/db"
+	"github.com/epicbyte/epicpanel/backend/internal/dns"
 	"github.com/epicbyte/epicpanel/backend/internal/domains"
+	"github.com/epicbyte/epicpanel/backend/internal/files"
 	"github.com/epicbyte/epicpanel/backend/internal/installer"
 	"github.com/epicbyte/epicpanel/backend/internal/jobs"
 	"github.com/epicbyte/epicpanel/backend/internal/licensing"
@@ -173,6 +175,22 @@ func main() {
 	})
 	softwareSvc.RegisterHandlers(runner)
 	srvDeps.Software = softwareSvc
+
+	// Phase 8 — DNS management + File Manager.
+	dnsSvc := dns.New(dns.Deps{
+		Pool:     pool,
+		Log:      log,
+		Settings: settingSvc,
+		Audit:    auditSvc,
+	})
+	srvDeps.DNS = dnsSvc
+	filesSvc := files.New(files.Deps{
+		Agent:    agentCli,
+		Servers:  srvDeps.Servers,
+		Websites: websiteSvc,
+		Audit:    auditSvc,
+	})
+	srvDeps.Files = filesSvc
 
 	// Phase 3 — monitoring, telemetry & server health.
 	internalMetrics := metrics.Default()

@@ -162,6 +162,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/agent/v1/fs/mkdir", auth(s.handleFSMkdir))
 	mux.HandleFunc("/agent/v1/fs/write", auth(s.handleFSWrite))
 	mux.HandleFunc("/agent/v1/fs/remove", auth(s.handleFSRemove))
+	mux.HandleFunc("/agent/v1/fs/list", auth(s.handleFSList))
+	mux.HandleFunc("/agent/v1/fs/read", auth(s.handleFSRead))
+	mux.HandleFunc("/agent/v1/fs/rename", auth(s.handleFSRename))
 	mux.HandleFunc("/agent/v1/fs/user", auth(s.handleFSUser))
 	mux.HandleFunc("/agent/v1/fs/chown", auth(s.handleFSChown))
 	mux.HandleFunc("/agent/v1/limits/set", auth(s.handleLimitsSet))
@@ -410,6 +413,62 @@ func (s *Server) handleFSRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"removed": true})
+}
+
+type fsListRequest struct {
+	Path string `json:"path"`
+}
+
+func (s *Server) handleFSList(w http.ResponseWriter, r *http.Request) {
+	var req fsListRequest
+	if !s.decode(w, r, &req) {
+		return
+	}
+	entries, err := s.fs.List(req.Path)
+	if err != nil {
+		s.writeError(w, r, &apiError{Status: 422, Code: "FS_OPERATION_FAILED", Message: safe(err)})
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"entries": entries, "path": req.Path})
+}
+
+type fsReadRequest struct {
+	Path     string `json:"path"`
+	MaxBytes int64  `json:"max_bytes"`
+}
+
+func (s *Server) handleFSRead(w http.ResponseWriter, r *http.Request) {
+	var req fsReadRequest
+	if !s.decode(w, r, &req) {
+		return
+	}
+	content, size, truncated, err := s.fs.ReadFile(req.Path, req.MaxBytes)
+	if err != nil {
+		s.writeError(w, r, &apiError{Status: 422, Code: "FS_OPERATION_FAILED", Message: safe(err)})
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"content_base64": base64.StdEncoding.EncodeToString(content),
+		"size_bytes":     size,
+		"truncated":      truncated,
+	})
+}
+
+type fsRenameRequest struct {
+	OldPath string `json:"old_path"`
+	NewPath string `json:"new_path"`
+}
+
+func (s *Server) handleFSRename(w http.ResponseWriter, r *http.Request) {
+	var req fsRenameRequest
+	if !s.decode(w, r, &req) {
+		return
+	}
+	if err := s.fs.Rename(req.OldPath, req.NewPath); err != nil {
+		s.writeError(w, r, &apiError{Status: 422, Code: "FS_OPERATION_FAILED", Message: safe(err)})
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"renamed": true})
 }
 
 type userRequest struct {

@@ -12,11 +12,14 @@ import { RolesPage } from "../pages/RolesPage";
 import { ProfilePage } from "../pages/ProfilePage";
 import { SettingsPage } from "../pages/SettingsPage";
 import { DomainsPage } from "../pages/DomainsPage";
+import { DNSPage } from "../pages/DNSPage";
+import { DNSZoneDetailPage } from "../pages/dns/DNSZoneDetailPage";
 import { DatabasesPage } from "../pages/DatabasesPage";
 import { DatabaseDetailPage } from "../pages/databases/DatabaseDetailPage";
 import { WebsitesPage } from "../pages/WebsitesPage";
 import { CreateWebsiteWizardPage } from "../pages/websites/CreateWizardPage";
 import { WebsiteDetailPage } from "../pages/websites/WebsiteDetailPage";
+import { WebsiteFilesPage } from "../pages/websites/WebsiteFilesPage";
 import { NotFoundPage } from "../pages/NotFound";
 
 export const router = createBrowserRouter([
@@ -44,7 +47,10 @@ export const router = createBrowserRouter([
       { path: "websites", element: <WebsitesPage /> },
       { path: "websites/new", element: <CreateWebsiteWizardPage /> },
       { path: "websites/:id", element: <WebsiteDetailPage /> },
+      { path: "websites/:id/files", element: <WebsiteFilesPage /> },
       { path: "domains", element: <DomainsPage /> },
+      { path: "dns", element: <DNSPage /> },
+      { path: "dns/zones/:id", element: <DNSZoneDetailPage /> },
       { path: "databases", element: <DatabasesPage /> },
       { path: "databases/:id", element: <DatabaseDetailPage /> },
       { path: "license", element: <LicensePage /> },
@@ -62,6 +68,7 @@ export const router = createBrowserRouter([
   { path: "/profile", element: <Navigate to="/app/profile" replace /> },
   { path: "/websites", element: <Navigate to="/app/websites" replace /> },
   { path: "/domains", element: <Navigate to="/app/domains" replace /> },
+  { path: "/dns", element: <Navigate to="/app/dns" replace /> },
   { path: "/databases", element: <Navigate to="/app/databases" replace /> },
   { path: "/dashboard", element: <Navigate to="/app" replace /> },
   { path: "*", element: <NotFoundPage /> },

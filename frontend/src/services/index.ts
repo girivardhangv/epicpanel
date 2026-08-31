@@ -7,8 +7,11 @@ import type {
   DatabaseView,
   DatabaseUser,
   DBEnginesView,
+  DNSZone,
+  DNSRecord,
   DomainView,
   EditableSettings,
+  FSEntry,
   FleetServer,
   HistoryView,
   InstallerStatus,
@@ -226,6 +229,52 @@ export const websitesApi = {
       `/websites/${encodeURIComponent(id)}/limits`,
       { body: { cpu_limit_pct: cpuLimitPct, memory_limit_mb: memoryLimitMB } },
     ),
+};
+
+// --- Phase 8: File Manager (per website) ------------------------------------
+
+export const filesApi = {
+  list: (websiteId: string, path: string) =>
+    get<{ entries: FSEntry[]; path: string }>(
+      `/websites/${encodeURIComponent(websiteId)}/files?path=${encodeURIComponent(path)}`,
+    ),
+  read: (websiteId: string, path: string, maxBytes = 1 << 20) =>
+    get<{ content_base64: string; size_bytes: number; truncated: boolean }>(
+      `/websites/${encodeURIComponent(websiteId)}/files/read?path=${encodeURIComponent(path)}&max_bytes=${maxBytes}`,
+    ),
+  write: (websiteId: string, path: string, contentBase64: string) =>
+    post<{ written: boolean }>(`/websites/${encodeURIComponent(websiteId)}/files/write`, {
+      path,
+      content_base64: contentBase64,
+    }),
+  mkdir: (websiteId: string, path: string) =>
+    post<{ created: boolean }>(`/websites/${encodeURIComponent(websiteId)}/files/mkdir`, { path }),
+  remove: (websiteId: string, path: string) =>
+    post<{ removed: boolean }>(`/websites/${encodeURIComponent(websiteId)}/files/remove`, { path }),
+  rename: (websiteId: string, oldPath: string, newPath: string) =>
+    post<{ renamed: boolean }>(`/websites/${encodeURIComponent(websiteId)}/files/rename`, {
+      old_path: oldPath,
+      new_path: newPath,
+    }),
+};
+
+// --- Phase 8: DNS management -------------------------------------------------
+
+export const dnsApi = {
+  listZones: () => get<{ zones: DNSZone[] }>("/dns/zones"),
+  createZone: (domain: string) =>
+    post<{ zone: DNSZone }>("/dns/zones", { domain }),
+  getZone: (id: string) => get<{ zone: DNSZone }>(`/dns/zones/${encodeURIComponent(id)}`),
+  deleteZone: (id: string) => del<{ deleted: boolean }>(`/dns/zones/${encodeURIComponent(id)}`),
+  syncZone: (id: string) =>
+    post<{ synced: boolean }>(`/dns/zones/${encodeURIComponent(id)}/sync`),
+  listRecords: (zoneId: string) =>
+    get<{ records: DNSRecord[] }>(`/dns/zones/${encodeURIComponent(zoneId)}/records`),
+  createRecord: (
+    zoneId: string,
+    input: { name: string; type: string; value: string; priority?: number; ttl?: number; proxied?: boolean },
+  ) => post<{ record: DNSRecord }>(`/dns/zones/${encodeURIComponent(zoneId)}/records`, input),
+  deleteRecord: (id: string) => del<{ deleted: boolean }>(`/dns/records/${encodeURIComponent(id)}`),
 };
 
 export const jobsApi = {

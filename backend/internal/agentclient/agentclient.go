@@ -313,6 +313,60 @@ func (c *Client) FSRemove(ctx context.Context, baseURL, token, path string) erro
 	}, nil)
 }
 
+// FSEntry is one directory listing item returned by the agent.
+type FSEntry struct {
+	Name    string `json:"name"`
+	Path    string `json:"path"`
+	IsDir   bool   `json:"is_dir"`
+	Size    int64  `json:"size"`
+	Mode    string `json:"mode,omitempty"`
+	ModTime string `json:"mod_time,omitempty"`
+}
+
+// FSListResult is the agent's directory listing response.
+type FSListResult struct {
+	Entries []FSEntry `json:"entries"`
+	Path    string    `json:"path"`
+}
+
+// FSList lists a directory inside the sites root.
+func (c *Client) FSList(ctx context.Context, baseURL, token, path string) (*FSListResult, error) {
+	var out FSListResult
+	err := c.do(ctx, baseURL, token, request{
+		method: http.MethodPost, path: "/agent/v1/fs/list",
+		body: map[string]string{"path": path},
+	}, &out)
+	return &out, err
+}
+
+// FSReadResult is the agent's bounded file-read response.
+type FSReadResult struct {
+	ContentBase64 string `json:"content_base64"`
+	SizeBytes     int64  `json:"size_bytes"`
+	Truncated     bool   `json:"truncated"`
+}
+
+// FSRead reads up to maxBytes of a file inside the sites root.
+func (c *Client) FSRead(ctx context.Context, baseURL, token, path string, maxBytes int64) (*FSReadResult, error) {
+	if maxBytes <= 0 {
+		maxBytes = 8 << 20
+	}
+	var out FSReadResult
+	err := c.do(ctx, baseURL, token, request{
+		method: http.MethodPost, path: "/agent/v1/fs/read",
+		body: map[string]any{"path": path, "max_bytes": maxBytes},
+	}, &out)
+	return &out, err
+}
+
+// FSRename moves/renames a file or directory inside the sites root.
+func (c *Client) FSRename(ctx context.Context, baseURL, token, oldPath, newPath string) error {
+	return c.do(ctx, baseURL, token, request{
+		method: http.MethodPost, path: "/agent/v1/fs/rename",
+		body: map[string]string{"old_path": oldPath, "new_path": newPath},
+	}, nil)
+}
+
 // FSUser ensures the shared site system user exists (Linux only; the agent
 // reports unsupported on Windows and callers treat that as success).
 func (c *Client) FSUser(ctx context.Context, baseURL, token, username string) error {

@@ -2,19 +2,35 @@ package platform
 
 import (
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 )
 
 // FSOps is the constrained filesystem surface: every path must resolve inside
 // the configured sites root, which is verified on the agent for each call.
-// There is no generic read/write API — file contents only flow for panel-
-// generated configuration and the default page.
+// File contents only flow for panel-requested reads/writes (File Manager);
+// there is no unrestricted read/write API.
 type FSOps interface {
 	MkdirAll(paths []string) error
 	WriteFile(path string, content []byte) error
 	Remove(path string) error
+	List(path string) ([]FSEntry, error)
+	ReadFile(path string, maxBytes int64) ([]byte, int64, bool, error)
+	Rename(oldPath, newPath string) error
+}
+
+// FSEntry is one directory listing item (File Manager).
+type FSEntry struct {
+	Name    string `json:"name"`
+	Path    string `json:"path"`
+	IsDir   bool   `json:"is_dir"`
+	Size    int64  `json:"size"`
+	Mode    string `json:"mode,omitempty"`
+	ModTime string `json:"mod_time,omitempty"`
 }
 
 // fsOps implements FSOps over a fixed sites root.
@@ -91,6 +107,121 @@ func (f *fsOps) Remove(path string) error {
 		return errors.New("refusing to remove the sites root")
 	}
 	return os.RemoveAll(resolved)
+}
+
+// List returns the entries of a directory inside the sites root. Entries are
+// sorted directories-first then by name for a stable File Manager view.
+func (f *fsOps) List(path string) ([]FSEntry, error) {
+	resolved, err := f.resolve(path)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(resolved)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]FSEntry, 0, len(entries))
+	for _, e := range entries {
+		info, ierr := e.Info()
+		size := int64(0)
+		if ierr == nil {
+			size = info.Size()
+		}
+		out = append(out, FSEntry{
+			Name:    e.Name(),
+			Path:    filepath.ToSlash(filepath.Join(resolved, e.Name())),
+			IsDir:   e.IsDir(),
+			Size:    size,
+			Mode:    modeString(ierr, info),
+			ModTime: modTimeString(ierr, info),
+		})
+	}
+	// Sort directories first, then by name.
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].IsDir != out[j].IsDir {
+			return out[i].IsDir
+		}
+		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
+	})
+	return out, nil
+}
+
+// ReadFile returns up to maxBytes of a file (bounded) with its total size and
+// a truncated flag. Only files inside the sites root are readable.
+func (f *fsOps) ReadFile(path string, maxBytes int64) ([]byte, int64, bool, error) {
+	if maxBytes <= 0 || maxBytes > 8<<20 {
+		maxBytes = 8 << 20
+	}
+	resolved, err := f.resolve(path)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	fi, err := os.Stat(resolved)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	if fi.IsDir() {
+		return nil, 0, false, errors.New("path is a directory")
+	}
+	size := fi.Size()
+	if size == 0 {
+		return []byte{}, 0, false, nil
+	}
+	readN := size
+	truncated := false
+	if readN > maxBytes {
+		readN = maxBytes
+		truncated = true
+	}
+	fh, err := os.Open(resolved)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	defer fh.Close()
+	buf := make([]byte, readN)
+	n, err := io.ReadFull(fh, buf)
+	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+		return nil, 0, false, err
+	}
+	return buf[:n], size, truncated, nil
+}
+
+// Rename moves or renames a file/directory inside the sites root. Both sides
+// are validated independently so a move can never escape the root.
+func (f *fsOps) Rename(oldPath, newPath string) error {
+	if strings.TrimSpace(oldPath) == "" || strings.TrimSpace(newPath) == "" {
+		return errors.New("old and new paths are required")
+	}
+	oldResolved, err := f.resolve(oldPath)
+	if err != nil {
+		return err
+	}
+	newResolved, err := f.resolve(newPath)
+	if err != nil {
+		return err
+	}
+	if filepath.Clean(oldResolved) == filepath.Clean(f.sitesRoot) ||
+		filepath.Clean(newResolved) == filepath.Clean(f.sitesRoot) {
+		return errors.New("refusing to rename the sites root")
+	}
+	if err := os.MkdirAll(filepath.Dir(newResolved), 0o755); err != nil {
+		return err
+	}
+	return os.Rename(oldResolved, newResolved)
+}
+
+func modeString(err error, info os.FileInfo) string {
+	if err != nil || info == nil {
+		return ""
+	}
+	return info.Mode().String()
+}
+
+func modTimeString(err error, info os.FileInfo) string {
+	if err != nil || info == nil {
+		return ""
+	}
+	return info.ModTime().UTC().Format(time.RFC3339)
 }
 
 // ChownSiteTree changes ownership of a tree inside the sites root to a user.

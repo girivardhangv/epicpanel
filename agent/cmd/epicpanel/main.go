@@ -257,10 +257,23 @@ func cmdUpdate(ctx context.Context, args []string) {
 		} else {
 			fmt.Println("  panel service restarted")
 		}
+		restartAgent(ctx)
 	} else {
 		fmt.Println("  note: restart the panel + agent processes to apply the update")
 	}
 	fmt.Println("Update complete.")
+}
+
+// restartAgent restarts the agentd so an updated binary takes effect. When
+// managed under systemd it is restarted via the unit; otherwise the operator
+// is told to restart it, because leaving the old process running keeps the
+// old management surface (missing new endpoints) alive.
+func restartAgent(ctx context.Context) {
+	if _, err := software.Run(ctx, "systemctl", "restart", "epicpanel-agentd"); err != nil {
+		fmt.Println("  [warn] could not restart epicpanel-agentd service (restart manually):", err)
+		return
+	}
+	fmt.Println("  agent restarted")
 }
 
 // downloadReleaseAsset fetches an asset and verifies its checksum against

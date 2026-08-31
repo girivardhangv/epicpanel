@@ -213,6 +213,27 @@ install_cli_and_agent() {
   # management) are separate release assets installed alongside the panel.
   download_tool "epicpanel-cli_linux_${ARCH}" "${EPICPANEL_CLI}" || true
   download_tool "epicpanel-agentd_linux_${ARCH}" "${EPICPANEL_AGENTD}" || true
+
+  # Install the agent's systemd unit so the management channel survives
+  # reboots and picks up updated binaries on restart. Disabled by default
+  # because the agent must be enrolled first (via the panel UI).
+  install -m 0644 /dev/stdin /etc/systemd/system/epicpanel-agentd.service <<'SVC'
+[Unit]
+Description=EpicPanel host agent (management channel)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/epicpanel-agentd
+Restart=on-failure
+RestartSec=5
+WorkingDirectory=/opt/epicpanel
+
+[Install]
+WantedBy=multi-user.target
+SVC
+  systemctl daemon-reload >/dev/null 2>&1 || true
 }
 
 write_env() {

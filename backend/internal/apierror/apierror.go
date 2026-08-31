@@ -3,6 +3,10 @@
 // Every error surfaced to clients has the shape:
 //	{ "error": { "code": "AUTH_INVALID_CREDENTIALS", "message": "...", "request_id": "..." } }
 // Internal details are never leaked; unknown errors collapse to a generic 500.
+//
+// Errors from cooperating packages (e.g. the agent transport) can implement
+// HTTPMappable so their status/code/message survive instead of collapsing to
+// a generic 500.
 package apierror
 
 import (
@@ -27,6 +31,13 @@ func New(status int, code, message string) *APIError {
 	return &APIError{Status: status, Code: code, Message: message}
 }
 
+// HTTPMappable is implemented by error types that can translate themselves
+// into a client-visible APIError, keeping their real status/code/message
+// instead of collapsing to a generic 500.
+type HTTPMappable interface {
+	APIError() *APIError
+}
+
 func Wrap(status int, code, message string, err error) *APIError {
 	return &APIError{Status: status, Code: code, Message: message}
 }
@@ -35,6 +46,9 @@ func From(err error) *APIError {
 	var ae *APIError
 	if errors.As(err, &ae) {
 		return ae
+	}
+	if m, ok := err.(HTTPMappable); ok {
+		return m.APIError()
 	}
 	wrapped := New(http.StatusInternalServerError, "INTERNAL_ERROR", "An internal error occurred")
 	wrapped.cause = err

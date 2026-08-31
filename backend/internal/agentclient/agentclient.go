@@ -14,6 +14,8 @@ import (
 	"net"
 	"net/http"
 	"time"
+
+	"github.com/epicbyte/epicpanel/backend/internal/apierror"
 )
 
 // Client talks to one agent endpoint per call; base URL and token are passed
@@ -126,11 +128,33 @@ type AgentError struct {
 
 func (e *AgentError) Error() string { return e.Message }
 
+// APIError maps an agent rejection onto the panel's error model, preserving
+// its status/code/message so the frontend shows a meaningful failure instead
+// of a generic 500 (e.g. an old agent lacking an endpoint -> HTTP 404).
+func (e *AgentError) APIError() *apierror.APIError {
+	code := e.Code
+	if code == "" {
+		code = "AGENT_ERROR"
+	}
+	message := e.Message
+	if message == "" {
+		message = fmt.Sprintf("agent returned HTTP %d", e.Status)
+	}
+	return apierror.New(e.Status, code, message)
+}
+
 // UnreachableError marks connectivity problems distinctly from rejections.
 type UnreachableError struct{ err error }
 
 func (e *UnreachableError) Error() string { return e.err.Error() }
 func (e *UnreachableError) Unwrap() error { return e.err }
+
+// APIError maps an unreachable agent to a 502 so the panel reports the agent
+// channel is down rather than an opaque internal error.
+func (e *UnreachableError) APIError() *apierror.APIError {
+	return apierror.New(http.StatusBadGateway, "AGENT_UNREACHABLE",
+		"Agent could not be reached: "+e.err.Error())
+}
 
 func errUnreachable(err error) error { return &UnreachableError{err: err} }
 

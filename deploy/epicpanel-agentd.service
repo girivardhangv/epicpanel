@@ -1,0 +1,15 @@
+[Unit]
+Description=EpicPanel host agent (management channel)
+Documentation=https://epichostly.in
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/epicpanel-agentd
+Restart=on-failure
+RestartSec=5
+WorkingDirectory=/opt/epicpanel
+
+[Install]
+WantedBy=multi-user.target

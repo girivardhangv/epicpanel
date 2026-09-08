@@ -474,6 +474,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /readyz", s.readyz)
 	mux.HandleFunc("GET /v1/openapi.json", s.openAPI)
 
+	// Wave phases 6/7/8/10/11/13 (self-contained registrations; wave contract).
+	registerPhase6(s, mux)
+	registerPhase7(s, mux)
+	registerPhase8(s, mux)
+	registerPhase10(s, mux)
+	registerPhase11(s, mux)
+	registerPhase13(s, mux)
+
 	// Request flow (inside-out): ScopeEnforce -> CSRF -> SessionAuth ->
 	// CORS -> RateLimit -> RequestLog -> APIPrefixRewrite -> mux. The prefix
 	// rewrite is outermost so /api/v1 and /v1 share every route below.

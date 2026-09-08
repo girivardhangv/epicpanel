@@ -190,6 +190,10 @@ type Store struct {
 // Create inserts a pending backup row.
 func (s *Store) Create(ctx context.Context, b *Backup) (*Backup, error) {
 	dbs, _ := json.Marshal(b.Databases)
+	sinkRef := b.SinkRef
+	if sinkRef == "" {
+		sinkRef = "{}" // JSONB-safe default (agent overwrites via outcome)
+	}
 	row := s.Pool.QueryRow(ctx, `
 		INSERT INTO backups (organization_id, website_id, instance_id, bot_id, target_id,
 			type, status, trigger_type, size_bytes, sha256, encrypted, verification,
@@ -198,7 +202,7 @@ func (s *Store) Create(ctx context.Context, b *Backup) (*Backup, error) {
 		RETURNING `+cols,
 		b.Organization, b.WebsiteID, b.InstanceID, b.BotID, b.TargetID,
 		b.Type, b.Status, b.TriggerType, b.SizeBytes, b.SHA256, b.Encrypted,
-		b.Verification, b.SinkKind, []byte(b.SinkRef), b.StoredBytes, b.TargetServerID,
+		b.Verification, b.SinkKind, []byte(sinkRef), b.StoredBytes, b.TargetServerID,
 		dbs, b.Error, b.CreatedBy,
 	)
 	return scanRow(row)

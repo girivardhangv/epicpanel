@@ -28,10 +28,10 @@ import (
 // BackupOps2 is the Phase 11 registry the coordinator merges into the agent
 // dispatch (wave contract: var X OpFunc map).
 var BackupOps2 = map[string]func(context.Context, *Executor, *Client, Config, json.RawMessage) (json.RawMessage, error){
-	"backup_run":      HandleBackupRun,
-	"backup_restore":  HandleBackupRestore,
-	"backup_verify":   HandleBackupVerify,
-	"backup_prune":    HandleBackupPrune,
+	"backup_run":       HandleBackupRun,
+	"backup_restore":   HandleBackupRestore,
+	"backup_verify":    HandleBackupVerify,
+	"backup_prune":     HandleBackupPrune,
 	"terminate_backup": HandleTerminateBackup,
 }
 
@@ -66,15 +66,15 @@ type BackupRunPayload struct {
 
 // BackupOutcome2 is the job result for the unified ops.
 type BackupOutcome2 struct {
-	BackupID    string `json:"backup_id"`
-	SinkKind    string `json:"sink_kind"`
-	SinkRef     string `json:"sink_ref"` // opaque JSON ref stored on the row
-	SizeBytes   int64  `json:"size_bytes"`
-	StoredBytes int64  `json:"stored_bytes"`
-	SHA256      string `json:"sha256,omitempty"`
-	Encrypted   bool   `json:"encrypted"`
+	BackupID    string   `json:"backup_id"`
+	SinkKind    string   `json:"sink_kind"`
+	SinkRef     string   `json:"sink_ref"` // opaque JSON ref stored on the row
+	SizeBytes   int64    `json:"size_bytes"`
+	StoredBytes int64    `json:"stored_bytes"`
+	SHA256      string   `json:"sha256,omitempty"`
+	Encrypted   bool     `json:"encrypted"`
 	Databases   []string `json:"databases,omitempty"`
-	Verified    bool   `json:"verified"`
+	Verified    bool     `json:"verified"`
 }
 
 // BackupRestorePayload is the backup_restore job payload.
@@ -82,14 +82,14 @@ type BackupRestorePayload struct {
 	BackupID    string `json:"backup_id"`
 	Type        string `json:"type"`
 	RefOverride string `json:"ref_override,omitempty"`
-	WebsiteID  string `json:"website_id,omitempty"`
-	InstanceID string `json:"instance_id,omitempty"`
-	BotID      string `json:"bot_id,omitempty"`
+	WebsiteID   string `json:"website_id,omitempty"`
+	InstanceID  string `json:"instance_id,omitempty"`
+	BotID       string `json:"bot_id,omitempty"`
 	// Databases to restore (bundle restores).
 	Databases []DBClone `json:"databases,omitempty"`
 	// Target to fetch the artifact from + wrapped key to decrypt it.
-	Target  *sink.Config `json:"target,omitempty"`
-	KeyEnc  string       `json:"key_enc,omitempty"`
+	Target *sink.Config `json:"target,omitempty"`
+	KeyEnc string       `json:"key_enc,omitempty"`
 	// Legacy website flow fields (pre-Phase-11 restore path).
 	Runtime        string `json:"runtime,omitempty"`
 	RuntimeVersion string `json:"runtime_version,omitempty"`
@@ -99,16 +99,16 @@ type BackupRestorePayload struct {
 type BackupVerifyPayload struct {
 	BackupID    string       `json:"backup_id"`
 	RefOverride string       `json:"ref_override,omitempty"`
-	Target   *sink.Config `json:"target,omitempty"`
-	KeyEnc   string       `json:"key_enc,omitempty"`
-	SHA256   string       `json:"sha256,omitempty"`
+	Target      *sink.Config `json:"target,omitempty"`
+	KeyEnc      string       `json:"key_enc,omitempty"`
+	SHA256      string       `json:"sha256,omitempty"`
 }
 
 // BackupPrunePayload deletes listed artifacts from their sinks.
 type BackupPrunePayload struct {
 	Refs []struct {
-		SinkKind string `json:"sink_kind"`
-		SinkRef  string `json:"sink_ref"`
+		SinkKind string       `json:"sink_kind"`
+		SinkRef  string       `json:"sink_ref"`
 		Target   *sink.Config `json:"target,omitempty"`
 	} `json:"refs"`
 }
@@ -116,12 +116,12 @@ type BackupPrunePayload struct {
 // TerminateBackupPayload is the Phase 10 pre-terminate hook: a final
 // backup of the workload before irreversible teardown.
 type TerminateBackupPayload struct {
-	Type       string `json:"type"` // minecraft_world | discord_bot | full_instance | website
-	WebsiteID  string `json:"website_id,omitempty"`
-	InstanceID string `json:"instance_id,omitempty"`
-	BotID      string `json:"bot_id,omitempty"`
+	Type       string       `json:"type"` // minecraft_world | discord_bot | full_instance | website
+	WebsiteID  string       `json:"website_id,omitempty"`
+	InstanceID string       `json:"instance_id,omitempty"`
+	BotID      string       `json:"bot_id,omitempty"`
 	Target     *sink.Config `json:"target,omitempty"`
-	Encrypt    bool   `json:"encrypt,omitempty"`
+	Encrypt    bool         `json:"encrypt,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -343,12 +343,12 @@ func runBackup(ctx context.Context, e *Executor, c *Client, cfg Config, job back
 
 // Wire-type aliases to keep the switch readable.
 const (
-	sinkTypeWebsite = "website"
-	sinkTypeAccount = "account"
+	sinkTypeWebsite  = "website"
+	sinkTypeAccount  = "account"
 	sinkTypeDatabase = "database"
-	sinkTypeWorld   = "minecraft_world"
-	sinkTypeBot     = "discord_bot"
-	sinkTypeFull    = "full_instance"
+	sinkTypeWorld    = "minecraft_world"
+	sinkTypeBot      = "discord_bot"
+	sinkTypeFull     = "full_instance"
 )
 
 // openSink resolves the target config to a Sink (local default when unset).
@@ -723,4 +723,3 @@ func uuidCheck(s string) bool {
 	_, err := uuid.Parse(s)
 	return err == nil
 }
-

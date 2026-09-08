@@ -9,7 +9,7 @@ package api
 import (
 	"context"
 	"encoding/json"
-		"net/http"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -17,7 +17,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/epicbyte/epicpanel/backend/internal/audit"
-	"github.com/epicbyte/epicpanel/backend/internal/servers"
 	"github.com/epicbyte/epicpanel/backend/internal/backups"
 	"github.com/epicbyte/epicpanel/backend/internal/backups/sink"
 	"github.com/epicbyte/epicpanel/backend/internal/discord"
@@ -25,14 +24,15 @@ import (
 	"github.com/epicbyte/epicpanel/backend/internal/jobs"
 	"github.com/epicbyte/epicpanel/backend/internal/minecraft"
 	"github.com/epicbyte/epicpanel/backend/internal/organizations"
+	"github.com/epicbyte/epicpanel/backend/internal/servers"
 )
 
 // registerPhase11 mounts the unified backup engine routes.
 func registerPhase11(s *Server, mux *http.ServeMux) {
 	h := &phase11Handler{
-		srv:  s,
-		mc:   &minecraft.Store{Pool: s.Pool},
-		bots: &discord.Store{Pool: s.Pool},
+		srv:        s,
+		mc:         &minecraft.Store{Pool: s.Pool},
+		bots:       &discord.Store{Pool: s.Pool},
 		requireOrg: (&servers.Handler{Orgs: s.Orgs}).ResolveOrg,
 	}
 	// Targets.
@@ -628,5 +628,3 @@ func (h *phase11Handler) audit(r *http.Request, orgID uuid.UUID, action, resourc
 		Metadata:       meta,
 	})
 }
-
-

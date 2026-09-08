@@ -398,7 +398,16 @@ func PollAndExecute(ctx context.Context, c *Client, e *Executor, cfg Config) (bo
 			}
 		}
 	default:
-		execErr = errUnknownJobType(job.Type)
+		// Phase 7/8/11 registries (coordinator-merged dispatch).
+		if fn, ok := MinecraftOps[job.Type]; ok {
+			resultJSON, execErr = fn(ctx, e, c, cfg, job.Payload)
+		} else if fn, ok := DiscordOps[job.Type]; ok {
+			resultJSON, execErr = fn(ctx, e, c, cfg, job.Payload)
+		} else if fn, ok := BackupOps2[job.Type]; ok {
+			resultJSON, execErr = fn(ctx, e, c, cfg, job.Payload)
+		} else {
+			execErr = errUnknownJobType(job.Type)
+		}
 	}
 
 	req := ResultRequest{Success: execErr == nil, Error: "", Result: resultJSON}

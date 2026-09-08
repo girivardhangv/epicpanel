@@ -1,0 +1,126 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "EpicPanel API",
+    "version": "1.0.0",
+    "description": "Linux-first hosting control plane API. Session cookie or Bearer session token for users; Bearer epk_ tokens for automation (scoped)."
+  },
+  "servers": [{"url": "/"}],
+  "components": {
+    "securitySchemes": {
+      "bearer": {"type": "http", "scheme": "bearer"}
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {"type": "string"},
+              "message": {"type": "string"},
+              "details": {}
+            }
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/healthz": {"get": {"summary": "Liveness + database ping", "responses": {"200": {"description": "ok"}, "503": {"description": "degraded"}}}},
+    "/v1/openapi.json": {"get": {"summary": "This document", "responses": {"200": {"description": "ok"}}}},
+    "/v1/auth/register": {"post": {"summary": "Register user (first user becomes platform admin)", "responses": {"201": {"description": "created"}, "409": {"description": "email taken"}, "422": {"description": "validation"}}}},
+    "/v1/auth/login": {"post": {"summary": "Session login", "responses": {"200": {"description": "ok"}, "401": {"description": "invalid credentials"}}}},
+    "/v1/auth/logout": {"post": {"summary": "Revoke session", "responses": {"204": {"description": "done"}}}},
+    "/v1/auth/me": {"get": {"summary": "Current user", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}, "401": {"description": "unauthenticated"}}}},
+    "/v1/organizations": {
+      "get": {"summary": "List organizations of current user", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}},
+      "post": {"summary": "Create organization (creator becomes owner)", "security": [{"bearer": []}], "responses": {"201": {"description": "created"}, "409": {"description": "slug taken"}}}
+    },
+    "/v1/organizations/{org_id}": {
+      "get": {"summary": "Organization details (billing+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}, "404": {"description": "not a member"}}},
+      "patch": {"summary": "Rename organization (admin+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}}
+    },
+    "/v1/organizations/{org_id}/members": {
+      "get": {"summary": "List members (billing+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}},
+      "post": {"summary": "Add member by email (admin+)", "security": [{"bearer": []}], "responses": {"201": {"description": "added"}, "404": {"description": "no such user"}}}
+    },
+    "/v1/organizations/{org_id}/members/{user_id}": {
+      "patch": {"summary": "Change member role (admin+)", "security": [{"bearer": []}], "responses": {"204": {"description": "done"}}},
+      "delete": {"summary": "Remove member (admin+, last owner protected)", "security": [{"bearer": []}], "responses": {"204": {"description": "done"}, "409": {"description": "last owner"}}}
+    },
+    "/v1/organizations/{org_id}/servers": {
+      "get": {"summary": "List servers (billing+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}},
+      "post": {"summary": "Register server (admin+) -> one-time registration token", "security": [{"bearer": []}], "responses": {"201": {"description": "created"}}}
+    },
+    "/v1/organizations/{org_id}/servers/capacity": {"get": {"summary": "Placement/capacity overview (admin+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}}},
+    "/v1/organizations/{org_id}/servers/{server_id}": {
+      "get": {"summary": "Server details (billing+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}},
+      "delete": {"summary": "Delete server (admin+)", "security": [{"bearer": []}], "responses": {"204": {"description": "done"}}}
+    },
+    "/v1/organizations/{org_id}/servers/{server_id}/maintenance": {"patch": {"summary": "Toggle maintenance mode (admin+)", "security": [{"bearer": []}], "responses": {"204": {"description": "done"}}}},
+    "/v1/organizations/{org_id}/servers/{server_id}/runtimes": {
+      "get": {"summary": "List runtimes (billing+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}},
+      "post": {"summary": "Install runtime {type, version} (admin+) -> 202", "security": [{"bearer": []}], "responses": {"202": {"description": "installing"}}}
+    },
+    "/v1/organizations/{org_id}/servers/{server_id}/runtimes/{runtime_id}": {"delete": {"summary": "Remove runtime (admin+; 409 while in use)", "security": [{"bearer": []}], "responses": {"202": {"description": "removing"}}}},
+    "/v1/organizations/{org_id}/websites": {
+      "get": {"summary": "List websites (billing+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}},
+      "post": {"summary": "Create website (developer+) -> 202 + job (server_id optional: auto-placement)", "security": [{"bearer": []}], "responses": {"202": {"description": "accepted"}}}
+    },
+    "/v1/organizations/{org_id}/websites/{website_id}": {
+      "get": {"summary": "Website details (billing+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}},
+      "patch": {"summary": "Change runtime_version -> reconcile (developer+)", "security": [{"bearer": []}], "responses": {"202": {"description": "accepted"}}},
+      "delete": {"summary": "Request deletion (admin+)", "security": [{"bearer": []}], "responses": {"204": {"description": "deleting"}}}
+    },
+    "/v1/organizations/{org_id}/websites/{website_id}/staging": {"post": {"summary": "Create staging env + clone (admin+) -> 202", "security": [{"bearer": []}], "responses": {"202": {"description": "cloning"}}}},
+    "/v1/organizations/{org_id}/websites/{website_id}/promote": {"post": {"summary": "Promote staging to production (admin+) -> 202", "security": [{"bearer": []}], "responses": {"202": {"description": "promoting"}}}},
+    "/v1/organizations/{org_id}/websites/{website_id}/domains": {
+      "get": {"summary": "List domains (billing+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}},
+      "post": {"summary": "Add alias domain (developer+; globally unique)", "security": [{"bearer": []}], "responses": {"201": {"description": "added"}, "409": {"description": "domain taken"}}}
+    },
+    "/v1/organizations/{org_id}/domains": {"get": {"summary": "List all domains in the org (SSL dashboard, billing+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}}},
+    "/v1/setup/status": {"get": {"summary": "Setup status (+ ?token= validity check, no auth)", "responses": {"200": {"description": "ok"}}}},
+    "/v1/setup/verify-hostname": {"post": {"summary": "Verify hostname resolves to this server (no auth)", "responses": {"200": {"description": "matched/resolved"}}}},
+    "/v1/setup/software": {"get": {"summary": "Setup catalog + install jobs (requires valid setup token)", "responses": {"200": {"description": "ok"}, "401": {"description": "token required"}}}, "post": {"summary": "Queue managed software installs during setup (token-gated) -> 202", "responses": {"202": {"description": "queued"}}}},
+    "/v1/setup/jobs": {"get": {"summary": "Live job progress during setup (token-gated)", "responses": {"200": {"description": "ok"}}}},
+    "/v1/organizations/{org_id}/servers/{server_id}/jobs": {"get": {"summary": "Recent jobs for a server (live progress, billing+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}}},
+    "/v1/organizations/{org_id}/servers/{server_id}/detect-software": {"post": {"summary": "Inventory installed managed software and adopt it (admin+) -> 202", "security": [{"bearer": []}], "responses": {"202": {"description": "detecting"}}}},
+    "/v1/organizations/{org_id}/servers/{server_id}/runtimes/{runtime_id}/extensions": {"get": {"summary": "List managed PHP extensions (billing+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}}, "post": {"summary": "Install/remove a PHP extension {name, action} (developer+) -> 202", "security": [{"bearer": []}], "responses": {"202": {"description": "queued"}}}},
+    "/v1/organizations/{org_id}/websites/{website_id}/usage": {"get": {"summary": "Per-site resource usage (cgroup CPU/memory + disk, auto-sampled)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}}},
+    "/v1/organizations/{org_id}/websites/{website_id}/config": {"get": {"summary": "Get per-site config (rewrite rules, billing+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}}},
+    "/v1/organizations/{org_id}/websites/{website_id}/config/rewrite": {"put": {"summary": "Save rewrite rules snippet and reconcile vhost (developer+)", "security": [{"bearer": []}], "responses": {"200": {"description": "saved"}, "422": {"description": "unsupported directive"}}}},
+    "/v1/organizations/{org_id}/databases/{db_id}/pma-sso": {"get": {"summary": "One-time phpMyAdmin/Adminer SSO link (developer+, audited)", "security": [{"bearer": []}], "responses": {"200": {"description": "url"}, "409": {"description": "not ready"}}}},
+    "/v1/pma-gate": {"get": {"summary": "Public one-time auto-login gate (encrypted token is the auth)", "responses": {"200": {"description": "html form"}, "401": {"description": "expired"}, "409": {"description": "already used"}}}},
+    "/v1/organizations/{org_id}/domains/{domain_id}/ssl": {"post": {"summary": "Set SSL mode {none|selfsigned|letsencrypt} (developer+) -> 202", "security": [{"bearer": []}], "responses": {"202": {"description": "issuing"}}}},
+    "/v1/organizations/{org_id}/domains/{domain_id}/verify-dns": {"post": {"summary": "Queue DNS verification (developer+) -> 202", "security": [{"bearer": []}], "responses": {"202": {"description": "queued"}}}},
+    "/v1/organizations/{org_id}/databases": {
+      "get": {"summary": "List databases (billing+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}},
+      "post": {"summary": "Create database {name, server_id, engine, website_id?} (developer+) -> 202", "security": [{"bearer": []}], "responses": {"202": {"description": "creating"}}}
+    },
+    "/v1/organizations/{org_id}/databases/{db_id}/credentials": {"get": {"summary": "Reveal credentials (developer+, audited)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}, "409": {"description": "not available"}}}},
+    "/v1/organizations/{org_id}/websites/{website_id}/deployment-config": {"patch": {"summary": "Set git deploy config (developer+)", "security": [{"bearer": []}], "responses": {"204": {"description": "done"}}}},
+    "/v1/organizations/{org_id}/websites/{website_id}/deploy": {"post": {"summary": "Trigger deploy (developer+) -> 202", "security": [{"bearer": []}], "responses": {"202": {"description": "deploying"}}}},
+    "/v1/organizations/{org_id}/websites/{website_id}/rollback": {"post": {"summary": "Rollback to last successful release (admin+) -> 202", "security": [{"bearer": []}], "responses": {"202": {"description": "rolling back"}}}},
+    "/v1/organizations/{org_id}/websites/{website_id}/deployments": {"get": {"summary": "Deployment history (billing+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}}},
+    "/v1/organizations/{org_id}/websites/{website_id}/backups": {
+      "get": {"summary": "Backup history (billing+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}},
+      "post": {"summary": "Create backup (developer+) -> 202", "security": [{"bearer": []}], "responses": {"202": {"description": "backing up"}}}
+    },
+    "/v1/organizations/{org_id}/websites/{website_id}/backup-config": {"patch": {"summary": "Set schedule {off|daily|weekly} + retention (admin+)", "security": [{"bearer": []}], "responses": {"204": {"description": "done"}}}},
+    "/v1/organizations/{org_id}/backups/{backup_id}/restore": {"post": {"summary": "Restore backup (admin+) -> 202", "security": [{"bearer": []}], "responses": {"202": {"description": "restoring"}}}},
+    "/v1/organizations/{org_id}/websites/{website_id}/health": {"get": {"summary": "Last 50 HTTP health checks (billing+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}}},
+    "/v1/organizations/{org_id}/alerts": {"get": {"summary": "Alerts (unresolved by default; ?resolved=true for all) (billing+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}}},
+    "/v1/organizations/{org_id}/servers/{server_id}/metrics/history": {"get": {"summary": "Last 200 server metric points (billing+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}}},
+    "/v1/organizations/{org_id}/api-tokens": {
+      "get": {"summary": "List API tokens (admin+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}},
+      "post": {"summary": "Create API token {name, scopes, expires_in_days?} (admin+) — raw shown once", "security": [{"bearer": []}], "responses": {"201": {"description": "created"}}}
+    },
+    "/v1/organizations/{org_id}/api-tokens/{token_id}": {"delete": {"summary": "Revoke API token (admin+)", "security": [{"bearer": []}], "responses": {"204": {"description": "done"}}}},
+    "/v1/organizations/{org_id}/audit-logs": {"get": {"summary": "Audit trail (billing+ org members; all orgs for platform admin)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}}},
+    "/v1/agent/enroll": {"post": {"summary": "Agent enrollment (one-time registration token)", "responses": {"201": {"description": "enrolled"}, "401": {"description": "invalid token"}}}},
+    "/v1/agent/heartbeat": {"post": {"summary": "Agent heartbeat + metrics (Bearer agent token)", "responses": {"200": {"description": "ok"}}}},
+    "/v1/agent/jobs/claim": {"post": {"summary": "Agent claims next pending job (Bearer agent token)", "responses": {"200": {"description": "job or null"}}}},
+    "/v1/agent/jobs/{job_id}/result": {"post": {"summary": "Agent reports job outcome (Bearer agent token)", "responses": {"200": {"description": "ok"}}}}
+  }
+}

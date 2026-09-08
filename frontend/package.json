@@ -1,0 +1,43 @@
+{
+  "name": "epichost-frontend",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:customer": "vite --config apps/customer/vite.config.ts",
+    "build": "tsc -b && vite build && vite build --config apps/customer/vite.config.ts",
+    "build:customer": "vite build --config apps/customer/vite.config.ts",
+    "typecheck": "tsc -b",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@epicpanel/charts": "*",
+    "@epicpanel/core": "*",
+    "@epicpanel/design-system": "*",
+    "@epicpanel/forms": "*",
+    "@epicpanel/icons": "*",
+    "@epicpanel/tables": "*",
+    "@epicpanel/ui": "*",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "lucide-react": "^1.40.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.3"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^5.1.4",
+    "autoprefixer": "^10.4.21",
+    "postcss": "^8.5.9",
+    "tailwindcss": "^3.4.19",
+    "typescript": "^5.9.3",
+    "vite": "^8.2.2"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ]
+}

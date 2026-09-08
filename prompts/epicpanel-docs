@@ -1,0 +1,1299 @@
+Hosting Control Panel — Master Development Plan
+0. Core Architecture
+
+Use a Control Plane + Node Agent architecture.
+
+                         ┌──────────────────────┐
+                         │      React UI         │
+                         │                      │
+                         │  Admin / WHM         │
+                         │  Customer / cPanel   │
+                         └──────────┬───────────┘
+                                    │
+                                  HTTPS
+                                    │
+                         ┌──────────▼───────────┐
+                         │      Go API          │
+                         │                      │
+                         │ Auth / RBAC          │
+                         │ Accounts             │
+                         │ Billing              │
+                         │ Provisioning         │
+                         │ Nodes                │
+                         │ Services             │
+                         └──────────┬───────────┘
+                                    │
+                         Queue / Events / API
+                                    │
+              ┌─────────────────────┼─────────────────────┐
+              ▼                     ▼                     ▼
+       ┌──────────────┐      ┌──────────────┐      ┌──────────────┐
+       │ Hosting Node │      │ Minecraft    │      │ Discord      │
+       │              │      │ Node         │      │ Node         │
+       │ Go Agent     │      │ Go Agent     │      │ Go Agent     │
+       │ Nginx        │      │ Docker       │      │ Docker       │
+       │ Apache/OLS   │      │ Java         │      │ Node.js      │
+       │ PHP-FPM      │      │ Minecraft    │      │ Python       │
+       │ MariaDB      │      │ servers      │      │ Bots         │
+       │ DNS          │      │              │      │              │
+       └──────────────┘      └──────────────┘      └──────────────┘
+Important architectural principle
+
+The Go control plane should NOT directly execute arbitrary server commands.
+
+Each managed node gets a Node Agent.
+
+The agent is responsible for:
+
+resource collection
+process management
+service management
+filesystem operations
+provisioning
+Docker/container management
+web-server configuration
+PHP-FPM
+Minecraft servers
+Discord bots
+backups
+networking
+firewall integration
+
+The control plane tells the agent what should happen.
+
+The agent determines how to safely perform it.
+
+Recommended Technology Stack
+Backend
+
+Go
+
+Recommended:
+
+Go
+chi or Gin for HTTP API
+PostgreSQL
+Redis
+WebSockets
+Server-Sent Events where appropriate
+OpenTelemetry
+Prometheus-compatible metrics
+structured logging
+background workers
+event-driven architecture
+
+I would personally favor:
+
+Go
+├── chi
+├── pgx
+├── PostgreSQL
+├── Redis
+├── WebSocket
+├── OpenTelemetry
+├── Prometheus
+└── systemd
+
+Don't introduce 20 frameworks just because they're popular.
+
+Keep the backend relatively boring and reliable.
+
+Frontend
+
+React + TypeScript
+
+Use:
+
+React
+TypeScript
+Vite
+TanStack Query
+React Router
+Zustand
+Tailwind CSS
+Recharts / lightweight charting
+WebSocket client
+
+The UI should be two experiences sharing the same design system:
+
+WHM
+ └── Administration
+
+cPanel
+ └── Customer
+
+Don't build two completely separate frontend systems.
+
+Create:
+
+packages/
+   ui/
+   icons/
+   charts/
+   tables/
+   forms/
+   design-system/
+
+Then:
+
+apps/
+   admin/
+   customer/
+PHASE 1 — Codebase Audit & Architecture Recovery
+
+Do this BEFORE changing functionality.
+
+Your agent should inspect:
+
+Frontend
+Backend
+Database
+API
+Authentication
+Authorization
+WebSocket
+Metrics
+Provisioning
+Node communication
+Background jobs
+Docker
+Filesystem
+Web servers
+Minecraft
+Discord
+Billing
+Logging
+Configuration
+Tests
+Deployment
+
+For every module classify:
+
+KEEP
+REFACTOR
+REWRITE
+REMOVE
+MISSING
+
+Also identify:
+
+duplicated logic
+dead code
+insecure code
+race conditions
+bad abstractions
+database problems
+API inconsistencies
+memory leaks
+blocking operations
+inefficient queries
+incorrect metrics
+stale polling
+frontend over-fetching
+backend bottlenecks
+Agent Prompt — Phase 1
+You are working on an existing hosting control panel built with Go and React/TypeScript.
+
+DO NOT immediately rewrite the project.
+
+First perform a complete architecture and codebase audit.
+
+Analyze the entire repository and understand how the existing system currently works.
+
+Inspect:
+- Go backend
+- React frontend
+- database schema and migrations
+- authentication
+- authorization/RBAC
+- APIs
+- WebSockets
+- background jobs
+- metrics
+- node/server management
+- provisioning
+- Docker integration
+- filesystem management
+- web-server integration
+- PHP-FPM
+- DNS
+- SSL
+- backups
+- Minecraft functionality
+- Discord/bot functionality
+- billing
+- logging
+- configuration
+- deployment
+- tests
+
+For every existing module classify it as:
+KEEP
+REFACTOR
+REWRITE
+REMOVE
+MISSING
+
+Do not make large changes yet.
+
+Identify architectural problems, security problems, performance problems, race conditions, stale-data problems, bad abstractions, duplicated logic, inefficient database queries, blocking operations, and modules that will prevent the system from scaling.
+
+Pay particular attention to the current resource monitoring implementation.
+
+Determine why CPU/RAM/disk/network usage can become delayed or inaccurate under high load.
+
+Create an architecture report containing:
+1. Current architecture
+2. Existing modules
+3. Dependency relationships
+4. KEEP modules
+5. REFACTOR modules
+6. REWRITE modules
+7. REMOVE modules
+8. Missing modules
+9. Critical technical debt
+10. Security risks
+11. Performance risks
+12. Recommended target architecture
+13. Recommended development order
+
+Do not rewrite good existing code simply for stylistic reasons.
+
+Preserve working functionality where the architecture is sound.
+
+The goal is to recover the existing architecture first and create a safe plan for incremental rework.
+PHASE 2 — Core Platform
+
+Build the foundation everything else depends on.
+
+Modules
+Identity
+users
+sessions
+password authentication
+2FA
+API keys
+service accounts
+roles
+permissions
+RBAC
+Super Admin
+Admin
+Support
+Reseller
+Customer
+
+Permission examples:
+
+server.read
+server.manage
+account.create
+account.suspend
+billing.manage
+node.execute
+backup.restore
+Core entities
+User
+Customer
+Server
+Node
+Service
+Plan
+Product
+Account
+Domain
+Resource
+Subscription
+Invoice
+Job
+Event
+API
+
+Create consistent APIs.
+
+/api/v1/auth
+/api/v1/users
+/api/v1/customers
+/api/v1/nodes
+/api/v1/servers
+/api/v1/accounts
+/api/v1/plans
+/api/v1/domains
+/api/v1/services
+/api/v1/jobs
+/api/v1/metrics
+Agent Prompt — Phase 2
+Implement the core platform foundation based on the Phase 1 audit.
+
+Do not blindly rewrite existing modules marked KEEP.
+
+Rework or replace modules identified as architecturally unsafe.
+
+Build a clean Go backend foundation with:
+- PostgreSQL
+- Redis
+- versioned REST API
+- WebSocket/event infrastructure
+- background job system
+- structured logging
+- configuration management
+- graceful shutdown
+- health/readiness endpoints
+- database migrations
+- consistent error handling
+- request validation
+- rate limiting
+- audit logging
+
+Implement:
+- users
+- customers
+- roles
+- permissions
+- RBAC
+- sessions
+- authentication
+- 2FA foundation
+- API keys
+- nodes
+- hosting accounts
+- plans
+- services
+- jobs
+- events
+
+Keep APIs versioned.
+
+Make all provisioning and infrastructure operations asynchronous through jobs where appropriate.
+
+Jobs must be idempotent and retryable.
+
+Do not allow arbitrary shell commands through public APIs.
+
+Create a clean internal service architecture so later modules can build on it without creating duplicated logic.
+
+Update tests as modules are changed.
+PHASE 3 — Node Agent + Real-Time Infrastructure
+
+This is one of the most important phases.
+
+Your current metrics problem is likely architectural.
+
+Don't rely on:
+
+Frontend → API → run command → server → response
+
+for metrics.
+
+Instead:
+
+                  NODE
+
+             ┌──────────────┐
+             │ Node Agent   │
+             └──────┬───────┘
+                    │
+       ┌────────────┼─────────────┐
+       ▼            ▼             ▼
+    CPU/RAM       Disk/IO      Network
+       │            │             │
+       └────────────┼─────────────┘
+                    ▼
+              Local Metrics
+                    │
+              high frequency
+                    │
+                    ▼
+             Control Plane
+                    │
+             WebSocket
+                    │
+                    ▼
+                 React
+Metrics should have two concepts
+
+Instantaneous metrics
+
+Used for:
+
+live dashboard
+current CPU
+current RAM
+current network
+current process state
+
+Historical metrics
+
+Used for:
+
+graphs
+billing
+analytics
+reports
+
+Do NOT use the historical database as your source for the live dashboard.
+
+Resource monitoring
+
+For Linux nodes, collect:
+
+CPU
+RAM
+Swap
+Load average
+Disk usage
+Disk I/O
+Network RX
+Network TX
+Process count
+Filesystem inode usage
+TCP connections
+Service status
+
+For every hosting account:
+
+CPU usage
+Memory usage
+Disk usage
+Bandwidth
+Processes
+IO
+
+For containers:
+
+CPU
+Memory
+Memory limit
+Network RX
+Network TX
+Block I/O
+PIDs
+Uptime
+
+For Minecraft:
+
+CPU
+RAM
+TPS
+MSPT
+Players
+Network
+Disk
+Process status
+
+For Discord:
+
+CPU
+RAM
+Network
+Process status
+uptime
+restart count
+Very important
+
+Don't make the browser poll:
+
+GET /metrics
+GET /metrics
+GET /metrics
+GET /metrics
+
+every second.
+
+Use:
+
+Node Agent
+   ↓
+metrics stream
+   ↓
+Go backend
+   ↓
+WebSocket
+   ↓
+React
+
+And use Redis/pub-sub or an internal event mechanism where appropriate.
+
+Agent Prompt — Phase 3
+Rework the node architecture around a dedicated Go Node Agent.
+
+The Node Agent must be installed on every managed hosting/server node.
+
+The control plane must NOT depend on executing arbitrary SSH commands for normal infrastructure operations.
+
+Implement secure authenticated control-plane ↔ node-agent communication.
+
+Implement a real-time metrics pipeline.
+
+Metrics must NOT depend on slow database queries or browser polling.
+
+The Node Agent should continuously collect:
+- CPU
+- memory
+- swap
+- load average
+- disk usage
+- disk IO
+- network RX/TX
+- inode usage
+- process information
+- service health
+
+For managed workloads collect per-resource metrics.
+
+Support:
+- Linux host metrics
+- systemd services
+- Docker/container metrics
+- process metrics
+
+Separate:
+1. instantaneous metrics
+2. historical metrics
+
+Instantaneous metrics should be kept in a low-latency in-memory/local representation and streamed to the control plane.
+
+Historical metrics should be asynchronously persisted for graphs and reporting.
+
+Implement:
+- WebSocket or equivalent persistent event stream
+- reconnect handling
+- heartbeat
+- sequence numbers
+- timestamps
+- stale-data detection
+- node connection status
+- metric freshness indicators
+
+The UI must be able to tell whether a metric is:
+LIVE
+STALE
+OFFLINE
+
+Never present old metrics as if they are current.
+
+Optimize the implementation so high server load does not cause the monitoring system to become silently inaccurate.
+
+Do not perform expensive metrics aggregation synchronously inside normal API requests.
+
+Add tests for high-load and reconnect scenarios.
+PHASE 4 — Web Hosting Engine
+
+Now build the cPanel side.
+
+Support:
+
+Nginx
+Nginx + Apache
+Nginx + OpenLiteSpeed
+Core modules
+websites
+domains
+subdomains
+aliases
+redirects
+PHP versions
+PHP-FPM
+extensions
+databases
+database users
+DNS
+SSL
+cron
+FTP/SFTP
+file manager
+resource limits
+
+Architecture:
+
+Hosting Account
+       │
+       ├── Linux user
+       ├── filesystem
+       ├── domains
+       ├── PHP-FPM pool
+       ├── web configuration
+       ├── databases
+       ├── DNS
+       ├── SSL
+       └── cron
+
+Every account needs isolation.
+
+Agent Prompt — Phase 4
+Implement the web-hosting engine.
+
+Support these web-server modes:
+1. Nginx
+2. Nginx + Apache
+3. Nginx + OpenLiteSpeed
+
+Do not create three unrelated implementations.
+
+Create a common web-server abstraction with provider-specific implementations.
+
+Implement:
+- hosting accounts
+- Linux users
+- filesystem isolation
+- domains
+- subdomains
+- aliases
+- redirects
+- virtual hosts
+- PHP-FPM pools
+- PHP version selection
+- PHP extensions
+- MySQL/MariaDB databases
+- database users
+- DNS zones
+- DNS records
+- SSL certificate provisioning
+- cron jobs
+- FTP/SFTP
+- resource limits
+
+All provisioning operations must execute through the Node Agent.
+
+Operations must be:
+- idempotent
+- retryable
+- logged
+- auditable
+- reversible where practical
+
+Never expose arbitrary shell execution to customers.
+
+Implement validation before changing live web-server configuration.
+
+Use safe atomic configuration writes and configuration testing before reload/restart.
+
+A failed configuration must not take down unrelated websites.
+
+Add rollback behavior where possible.
+
+Keep the implementation modular so new web-server providers can be added later.
+PHASE 5 — Customer cPanel
+
+Now build the actual customer experience.
+
+Dashboard
+
+Websites
+Domains
+Subdomains
+SSL
+
+File Manager
+FTP
+
+Databases
+phpMyAdmin
+
+Email
+
+DNS
+
+PHP
+Cron Jobs
+
+Backups
+
+Metrics
+
+Security
+
+Account
+
+Focus on simple UX.
+
+The customer shouldn't need to understand Linux.
+
+PHASE 6 — Admin WHM
+
+Admin gets:
+
+Dashboard
+Nodes
+Servers
+Customers
+Accounts
+Plans
+Domains
+DNS
+IP Addresses
+Web Servers
+PHP
+Databases
+Backups
+Security
+Monitoring
+Logs
+Jobs
+Billing
+Support
+Settings
+
+Include:
+
+node health
+capacity
+account distribution
+active services
+failed jobs
+alerts
+resource consumption
+PHASE 7 — Minecraft Hosting
+
+Minecraft should be treated as a different workload type, not as a web-hosting account with extra fields.
+
+Architecture:
+
+Minecraft Product
+       │
+       ▼
+Minecraft Instance
+       │
+       ├── Container
+       ├── Java runtime
+       ├── Server JAR
+       ├── World
+       ├── Config
+       ├── Ports
+       ├── CPU limit
+       ├── RAM limit
+       ├── Disk limit
+       └── Network limits
+
+Support eventually:
+
+Vanilla
+Paper
+Purpur
+Fabric
+Forge
+NeoForge
+
+Potential versions should be determined by what's actually supported/tested, not hardcoded forever.
+
+Minecraft controls
+Start
+Stop
+Restart
+Kill
+Console
+Files
+Backups
+Restore
+Properties
+Versions
+Mods
+Plugins
+Players
+World
+Schedules
+Startup command
+Java version
+Metrics
+
+Especially:
+
+TPS
+MSPT
+Players
+CPU
+RAM
+Disk
+Network
+Agent Prompt — Phase 7
+Implement Minecraft hosting as a first-class workload type.
+
+Do NOT model Minecraft as ordinary web hosting.
+
+Create a Minecraft service abstraction.
+
+Use isolated containers/workloads for Minecraft instances.
+
+Implement:
+- instance creation
+- start
+- stop
+- restart
+- kill
+- console
+- command execution through a controlled console interface
+- server versions
+- Java runtime selection
+- startup configuration
+- memory limits
+- CPU limits
+- disk limits
+- network limits
+- port allocation
+- filesystem management
+- backups
+- restore
+- scheduled tasks
+- player information
+- plugins/mods management foundation
+
+Support a provider architecture for server types such as:
+- Vanilla
+- Paper
+- Purpur
+- Fabric
+- Forge/NeoForge
+
+Do not hardcode provider-specific logic into the core service.
+
+Implement container-level resource enforcement.
+
+Collect live metrics including:
+- CPU
+- memory
+- network
+- disk
+- uptime
+- process status
+- TPS
+- MSPT
+- player count
+
+The Node Agent must be authoritative for runtime state.
+
+The control plane should reflect actual node state rather than assuming an operation succeeded merely because an API request was accepted.
+
+Handle crashes and unexpected process termination.
+
+Implement safe startup/shutdown behavior and automatic state reconciliation.
+PHASE 8 — Discord Bot Hosting
+
+Again, treat this separately.
+
+Discord Product
+       │
+       ▼
+Bot Instance
+       │
+       ├── Docker
+       ├── Node.js
+       ├── Python
+       ├── Java
+       ├── CPU
+       ├── RAM
+       ├── Disk
+       └── Network
+
+Customer should be able to:
+
+upload bot
+deploy
+start
+stop
+restart
+console/logs
+environment variables
+secrets
+dependencies
+startup command
+Python version
+Node version
+Git deployment
+automatic restart
+scheduled restart
+backups
+Agent Prompt — Phase 8
+Implement Discord bot hosting as a first-class workload.
+
+Support isolated containerized bot instances.
+
+Create a runtime abstraction supporting at minimum:
+- Node.js
+- Python
+
+Design the runtime system so additional runtimes can be added later.
+
+Implement:
+- bot creation
+- deployment
+- file management
+- start
+- stop
+- restart
+- crash recovery
+- console/log streaming
+- environment variables
+- secret management
+- startup command
+- dependency installation
+- Node.js version selection
+- Python version selection
+- Git deployment foundation
+- automatic restart
+- scheduled tasks
+- backups
+
+Enforce:
+- CPU limits
+- RAM limits
+- disk limits
+- process/PID limits
+- network controls where supported
+
+Metrics must be live and must come from the actual running workload.
+
+Do not allow customers to access the Docker daemon directly.
+
+All container operations must go through the Node Agent.
+
+Implement secure secret handling and never expose secrets in logs or API responses.
+PHASE 9 — Resource & Limit Engine
+
+This is critical for a hosting company.
+
+Create a unified resource system.
+
+Resource
+├── CPU
+├── RAM
+├── Disk
+├── Bandwidth
+├── Processes
+├── Databases
+├── Domains
+├── Ports
+└── Backups
+
+Plans:
+
+Starter
+Pro
+Business
+Minecraft 2GB
+Minecraft 4GB
+Discord Basic
+Discord Pro
+
+Example:
+
+Minecraft 4GB
+
+RAM:       4096 MB
+CPU:       200%
+Disk:      20 GB
+Bandwidth: 2 TB
+Ports:     1
+Backups:   3
+
+For web hosting:
+
+CPU
+RAM
+Disk
+I/O
+Processes
+PHP workers
+Databases
+Domains
+Email
+Bandwidth
+
+The agent must enforce limits, not merely display them.
+
+PHASE 10 — Billing & Provisioning
+
+Eventually:
+
+Order
+ ↓
+Payment
+ ↓
+Invoice
+ ↓
+Provision
+ ↓
+Active
+
+Renewal:
+
+Renewal
+ ↓
+Payment
+ ↓
+Extend
+
+Failure:
+
+Payment failed
+ ↓
+Grace period
+ ↓
+Suspend
+ ↓
+Terminate
+
+Provisioning should be a state machine.
+
+PENDING
+PROVISIONING
+ACTIVE
+SUSPENDING
+SUSPENDED
+TERMINATING
+TERMINATED
+FAILED
+PHASE 11 — Backups
+
+Don't make backups an afterthought.
+
+Support:
+
+Account backup
+Database backup
+Website backup
+Minecraft world backup
+Discord bot backup
+Full instance backup
+
+And:
+
+Local
+Remote
+Object Storage
+
+with:
+
+retention
+encryption
+verification
+restore
+scheduled backups
+PHASE 12 — Security
+
+Mandatory:
+
+2FA
+RBAC
+API keys
+audit logs
+rate limiting
+session security
+CSRF protection where applicable
+secure cookies
+secret encryption
+agent authentication
+TLS
+firewall integration
+container isolation
+filesystem isolation
+resource limits
+command restrictions
+
+For customers:
+
+never expose arbitrary server shell access through the panel.
+
+PHASE 13 — Monitoring & Observability
+
+The admin should have:
+
+Global Overview
+
+Nodes
+├── CPU
+├── RAM
+├── Disk
+├── Network
+└── Health
+
+Services
+├── Nginx
+├── Apache
+├── OLS
+├── PHP-FPM
+├── MariaDB
+└── Docker
+
+Customers
+├── CPU
+├── RAM
+├── Disk
+└── Bandwidth
+
+Minecraft
+├── TPS
+├── MSPT
+└── Players
+
+Discord
+├── CPU
+├── RAM
+└── Uptime
+
+And alerts:
+
+CPU > threshold
+RAM > threshold
+Disk > threshold
+Node offline
+Service down
+Backup failed
+Provisioning failed
+SSL expiration
+Container crashed
+PHASE 14 — UI/UX
+
+Only after the underlying architecture is stable should you polish the UI heavily.
+
+Customer UI principle
+
+"I shouldn't need to know Linux."
+
+Admin UI principle
+
+"I should be able to understand the entire infrastructure in seconds."
+
+Use:
+
+responsive sidebar
+command/search palette
+global notifications
+breadcrumbs
+resource cards
+live charts
+tables with filtering
+bulk actions
+confirmation dialogs
+activity timeline
+status badges
+contextual actions
+
+Avoid unnecessary animations.
+
+Avoid emoji.
+
+Use a proper icon library.
+
+PHASE 15 — Performance & Scale
+
+The architecture should eventually support:
+
+1 control plane
+       ↓
+10 nodes
+       ↓
+100 nodes
+       ↓
+1000+ nodes
+
+without redesigning the entire application.
+
+Important:
+
+Never do this
+HTTP request
+ ↓
+SSH into server
+ ↓
+execute command
+ ↓
+wait
+ ↓
+return
+
+for everything.
+
+Instead:
+
+API
+ ↓
+Job
+ ↓
+Queue
+ ↓
+Node Agent
+ ↓
+Execution
+ ↓
+Event
+ ↓
+WebSocket
+ ↓
+UI
+The Development Order
+
+I would not develop all modules simultaneously.
+
+Use this order:
+
+PHASE 1
+Codebase Audit
+        ↓
+PHASE 2
+Core Platform
+        ↓
+PHASE 3
+Node Agent + Real-Time Metrics
+        ↓
+PHASE 4
+Web Hosting Engine
+        ↓
+PHASE 5
+Customer cPanel
+        ↓
+PHASE 6
+Admin WHM
+        ↓
+PHASE 7
+Resource/Limit Engine
+        ↓
+PHASE 8
+Minecraft
+        ↓
+PHASE 9
+Discord Hosting
+        ↓
+PHASE 10
+Billing + Provisioning
+        ↓
+PHASE 11
+Backups
+        ↓
+PHASE 12
+Security Hardening
+        ↓
+PHASE 13
+Monitoring/Alerts
+        ↓
+PHASE 14
+Performance/Scale
+        ↓
+PHASE 15
+Production Release
+One particularly important change
+
+Given what you said about your website experiencing a CPU spike while the panel continued showing old/incorrect metrics, I would make Phase 3 a priority rather than treating monitoring as a cosmetic dashboard feature.
+
+The panel should never say:
+
+CPU: 12%
+
+when that value is actually from 20–30 seconds ago.
+
+Instead, every live metric should carry something like:
+
+CPU
+82%
+LIVE
+updated 240ms ago
+
+or:
+
+CPU
+12%
+STALE
+last update 18.4s ago
+
+That distinction is extremely important for a hosting platform.
+
+And for resource enforcement, displayed metrics and enforced limits must come from the same authoritative node-side measurement/control layer. Otherwise you can end up with a customer apparently under their 2 GB limit while the actual workload is consuming more.

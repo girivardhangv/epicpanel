@@ -1,0 +1,55 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  "provider": {
+    "giri2": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "giri2",
+      "options": {
+        "baseURL": "https://api.b.ai/v1"
+      },
+      "models": {
+        "deepseek-v4-flash": {
+          "name": "GPT-10 Sol Ultra"
+        },
+        "glm-5.3-flash": {
+          "name": "GLM 5.3 FLASH"
+        }
+      }
+    },
+
+    "giri1": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "giri1",
+      "options": {
+        "baseURL": "https://api.b.ai/v1"
+      },
+      "models": {
+        "deepseek-v4-flash": {
+          "name": "Grok-33 Max Super"
+        },
+        "glm-5.3-flash": {
+          "name": "GLM 5.3 FLASH"
+        },
+        "qwen3.8-flash": {
+          "name": "QWEN 3.8 FLASH"
+        }
+      }
+    },
+
+    "epic": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "EPIC",
+      "options": {
+        "baseURL": "http://localhost:20128/v1"
+      },
+      "models": {
+        "glmqwen": {
+          "name": "Claude-99 Opus Prime"
+        }
+      }
+    }
+  },
+
+  "model": "giri1/deepseek-v4-flash"
+}

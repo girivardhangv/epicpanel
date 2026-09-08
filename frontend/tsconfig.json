@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "isolatedModules": true,
+    "paths": {
+      "@/*": ["./src/*"],
+      "@epicpanel/core": ["./packages/core/index.ts"],
+      "@epicpanel/ui": ["./packages/ui/index.ts"],
+      "@epicpanel/icons": ["./packages/icons/index.ts"],
+      "@epicpanel/charts": ["./packages/charts/index.tsx"],
+      "@epicpanel/tables": ["./packages/tables/index.tsx"],
+      "@epicpanel/forms": ["./packages/forms/index.tsx"],
+      "@epicpanel/design-system": ["./packages/design-system/index.ts"]
+    }
+  },
+  "include": ["src", "packages", "apps"],
+  "exclude": ["**/vite.config.ts", "**/node_modules", "**/dist"]
+}

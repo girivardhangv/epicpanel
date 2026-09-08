@@ -1,0 +1,142 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --brand: #2563eb;
+  --ok: #0f9d6e;
+  --warn: #d88b00;
+  --danger: #dc3d4b;
+}
+
+body {
+  @apply bg-app text-ink antialiased;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+@layer components {
+  .card {
+    @apply rounded-[14px] border border-line bg-white shadow-card;
+  }
+  .btn-primary {
+    @apply inline-flex min-h-[36px] cursor-pointer items-center justify-center gap-1.5 rounded-[9px] border border-brand bg-brand px-3 text-[11px] font-bold text-white transition hover:border-brand-dark hover:bg-brand-dark hover:shadow-card active:scale-[.98] disabled:pointer-events-none disabled:opacity-50;
+  }
+  .btn-brand {
+    @apply inline-flex min-h-[36px] cursor-pointer items-center justify-center gap-1.5 rounded-[9px] border border-brand bg-brand px-3 text-[11px] font-bold text-white transition hover:border-brand-dark hover:bg-brand-dark hover:shadow-card active:scale-[.98] disabled:pointer-events-none disabled:opacity-50;
+  }
+  .btn-accent {
+    @apply inline-flex min-h-[36px] cursor-pointer items-center justify-center gap-1.5 rounded-[9px] border border-brand bg-brand px-3 text-[11px] font-bold text-white transition hover:border-brand-dark hover:bg-brand-dark hover:shadow-card active:scale-[.98] disabled:pointer-events-none disabled:opacity-50;
+  }
+  .btn-ghost {
+    @apply inline-flex min-h-[36px] cursor-pointer items-center justify-center gap-1.5 rounded-[9px] border border-line bg-white px-3 text-[11px] font-bold text-[#39465a] transition hover:shadow-card active:scale-[.98] disabled:pointer-events-none disabled:opacity-50;
+  }
+  .btn-soft {
+    @apply inline-flex min-h-[36px] cursor-pointer items-center justify-center gap-1.5 rounded-[9px] border border-line bg-surface-2 px-3 text-[11px] font-bold text-[#39465a] transition hover:shadow-card active:scale-[.98] disabled:pointer-events-none disabled:opacity-50;
+  }
+  .btn-danger {
+    @apply inline-flex min-h-[36px] cursor-pointer items-center justify-center gap-1.5 rounded-[9px] border border-[#ffd5da] bg-danger-soft px-3 text-[11px] font-bold text-danger transition hover:shadow-card active:scale-[.98] disabled:pointer-events-none disabled:opacity-50;
+  }
+  .input {
+    @apply w-full rounded-[9px] border border-line bg-white px-2.5 py-2 text-[12px] text-ink outline-none transition placeholder:text-[#98a2b3] focus:border-[#9db8ff] focus:ring-[3px] focus:ring-brand/10;
+  }
+  .badge-ok {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-[#cef0e1] bg-ok-soft px-2 py-[3px] text-[10px] font-bold text-ok;
+  }
+  .badge-warn {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-[#ffe8b1] bg-warn-soft px-2 py-[3px] text-[10px] font-bold text-warn;
+  }
+  .badge-off {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-[#ffd0d7] bg-danger-soft px-2 py-[3px] text-[10px] font-bold text-danger;
+  }
+  .badge-neutral {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-line bg-slate-100 px-2 py-[3px] text-[10px] font-bold text-sub;
+  }
+  .link {
+    @apply cursor-pointer text-brand underline-offset-2 hover:underline;
+  }
+  .section-title {
+    @apply text-[23px] font-bold tracking-[-.025em] text-ink;
+  }
+  /* Reference-style table */
+  .ref-table th {
+    @apply whitespace-nowrap border-b border-line bg-[#fbfcfe] px-4 py-[11px] text-left text-[9px] font-extrabold uppercase tracking-[.06em] text-[#7a8597];
+  }
+  .ref-table td {
+    @apply whitespace-nowrap border-b border-line px-4 py-[11px] text-left align-middle text-[10.5px] text-ink;
+  }
+  .ref-table tbody tr:last-child td {
+    @apply border-b-0;
+  }
+  .ref-table tbody tr:hover td {
+    @apply bg-[#fbfcff];
+  }
+  .table-primary {
+    @apply text-[10.5px] font-bold text-[#243047];
+  }
+  .table-secondary {
+    @apply mt-0.5 text-[9px] text-muted;
+  }
+  .icon-btn {
+    @apply grid h-[29px] w-[29px] cursor-pointer place-items-center rounded-[7px] border border-line bg-white text-[#6a7486] transition hover:border-[#c7d5ff] hover:bg-brand-soft hover:text-brand;
+  }
+  .toolbar {
+    @apply flex flex-wrap items-center gap-2 border-b border-line bg-[#fbfcfe] px-4 py-3;
+  }
+  /* Dashboard tools accordion */
+  .tool {
+    @apply flex min-h-[40px] cursor-pointer items-center justify-between rounded-[10px] border border-line bg-white px-3.5 shadow-card transition hover:border-[#cddaff];
+  }
+  .tool-panel {
+    @apply mt-1 rounded-[10px] border border-line bg-surface-2 px-3.5 py-3 text-[12px] leading-relaxed text-muted;
+  }
+}
+
+@keyframes fadeUp {
+  from { opacity: .3; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.fade-up { animation: fadeUp .22s ease both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .fade-up { animation: none; }
+  * { transition-duration: .01ms !important; animation-duration: .01ms !important; }
+}
+
+@keyframes shimmer {
+  0% { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, #eef1f6 25%, #f7f9fb 50%, #eef1f6 75%);
+  background-size: 800px 100%;
+  animation: shimmer 1.3s infinite linear;
+  @apply rounded-[9px];
+}
+
+/* Status dot used in sidebar server pill */
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #18b779;
+  box-shadow: 0 0 0 4px rgba(24, 183, 121, .1);
+}
+
+/* Status chips (freshness, connectivity) */
+.status-chip {
+  @apply inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-[3px] text-[10px] font-bold;
+}
+.status-chip .status-dot,
+.status-chip > .h-1\.5 {
+  flex: none;
+}
+.status-live {
+  @apply border-[#cef0e1] bg-ok-soft text-ok;
+}
+.status-warning {
+  @apply border-[#ffe8b1] bg-warn-soft text-warn;
+}
+.status-down {
+  @apply border-[#ffd0d7] bg-danger-soft text-danger;
+}

@@ -5,6 +5,7 @@ import { useAuth } from '@/context/AuthContext'
 import { Card, StatusBadge, EmptyState, SkeletonRows } from '@/components/cards'
 import { Modal, Field, ErrorNote, Select } from '@/components/ui'
 import type { Server } from '@/lib/types'
+import { confirmAction } from '@/lib/confirm'
 
 interface Runtime {
   id: string
@@ -183,7 +184,8 @@ export function SoftwarePage() {
   }
 
   const remove = async (r: Runtime) => {
-    if (!org || !confirm(`Remove ${ENGINE_LABELS[r.type]} ${r.version} from this server?`)) return
+    if (!org) return
+    if (!(await confirmAction({ title: 'Remove Runtime', message: `Remove ${ENGINE_LABELS[r.type]} ${r.version} from this server?`, confirmLabel: 'Remove' }))) return
     try {
       await api.del(`/v1/organizations/${org.id}/servers/${r.server_id}/runtimes/${r.id}`)
       await load()

@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Search, Bell, Menu, ChevronDown } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
-import { filterNavForUser } from '@/components/Sidebar'
 import type { Alert } from '@/lib/types'
 
 const TITLES: { match: (p: string) => boolean; title: string; sub: string }[] = [
@@ -27,40 +26,33 @@ const TITLES: { match: (p: string) => boolean; title: string; sub: string }[] = 
   { match: (p) => p.startsWith('/settings'), title: 'Settings', sub: 'Workspace defaults and preferences' },
 ]
 
-export function Header({ onMenu, alerts }: { onMenu: () => void; alerts: Alert[] }) {
-  const { user, org, myRole } = useAuth()
+/**
+ * Phase 14: the header no longer carries its own search implementation —
+ * every search flows through the shared ⌘K CommandPalette (RBAC-filtered
+ * results come from the providers in App.tsx). This trigger just opens it;
+ * "/" is the keyboard shortcut.
+ */
+export function Header({ onMenu, onOpenPalette, alerts }: { onMenu: () => void; onOpenPalette: () => void; alerts: Alert[] }) {
+  const { user, org } = useAuth()
   const location = useLocation()
   const navigate = useNavigate()
-  const [query, setQuery] = useState('')
-  const [focused, setFocused] = useState(false)
-  const searchRef = useRef<HTMLInputElement>(null)
+  const [paletteHint, setPaletteHint] = useState<'⌘K' | 'Ctrl K'>('⌘K')
 
-  // "/" focuses the toolbar search
+  useEffect(() => {
+    setPaletteHint(/mac|iphone|ipad/i.test(navigator.platform) ? '⌘K' : 'Ctrl K')
+  }, [])
+
+  // "/" opens the command palette (except while typing in a field).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === '/' && !focused && !(e.target instanceof HTMLInputElement) && !(e.target instanceof HTMLTextAreaElement)) {
+      if (e.key === '/' && !(e.target instanceof HTMLInputElement) && !(e.target instanceof HTMLTextAreaElement) && !(e.target instanceof HTMLSelectElement)) {
         e.preventDefault()
-        searchRef.current?.focus()
+        onOpenPalette()
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [focused])
-
-  const results = useMemo(() => {
-    const q = query.toLowerCase().trim()
-    if (!q) return []
-    // Same gating as the sidebar: admin-only tools never appear for members.
-    return filterNavForUser(user, myRole)
-      .filter((it) => it.label.toLowerCase().includes(q))
-      .slice(0, 8)
-  }, [query, user, myRole])
-
-  const go = (to: string) => {
-    setQuery('')
-    setFocused(false)
-    navigate(to)
-  }
+  }, [onOpenPalette])
 
   const ctx = TITLES.find((t) => t.match(location.pathname)) ?? { title: 'Control Center', sub: 'Hosting administration' }
 
@@ -87,49 +79,37 @@ export function Header({ onMenu, alerts }: { onMenu: () => void; alerts: Alert[]
 
         <div className="flex-1" />
 
-        {/* Search */}
-        <div className="relative hidden min-[500px]:block" style={{ width: 'min(300px, 28vw)' }}>
-          <Search size={16} className="pointer-events-none absolute left-[11px] top-1/2 -translate-y-1/2 text-[#98a2b3]" />
-          <input
-            ref={searchRef}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onFocus={() => setFocused(true)}
-            onBlur={() => setTimeout(() => setFocused(false), 150)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && results[0]) go(results[0].to)
-              if (e.key === 'Escape') { setQuery(''); searchRef.current?.blur() }
-            }}
-            placeholder="Search tools and accounts..."
-            className="h-[38px] w-full rounded-[9px] border border-line bg-surface-2 pl-[35px] pr-3 text-[12px] text-ink outline-none transition placeholder:text-[#98a2b3] focus:border-[#9db8ff] focus:bg-white focus:ring-[3px] focus:ring-brand/10"
-          />
-          {focused && results.length > 0 && (
-            <div className="fade-up absolute right-0 top-[44px] z-40 w-[260px] rounded-[12px] border border-line bg-white py-1.5 shadow-pop">
-              {results.map((r) => {
-                const Icon = r.icon
-                return (
-                  <button
-                    key={r.to}
-                    onMouseDown={() => go(r.to)}
-                    className="flex w-full items-center gap-2.5 px-3.5 py-2 text-left text-[12px] font-semibold text-ink transition hover:bg-surface-2"
-                  >
-                    <Icon size={14} strokeWidth={1.8} className="text-muted" /> {r.label}
-                  </button>
-                )
-              })}
-            </div>
-          )}
-        </div>
+        {/* Command palette trigger (⌘K / Ctrl+K / "/") */}
+        <button
+          onClick={onOpenPalette}
+          aria-label="Open command palette"
+          className="hidden h-[38px] w-[240px] cursor-pointer items-center gap-2.5 rounded-[9px] border border-line bg-surface-2 px-3 text-left transition hover:border-[#9db8ff] hover:bg-white min-[500px]:flex"
+        >
+          <Search size={15} className="shrink-0 text-[#98a2b3]" />
+          <span className="flex-1 truncate text-[12px] text-[#98a2b3]">Search tools and accounts...</span>
+          <kbd className="shrink-0 rounded-[5px] border border-line bg-white px-1.5 py-0.5 text-[9px] font-bold text-muted">
+            {paletteHint}
+          </kbd>
+        </button>
+        <button
+          onClick={onOpenPalette}
+          aria-label="Open command palette"
+          title="Search (press /)"
+          className="grid h-[38px] w-[38px] cursor-pointer place-items-center rounded-[9px] border border-line bg-white text-[#596579] transition hover:bg-surface-2 min-[500px]:hidden"
+        >
+          <Search size={16} />
+        </button>
 
         {/* Notifications */}
         <button
           onClick={() => navigate('/activity')}
           title="Notifications"
+          aria-label={`Notifications${alerts.length ? ` (${alerts.length} unresolved)` : ''}`}
           className="relative grid h-[38px] w-[38px] cursor-pointer place-items-center rounded-[9px] border border-line bg-white text-[#596579] transition hover:bg-surface-2"
         >
           <Bell size={17} strokeWidth={1.8} />
           {alerts.length > 0 && (
-            <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full border border-white bg-danger" />
+            <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full border border-white bg-danger" aria-hidden="true" />
           )}
         </button>
 

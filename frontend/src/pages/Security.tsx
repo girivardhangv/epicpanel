@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Lock, Globe, RefreshCw, ShieldCheck, ShieldAlert, ShieldQuestion } from 'lucide-react'
+import { ArrowRight, Lock, Globe, RefreshCw, ShieldCheck, ShieldAlert, ShieldQuestion } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
 import { Card, CardHeader, EmptyState, SkeletonRows } from '@/components/cards'
@@ -154,7 +154,7 @@ export function SecurityPage() {
               <CardHeader
                 title={name || 'Website'}
                 subtitle={`${list.length} domain${list.length > 1 ? 's' : ''}`}
-                right={<Link to={`/sites/${websiteId}`} className="text-[11px] font-bold text-brand hover:underline">Open site →</Link>}
+                right={<Link to={`/sites/${websiteId}`} className="text-[11px] font-bold text-brand hover:underline">Open site <ArrowRight size={11} className="inline" /></Link>}
               />
               <div className="divide-y divide-line">
                 {list.map((d) => (

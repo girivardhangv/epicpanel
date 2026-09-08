@@ -5,6 +5,15 @@ export * from './cards'
 export * from './kit'
 export * from './AppSidebar'
 export * from './FreshnessBadge'
+export * from './Skeleton'
+export * from './Timeline'
+export * from './BulkBar'
+
+/* Phase 14 additions — command palette (⌘K), results-provider driven and
+ * RBAC-filtered by the app. Never removed: contract is additive-only. */
+export { CommandPalette, useCommandPaletteHotkey } from './CommandPalette'
+export type { CommandResult, CommandResultsProvider } from './CommandPalette'
+
 export { Modal, ConfirmDialog } from '@epicpanel/forms'
 
 /** Legacy alias kept so the root monolith keeps compiling unchanged. */

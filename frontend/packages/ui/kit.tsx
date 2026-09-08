@@ -42,7 +42,12 @@ export function Breadcrumbs({ crumbs }: { crumbs: Crumb[] }) {
                 {c.label}
               </Link>
             ) : (
-              <span className={`px-1.5 py-0.5 font-bold ${last ? 'text-ink' : 'text-muted'}`}>{c.label}</span>
+              <span
+                aria-current={last ? 'page' : undefined}
+                className={`px-1.5 py-0.5 font-bold ${last ? 'text-ink' : 'text-muted'}`}
+              >
+                {c.label}
+              </span>
             )}
           </span>
         )

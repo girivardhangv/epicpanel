@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import {
-  ArrowLeft, Play, Square, RotateCw, RefreshCw, Terminal as TerminalIcon,
+  ArrowLeft, ArrowRight, Play, Square, RotateCw, RefreshCw, Terminal as TerminalIcon,
   Folder, Clock, KeyRound, History, Lock, Globe, GitBranch,
 } from 'lucide-react'
 import { api } from '@/lib/api'
@@ -9,6 +9,7 @@ import { useAuth } from '@/context/AuthContext'
 import { Card, CardHeader, StatusBadge, EmptyState, SkeletonRows } from '@/components/cards'
 import { AppWizardModal } from '@/components/AppWizardModal'
 import type { Website } from '@/lib/types'
+import { confirmAction } from '@/lib/confirm'
 
 interface App {
   id: string
@@ -77,7 +78,7 @@ export function ApplicationDetailPage() {
   }
 
   const removeApp = async () => {
-    if (!confirm('Remove the application process? Files are kept.')) return
+    if (!(await confirmAction({ title: 'Application', message: 'Remove the application process? Files are kept.', confirmLabel: 'Remove' }))) return
     setBusy(true)
     try {
       await api.post(`${base}/application/stop`)
@@ -137,7 +138,7 @@ export function ApplicationDetailPage() {
       {app ? (
         <Card className="mb-3.5">
           <CardHeader title="Application Configuration" subtitle="Build, start and proxy settings" right={
-            <button className="text-[11px] font-bold text-brand hover:underline" onClick={() => setShowWizard(true)}>Edit →</button>
+            <button className="text-[11px] font-bold text-brand hover:underline" onClick={() => setShowWizard(true)}>Edit <ArrowRight size={11} className="inline" /></button>
           } />
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             {[

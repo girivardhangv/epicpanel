@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
+import { Timeline } from '@epicpanel/ui'
 import { Card, EmptyState, SkeletonRows } from '@/components/cards'
-import { PageTitle, Toolbar, ToolbarSearch, MiniItem, Initials } from '@/components/ref'
+import { PageTitle, Toolbar, ToolbarSearch } from '@/components/ref'
 import { timeAgo } from '@/lib/types'
 import type { AuditEntry } from '@/lib/types'
 
@@ -116,23 +117,23 @@ export function ActivityPage() {
         ) : visible.length === 0 ? (
           <EmptyState title="Nothing yet" subtitle="Actions will appear here as your team works." />
         ) : (
-          <div className="divide-y divide-line">
-            {visible.slice(0, 100).map((a) => (
-              <div key={a.id} className="flex items-center gap-3 px-4 py-3 transition hover:bg-surface-2">
-                <Initials text={a.actor_email ?? 'System'} size={30} rounded="rounded-full" />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-[11px] text-ink">
+          <div className="px-5 py-4">
+            <Timeline
+              ariaLabel="Activity trail"
+              items={visible.slice(0, 100).map((a) => ({
+                id: String(a.id),
+                title: (
+                  <span className="text-[11.5px]">
                     <span className="font-bold text-brand">{a.actor_email ?? 'System'}</span>
                     {' '}{humanAction(a.action)}
-                  </div>
-                  <div className="truncate text-[9.5px] text-muted">
-                    {a.resource_type}{a.resource_id ? ` · ${a.resource_id.slice(0, 8)}` : ''}
-                  </div>
-                </div>
-                {a.result === 'failure' && <span className="status-chip status-down">Failed</span>}
-                <span className="shrink-0 text-[10px] text-muted">{timeAgo(a.created_at)}</span>
-              </div>
-            ))}
+                  </span>
+                ),
+                description: `${a.resource_type}${a.resource_id ? ` · ${a.resource_id.slice(0, 8)}` : ''}`,
+                tone: a.result === 'failure' ? 'red' : 'blue',
+                timestamp: timeAgo(a.created_at),
+                meta: a.result === 'failure' ? <span className="status-chip status-down">Failed</span> : undefined,
+              }))}
+            />
           </div>
         )}
       </Card>

@@ -143,7 +143,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	b, err := h.Backups.Create(r.Context(), orgID, ws.ID, createdBy, "manual")
+	b, err := h.Backups.CreateWebsiteLegacy(r.Context(), orgID, ws.ID, createdBy, "manual")
 	if err != nil {
 		httpapi.RespondError(w, httpapi.ErrInternal(err))
 		return
@@ -230,7 +230,11 @@ func (h *Handler) Restore(w http.ResponseWriter, r *http.Request) {
 		httpapi.RespondError(w, httpapi.ErrConflict("only successful backups can be restored"))
 		return
 	}
-	ws, err := h.Websites.GetByID(r.Context(), orgID, b.WebsiteID)
+	if b.WebsiteID == nil {
+		httpapi.RespondError(w, httpapi.ErrConflict("backup has no website scope"))
+		return
+	}
+	ws, err := h.Websites.GetByID(r.Context(), orgID, *b.WebsiteID)
 	if err != nil {
 		httpapi.RespondError(w, httpapi.ErrInternal(err))
 		return
@@ -299,19 +303,21 @@ func (h *Handler) ApplyJobOutcome(ctx context.Context, job *jobs.Job, result jso
 				Databases []string `json:"databases"`
 			}
 			_ = json.Unmarshal(result, &outcome)
-			if err := h.Backups.MarkSuccessful(ctx, backupID, outcome.SizeBytes, outcome.Databases); err != nil && err != ErrNotFound {
+			if err := h.Backups.MarkSuccessful(ctx, backupID, outcome.SizeBytes, outcome.SizeBytes, "", outcome.Databases); err != nil && err != ErrNotFound {
 				slogError("backup mark successful failed", backupID, err)
 				return
 			}
-			if wsID, err := uuid.Parse(p.WebsiteID); err == nil {
-				_ = h.Websites.TouchLastBackup(ctx, wsID)
-			}
-			// Retention: delete rows beyond retention (agent archives remain
-			// until website deletion; disk-bound cleanup is a later phase).
-			if b, err := h.Backups.GetAny(ctx, backupID); err == nil {
-				if ws, err := h.Websites.GetByIDAny(ctx, b.WebsiteID); err == nil {
-					if pruned, err := h.Backups.PruneExcess(ctx, ws.ID, ws.BackupRetention); err == nil && len(pruned) > 0 {
-						h.PruneArchives(ctx, ws.ServerID, pruned)
+			if b, err := h.Backups.GetAny(ctx, backupID); err == nil && b.WebsiteID != nil {
+				_ = h.Websites.TouchLastBackup(ctx, *b.WebsiteID)
+				// Retention: delete rows beyond retention (agent archives remain
+				// until website deletion; disk-bound cleanup is a later phase).
+				if ws, err := h.Websites.GetByIDAny(ctx, *b.WebsiteID); err == nil {
+					if pruned, err := h.Backups.PruneExcessForWebsite(ctx, ws.ID, ws.BackupRetention); err == nil && len(pruned) > 0 {
+						ids := make([]uuid.UUID, 0, len(pruned))
+						for _, pr := range pruned {
+							ids = append(ids, pr.ID)
+						}
+						h.PruneArchives(ctx, ws.ServerID, ids)
 					}
 				}
 			}

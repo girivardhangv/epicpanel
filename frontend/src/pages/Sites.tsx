@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react'
-import { Globe, Plus, Trash2, Folder, Clock, KeyRound, Terminal as TerminalIcon, Settings2, MoreHorizontal } from 'lucide-react'
+import { Globe, Plus, Trash2, Folder, Clock, KeyRound, Terminal as TerminalIcon, Settings2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import { BulkBar, BulkCheckbox, useBulkSelection } from '@epicpanel/ui'
 import { api } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
 import { Card, StatusBadge, EmptyState, SkeletonRows } from '@/components/cards'
 import { PageTitle, Toolbar, ToolbarSearch, Initials } from '@/components/ref'
 import { Modal, Field, ErrorNote, Select } from '@/components/ui'
 import { WordPressModal } from '@/components/WordPressModal'
+import { confirmAction } from '@/lib/confirm'
 import { timeAgo } from '@/lib/types'
 import type { Website, Server } from '@/lib/types'
 
@@ -57,7 +59,8 @@ export function SitesPage() {
   }
 
   const remove = async (w: Website) => {
-    if (!org || !confirm(`Delete website "${w.name}"? Its files will be removed. This cannot be undone.`)) return
+    if (!org) return
+    if (!(await confirmAction({ title: 'Delete Website', message: `Delete website "${w.name}"? Its files will be removed. This cannot be undone.`, confirmLabel: 'Delete Website' }))) return
     await api.del(`/v1/organizations/${org.id}/websites/${w.id}`)
     await load()
   }

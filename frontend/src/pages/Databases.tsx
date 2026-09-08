@@ -6,6 +6,7 @@ import { Card, StatusBadge, EmptyState, SkeletonRows } from '@/components/cards'
 import { PageTitle, Toolbar, ToolbarSearch } from '@/components/ref'
 import { Modal, Field, ErrorNote, Select } from '@/components/ui'
 import type { Database as DB, Server, Website } from '@/lib/types'
+import { confirmAction } from '@/lib/confirm'
 
 export function DatabasesPage() {
   const { org, user } = useAuth()
@@ -78,7 +79,8 @@ export function DatabasesPage() {
   }
 
   const remove = async (db: DB) => {
-    if (!org || !confirm(`Drop database ${db.name}? This cannot be undone.`)) return
+    if (!org) return
+    if (!(await confirmAction({ title: 'Drop Database', message: `Drop database ${db.name}? This cannot be undone.`, confirmLabel: 'Drop Database' }))) return
     await api.del(`/v1/organizations/${org.id}/databases/${db.id}`)
     await load()
   }

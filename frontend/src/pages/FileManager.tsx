@@ -10,6 +10,7 @@ import { Card, EmptyState, SkeletonRows, StatusBadge } from '@/components/cards'
 import { Modal, Field, ErrorNote } from '@/components/ui'
 import { fmtBytes, timeAgo } from '@/lib/types'
 import type { Website } from '@/lib/types'
+import { confirmAction } from '@/lib/confirm'
 
 interface Entry {
   name: string
@@ -56,7 +57,7 @@ export function FileManagerPage() {
   const up = () => setPath(path === '/' ? '/' : path.split('/').slice(0, -1).join('/') || '/')
 
   const del = async (e: Entry) => {
-    if (!confirm(`Delete ${e.is_dir ? 'folder' : 'file'} "${e.name}"? This cannot be undone.`)) return
+    if (!(await confirmAction({ title: 'Delete', message: `Delete ${e.is_dir ? 'folder' : 'file'} "${e.name}"? This cannot be undone.`, confirmLabel: 'Delete' }))) return
     await api.del(`${base}?path=${encodeURIComponent(join(path, e.name))}`)
     await load(path)
   }

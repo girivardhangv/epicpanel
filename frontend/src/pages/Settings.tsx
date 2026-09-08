@@ -5,6 +5,7 @@ import { Card, CardHeader, EmptyState, SkeletonRows } from '@/components/cards'
 import { Modal, Field, ErrorNote } from '@/components/ui'
 import { KeyRound, Plus, Trash2 } from 'lucide-react'
 import { timeAgo } from '@/lib/types'
+import { confirmAction } from '@/lib/confirm'
 
 interface ApiToken {
   id: string
@@ -85,7 +86,8 @@ export function SettingsPage() {
   }
 
   const revoke = async (t: ApiToken) => {
-    if (!org || !confirm(`Revoke token "${t.name}"?`)) return
+    if (!org) return
+    if (!(await confirmAction({ title: 'Revoke Token', message: `Revoke token "${t.name}"?`, confirmLabel: 'Revoke Token' }))) return
     await api.del(`/v1/organizations/${org.id}/api-tokens/${t.id}`)
     await load()
   }

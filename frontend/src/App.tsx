@@ -1,8 +1,10 @@
-import { useEffect, useState, ReactNode } from 'react'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { Globe } from 'lucide-react'
+import { useEffect, useState, ReactNode, useMemo, useCallback } from 'react'
+import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom'
+import { Globe, LogOut, PanelLeftClose, UserRound } from 'lucide-react'
 import { AuthProvider, useAuth } from '@/context/AuthContext'
-import { Sidebar } from '@/components/Sidebar'
+import { CommandPalette, SkeletonScreen } from '@epicpanel/ui'
+import type { CommandResultsProvider } from '@epicpanel/ui'
+import { Sidebar, filterNavForUser } from '@/components/Sidebar'
 import { Header } from '@/components/Header'
 import { api } from '@/lib/api'
 import { Field, ErrorNote } from '@/components/ui'
@@ -31,10 +33,12 @@ import { SecurityPage } from '@/pages/Security'
 import { SettingsPage } from '@/pages/Settings'
 
 function Shell({ children }: { children: ReactNode }) {
-  const { user, org } = useAuth()
+  const { user, org, myRole, logout } = useAuth()
+  const navigate = useNavigate()
   const [navOpen, setNavOpen] = useState(false)
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('eh.sidebar.collapsed') === '1')
   const [alerts, setAlerts] = useState<Alert[]>([])
+  const [paletteOpen, setPaletteOpen] = useState(false)
 
   useEffect(() => {
     localStorage.setItem('eh.sidebar.collapsed', collapsed ? '1' : '0')
@@ -48,16 +52,84 @@ function Shell({ children }: { children: ReactNode }) {
       .catch(() => setAlerts([]))
   }, [org?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  /* Command palette providers — RBAC-filtered (same gate as the sidebar):
+   * 1. Tools: every nav item the user may see.
+   * 2. Actions: things the user can DO from anywhere.
+   * 3. Accounts: org members, fetched on demand (admin tools only surface
+   *    for admins — see the minRole gate in filterNavForUser).
+   */
+  const doLogout = useCallback(async () => {
+    await logout()
+    navigate('/login', { replace: true })
+  }, [logout, navigate])
+
+  const paletteProviders = useMemo<CommandResultsProvider[]>(() => {
+    const tools = filterNavForUser(user, myRole)
+    return [
+      (q) =>
+        tools.map((t) => ({
+          id: `tool:${t.to}`,
+          label: t.label,
+          group: 'Tools',
+          hint: t.to,
+          icon: <t.icon size={14} strokeWidth={1.8} />,
+          perform: () => navigate(t.to),
+        })),
+      () => [
+        {
+          id: 'act:toggle-sidebar',
+          label: collapsed ? 'Expand sidebar' : 'Collapse sidebar',
+          group: 'Actions',
+          icon: <PanelLeftClose size={14} strokeWidth={1.8} />,
+          perform: () => setCollapsed((c) => !c),
+        },
+        {
+          id: 'act:sign-out',
+          label: 'Sign out',
+          group: 'Actions',
+          icon: <LogOut size={14} strokeWidth={1.8} />,
+          dangerous: true,
+          perform: () => void doLogout(),
+        },
+      ],
+      async (q) => {
+        if (!org || !q) return []
+        try {
+          const r = await api.get<{ members: { name: string; email: string; role: string }[] }>(
+            `/v1/organizations/${org.id}/members`,
+          )
+          return (r.members ?? []).map((m) => ({
+            id: `acct:${m.email}`,
+            label: m.name || m.email,
+            group: 'Accounts',
+            hint: `${m.email} · ${m.role || 'member'}`,
+            icon: <UserRound size={14} strokeWidth={1.8} />,
+            keywords: m.email,
+            perform: () => navigate('/team'),
+          }))
+        } catch {
+          return []
+        }
+      },
+    ]
+  }, [user, myRole, org, collapsed, navigate, doLogout])
+
   return (
     <div className="min-h-screen bg-app">
       <Sidebar open={navOpen} onClose={() => setNavOpen(false)} collapsed={collapsed} onToggleCollapsed={setCollapsed} />
       <div className={`transition-[padding] duration-200 ${collapsed ? 'lg:pl-[68px]' : 'lg:pl-[248px]'}`}>
-        <Header onMenu={() => setNavOpen(true)} alerts={alerts} />
+        <Header onMenu={() => setNavOpen(true)} onOpenPalette={() => setPaletteOpen(true)} alerts={alerts} />
         <main className="fade-up">{children}</main>
         <footer className="pb-8 pt-4 text-center text-[11px] text-muted">
           EpicHost — powered by EpicPanel
         </footer>
       </div>
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        providers={paletteProviders}
+        placeholder="Search tools, accounts and actions..."
+      />
       {!user && <Navigate to="/login" replace />}
     </div>
   )
@@ -65,13 +137,7 @@ function Shell({ children }: { children: ReactNode }) {
 
 function Guarded() {
   const { user, org, orgs, loading, createOrg } = useAuth()
-  if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-app">
-        <div className="h-8 w-8 animate-spin rounded-full border-[3px] border-brand border-t-transparent" />
-      </div>
-    )
-  }
+  if (loading) return <SkeletonScreen label="Loading your workspace" />
   if (!user) return <Navigate to="/login" replace />
   if (!org) {
     return <CreateOrganizationScreen hasOrgs={orgs.length > 0} onCreate={createOrg} />
@@ -119,7 +185,7 @@ export default function App() {
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
-			<Route path="/setup" element={<SetupPage />} />
+          <Route path="/setup" element={<SetupPage />} />
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/*" element={<Guarded />} />
         </Routes>

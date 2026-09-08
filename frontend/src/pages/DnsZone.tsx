@@ -8,6 +8,7 @@ import { Card, CardHeader, EmptyState, SkeletonRows } from '@/components/cards'
 import { Field, ErrorNote, Select } from '@/components/ui'
 import { timeAgo } from '@/lib/types'
 import type { Website } from '@/lib/types'
+import { confirmAction } from '@/lib/confirm'
 
 const RECORD_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS', 'SRV', 'CAA']
 
@@ -97,7 +98,8 @@ export function DnsZonePage() {
   }
 
   const removeZone = async () => {
-    if (!org || !zone || !confirm(`Delete the DNS zone for "${zone.domain}"? Its records stop resolving once the nameservers drop it.`)) return
+    if (!org || !zone) return
+    if (!(await confirmAction({ title: 'Delete DNS Zone', message: `Delete the DNS zone for "${zone.domain}"? Its records stop resolving once the nameservers drop it.`, confirmLabel: 'Delete Zone' }))) return
     setErr('')
     try {
       await dnsApi.deleteZone(org.id, zone.id)
@@ -152,7 +154,8 @@ export function DnsZonePage() {
   }
 
   const removeRecord = async (r: DnsRecord) => {
-    if (!org || !confirm(`Delete the ${r.type} record for "${r.name || '@'}"?`)) return
+    if (!org) return
+    if (!(await confirmAction({ title: 'Delete DNS Record', message: `Delete the ${r.type} record for "${r.name || '@'}"?`, confirmLabel: 'Delete Record' }))) return
     setErr('')
     try {
       await dnsApi.deleteRecord(org.id, r.id)

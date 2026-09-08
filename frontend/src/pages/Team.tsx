@@ -5,6 +5,7 @@ import { useAuth } from '@/context/AuthContext'
 import { Card, EmptyState, SkeletonRows } from '@/components/cards'
 import { Modal, Field, ErrorNote, Select } from '@/components/ui'
 import type { Member } from '@/lib/types'
+import { confirmAction } from '@/lib/confirm'
 
 export function TeamPage() {
   const { org, user, myRole } = useAuth()
@@ -43,7 +44,8 @@ export function TeamPage() {
   }
 
   const remove = async (m: Member) => {
-    if (!org || !confirm(`Remove ${m.email} from this organization?`)) return
+    if (!org) return
+    if (!(await confirmAction({ title: 'Remove Member', message: `Remove ${m.email} from this organization?`, confirmLabel: 'Remove' }))) return
     await api.del(`/v1/organizations/${org.id}/members/${m.user_id}`)
     await load()
   }

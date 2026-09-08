@@ -6,6 +6,7 @@ import { useAuth } from '@/context/AuthContext'
 import { Card, EmptyState, SkeletonRows, StatusBadge } from '@/components/cards'
 import { Modal, Field, ErrorNote } from '@/components/ui'
 import { timeAgo } from '@/lib/types'
+import { confirmAction } from '@/lib/confirm'
 
 interface Cron {
   id: string
@@ -69,7 +70,7 @@ export function CronJobsPage() {
   }
 
   const remove = async (c: Cron) => {
-    if (!confirm(`Delete cron "${c.command}"?`)) return
+    if (!(await confirmAction({ title: 'Delete Cron Job', message: `Delete cron "${c.command}"?`, confirmLabel: 'Delete Cron' }))) return
     await api.del(`/v1/organizations/${org?.id}/crons/${c.id}`)
     await load()
   }

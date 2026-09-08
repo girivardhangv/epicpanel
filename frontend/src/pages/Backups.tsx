@@ -7,6 +7,7 @@ import { PageTitle, MiniItem } from '@/components/ref'
 import { Modal, Field, ErrorNote, Select } from '@/components/ui'
 import { fmtBytes, timeAgo } from '@/lib/types'
 import type { Website } from '@/lib/types'
+import { confirmAction } from '@/lib/confirm'
 
 interface Backup {
   id: string
@@ -83,7 +84,8 @@ export function BackupsPage() {
   }
 
   const restore = async (site: Website, b: Backup) => {
-    if (!org || !confirm(`Restore "${site.name}" from this backup? Current files and databases are overwritten.`)) return
+    if (!org) return
+    if (!(await confirmAction({ title: 'Restore Backup', message: `Restore "${site.name}" from this backup? Current files and databases are overwritten.`, confirmLabel: 'Restore' }))) return
     setErr('')
     setBusy(b.id)
     try {

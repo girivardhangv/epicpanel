@@ -5,6 +5,7 @@ import { useAuth } from '@/context/AuthContext'
 import { Card, EmptyState, SkeletonRows } from '@/components/cards'
 import { Modal, Field, ErrorNote, Select } from '@/components/ui'
 import { fmtBytes } from '@/lib/types'
+import { confirmAction } from '@/lib/confirm'
 
 interface Pkg {
   id: string
@@ -124,7 +125,7 @@ export function PackagesPage() {
   }
 
   const remove = async (p: Pkg) => {
-    if (!confirm(`Delete package "${p.name}"?`)) return
+    if (!(await confirmAction({ title: 'Delete Package', message: `Delete package "${p.name}"?`, confirmLabel: 'Delete Package' }))) return
     try {
       await api.del(`/v1/admin/packages/${p.id}`)
       await load()

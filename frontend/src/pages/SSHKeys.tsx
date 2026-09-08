@@ -6,6 +6,7 @@ import { useAuth } from '@/context/AuthContext'
 import { Card, EmptyState, SkeletonRows } from '@/components/cards'
 import { Modal, Field, ErrorNote } from '@/components/ui'
 import { timeAgo } from '@/lib/types'
+import { confirmAction } from '@/lib/confirm'
 
 interface SSHKey {
   id: string
@@ -54,7 +55,7 @@ export function SSHKeysPage() {
   }
 
   const remove = async (k: SSHKey) => {
-    if (!confirm(`Remove key "${k.name}"? SSH access with it stops immediately.`)) return
+    if (!(await confirmAction({ title: 'Remove SSH Key', message: `Remove key "${k.name}"? SSH access with it stops immediately.`, confirmLabel: 'Remove Key' }))) return
     await api.del(`/v1/organizations/${org?.id}/ssh-keys/${k.id}`)
     await load()
   }

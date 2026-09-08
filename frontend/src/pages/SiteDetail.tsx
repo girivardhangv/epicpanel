@@ -1,15 +1,16 @@
 import { useEffect, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import {
-  ArrowLeft, ArrowUpRight, Ban, Copy, Eye, Globe, Folder, Clock, KeyRound, Terminal as TerminalIcon,
+  ArrowLeft, ArrowRight, ArrowUpRight, Ban, Copy, Eye, Globe, Folder, Clock, KeyRound, Terminal as TerminalIcon,
   Database as DatabaseIcon, Lock, History, Network, Pause, Play, Plus, RefreshCw, ShieldQuestion,
   Trash2, FileText, GitBranch, X,
 } from 'lucide-react'
 import { api, domainsApi, ftpApi, redirectsApi, lifecycleApi } from '@/lib/api'
 import type { FtpAccount, Redirect } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
+import { confirmAction } from '@/lib/confirm'
 import { Card, CardHeader, StatusBadge, EmptyState, SkeletonRows } from '@/components/cards'
-import { PageTitle, UsageCard, MiniItem } from '@/components/ref'
+import { PageTitle, UsageCard, MiniItem, Breadcrumbs } from '@/components/ref'
 import { Modal, Field, ErrorNote, Select } from '@/components/ui'
 import { WordPressModal } from '@/components/WordPressModal'
 import { fmtBytes, timeAgo } from '@/lib/types'
@@ -150,7 +151,8 @@ export function SiteDetailPage() {
   }
 
   const removeAlias = async (d: Domain) => {
-    if (!org || !confirm(`Delete alias "${d.domain}"? It stops serving immediately.`)) return
+    if (!org) return
+    if (!(await confirmAction({ title: 'Delete Alias', message: `Delete alias "${d.domain}"? It stops serving immediately.`, confirmLabel: 'Delete Alias' }))) return
     setErr('')
     try {
       await domainsApi.remove(org.id, websiteId, d.id)
@@ -205,7 +207,8 @@ export function SiteDetailPage() {
   }
 
   const removeRedirect = async (r: Redirect) => {
-    if (!org || !confirm(`Delete the redirect from "${r.from_domain}"?`)) return
+    if (!org) return
+    if (!(await confirmAction({ title: 'Delete Redirect', message: `Delete the redirect from "${r.from_domain}"?`, confirmLabel: 'Delete Redirect' }))) return
     setRedirErr('')
     try {
       await redirectsApi.remove(org.id, r.id)
@@ -239,7 +242,8 @@ export function SiteDetailPage() {
   }
 
   const rotateFtp = async (a: FtpAccount) => {
-    if (!org || !confirm(`Rotate the password for "${a.label}"? The current password stops working immediately.`)) return
+    if (!org) return
+    if (!(await confirmAction({ title: 'Rotate Password', message: `Rotate the password for "${a.label}"? The current password stops working immediately.`, confirmLabel: 'Rotate Password' }))) return
     setFtpErr('')
     setFtpBusyId(a.id)
     try {
@@ -268,7 +272,8 @@ export function SiteDetailPage() {
   }
 
   const removeFtp = async (a: FtpAccount) => {
-    if (!org || !confirm(`Delete FTP account "${a.label}"? Logins with it stop immediately.`)) return
+    if (!org) return
+    if (!(await confirmAction({ title: 'Delete FTP Account', message: `Delete FTP account "${a.label}"? Logins with it stop immediately.`, confirmLabel: 'Delete Account' }))) return
     setFtpErr('')
     setFtpBusyId(a.id)
     try {
@@ -283,7 +288,7 @@ export function SiteDetailPage() {
 
   const suspendSite = async () => {
     if (!org || !site) return
-    if (!confirm(`Suspend "${site.primary_domain || site.name}"? Visitors and FTP logins are blocked until it is resumed.`)) return
+    if (!(await confirmAction({ title: 'Suspend Website', message: `Suspend "${site.primary_domain || site.name}"? Visitors and FTP logins are blocked until it is resumed.`, confirmLabel: 'Suspend' }))) return
     setErr('')
     setLifeBusy(true)
     try {
@@ -415,6 +420,7 @@ export function SiteDetailPage() {
   if (loading) {
     return (
       <div className="mx-auto max-w-[1400px] px-4 py-6 lg:px-6">
+        <Breadcrumbs crumbs={[{ label: 'Sites', to: '/sites' }, { label: 'Loading...' }]} />
         <SkeletonRows rows={4} />
       </div>
     )
@@ -429,6 +435,12 @@ export function SiteDetailPage() {
 
   return (
     <div className="mx-auto max-w-[1400px] px-4 py-6 lg:px-6">
+      <Breadcrumbs
+        crumbs={[
+          { label: 'Sites', to: '/sites' },
+          { label: site.primary_domain || site.name },
+        ]}
+      />
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <Link to="/sites" className="icon-btn !h-[34px] !w-[34px]" title="Back to sites"><ArrowLeft size={15} /></Link>
         <div className="min-w-0">
@@ -517,7 +529,7 @@ export function SiteDetailPage() {
           className="mx-4 mt-4 !mb-0"
           title="Domains & SSL"
           subtitle="Certificates and HTTPS per domain"
-          right={<Link to="/security" className="text-[11px] font-bold text-brand hover:underline">Manage SSL →</Link>}
+          right={<Link to="/security" className="text-[11px] font-bold text-brand hover:underline">Manage SSL <ArrowRight size={11} className="inline" /></Link>}
         />
         {domains.length === 0 ? (
           <EmptyState icon={<Globe size={20} />} title="No domains" subtitle="The primary domain is attached automatically at creation." />
@@ -888,14 +900,14 @@ export function SiteDetailPage() {
             className="mx-4 mt-4 !mb-0"
             title={(site.runtime === 'node' ? 'Node.js' : site.runtime === 'python' ? 'Python' : 'Go') + ' Application Process'}
             subtitle="Supervised process with reverse proxy, build pipeline and logs"
-            right={<Link to={`/sites/${site.id}/application`} className="text-[11px] font-bold text-brand hover:underline">Manage Application →</Link>}
+            right={<Link to={`/sites/${site.id}/application`} className="text-[11px] font-bold text-brand hover:underline">Manage Application <ArrowRight size={11} className="inline" /></Link>}
           />
           <MiniItem
             tone="blue"
             icon={<GitBranch size={14} strokeWidth={1.8} />}
             title={`${site.runtime === 'node' ? 'Node.js' : site.runtime === 'python' ? 'Python' : 'Go'} ${site.runtime_version} application`}
             sub="Supervisor-managed, proxied through nginx"
-            right={<Link to={`/sites/${site.id}/application`} className="btn-ghost !min-h-[30px] !px-2.5 !text-[10.5px]">Manage →</Link>}
+            right={<Link to={`/sites/${site.id}/application`} className="btn-ghost !min-h-[30px] !px-2.5 !text-[10.5px]">Manage <ArrowRight size={11} className="inline" /></Link>}
           />
         </Card>
       )}
@@ -926,7 +938,7 @@ export function SiteDetailPage() {
 
       {/* Attached databases */}
       <Card>
-        <CardHeader className="mx-4 mt-4 !mb-0" title="Attached Databases" right={<Link to="/databases" className="text-[11px] font-bold text-brand hover:underline">All databases →</Link>} />
+        <CardHeader className="mx-4 mt-4 !mb-0" title="Attached Databases" right={<Link to="/databases" className="text-[11px] font-bold text-brand hover:underline">All databases <ArrowRight size={11} className="inline" /></Link>} />
         {dbs.length === 0 ? (
           <EmptyState icon={<DatabaseIcon size={20} />} title="No databases attached" subtitle="Create one from the Databases page and attach it here." />
         ) : (

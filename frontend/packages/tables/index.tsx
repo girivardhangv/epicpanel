@@ -2,6 +2,7 @@
 // cPanel + admin WHM list surfaces.
 import { ReactNode, useMemo, useState } from 'react'
 import { Search } from 'lucide-react'
+import { BulkCheckbox } from '@epicpanel/ui'
 
 export function TableWrap({ children }: { children: ReactNode }) {
   return <div className="overflow-x-auto">{children}</div>
@@ -35,10 +36,29 @@ export function TableSearch({ value, onChange, placeholder }: {
 }
 
 /**
+ * Optional row-selection contract (Phase 14 bulk actions): pass it and a
+ * checkbox column is prepended. The selection state itself lives in the
+ * app (useBulkSelection from @epicpanel/ui) — this component only renders
+ * the checkboxes. Absent = zero visual/behavior change (additive).
+ */
+export interface TableSelection<T> {
+  /** Stable row id used by the checkbox. */
+  key: (row: T) => string
+  /** Currently selected ids. */
+  selected: ReadonlySet<string>
+  /** Called with the row id and the new checked state. */
+  onToggle: (id: string, on: boolean) => void
+  /** Select/deselect every row currently visible. */
+  onToggleAll?: (rows: T[], on: boolean) => void
+  /** aria-label for the row checkbox. */
+  label?: (row: T) => string
+}
+
+/**
  * Generic filterable table: search box + optional select filter + empty and
  * loading states. Row header/td styling matches the ref-table classes.
  */
-export function DataTable<T>({ columns, rows, rowKey, searchText, filterSlot, loading, empty, minWidth = 670, toolbarExtra }: {
+export function DataTable<T>({ columns, rows, rowKey, searchText, filterSlot, loading, empty, minWidth = 670, toolbarExtra, selection }: {
   columns: Column<T>[]
   rows: T[] | null
   rowKey: (row: T) => string
@@ -49,6 +69,8 @@ export function DataTable<T>({ columns, rows, rowKey, searchText, filterSlot, lo
   empty?: ReactNode
   minWidth?: number
   toolbarExtra?: ReactNode
+  /** Optional bulk-selection checkbox column (Phase 14, additive). */
+  selection?: TableSelection<T>
 }) {
   const [query, setQuery] = useState('')
 
@@ -59,6 +81,9 @@ export function DataTable<T>({ columns, rows, rowKey, searchText, filterSlot, lo
     if (searchText) return list.filter((r) => searchText(r).toLowerCase().includes(q))
     return list.filter((r) => columns.some((c) => (c.filter?.(r) ?? '').toLowerCase().includes(q)))
   }, [rows, query, searchText, columns])
+
+  const allOn = selection ? filtered.length > 0 && filtered.every((r) => selection.selected.has(selection.key(r))) : false
+  const someOn = selection ? filtered.some((r) => selection.selected.has(selection.key(r))) : false
 
   const toolbar = searchText || filterSlot || toolbarExtra
 
@@ -84,6 +109,16 @@ export function DataTable<T>({ columns, rows, rowKey, searchText, filterSlot, lo
           <table className="w-full border-collapse" style={{ minWidth }}>
             <thead>
               <tr>
+                {selection && (
+                  <th className="w-[34px] border-b border-line bg-[#fbfcfe] px-4 py-[11px]">
+                    <BulkCheckbox
+                      label="Select all rows"
+                      checked={allOn}
+                      indeterminate={!allOn && someOn}
+                      onChange={(on) => selection.onToggleAll?.(filtered, on)}
+                    />
+                  </th>
+                )}
                 {columns.map((c) => (
                   <th key={c.key} className="border-b border-line bg-[#fbfcfe] px-4 py-[11px] text-left text-[9px] font-extrabold uppercase tracking-[.06em] text-[#7a8597]">
                     {c.header}
@@ -94,6 +129,15 @@ export function DataTable<T>({ columns, rows, rowKey, searchText, filterSlot, lo
             <tbody>
               {filtered.map((row) => (
                 <tr key={rowKey(row)} className="transition hover:bg-[#fbfcff]">
+                  {selection && (
+                    <td className="border-b border-line px-4 py-[11px]">
+                      <BulkCheckbox
+                        label={selection.label?.(row) ?? `Select row ${selection.key(row)}`}
+                        checked={selection.selected.has(selection.key(row))}
+                        onChange={(on) => selection.onToggle(selection.key(row), on)}
+                      />
+                    </td>
+                  )}
                   {columns.map((c) => (
                     <td key={c.key} className="border-b border-line px-4 py-[11px] align-middle text-[10.5px] text-ink">
                       {c.render(row)}

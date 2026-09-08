@@ -41,15 +41,15 @@
       "npm": "@ai-sdk/openai-compatible",
       "name": "EPIC",
       "options": {
-        "baseURL": "http://localhost:20128/v1"
+        "baseURL": "http://localhost:9100/v1"
       },
       "models": {
-        "glmqwen": {
+        "glm-5.3-flash": {
           "name": "Claude-99 Opus Prime"
         }
       }
     }
   },
 
-  "model": "giri1/deepseek-v4-flash"
+  "model": "epic/glm-5.3-flash"
 }

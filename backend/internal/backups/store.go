@@ -489,6 +489,26 @@ func (s *Store) HealthForOrg(ctx context.Context, orgID uuid.UUID, window time.D
 // Targets CRUD (credentials sealed; never selected into API responses)
 // ---------------------------------------------------------------------------
 
+// TargetInput is the exported create shape (API layer cannot build the
+// cred-carrying row type directly).
+type TargetInput struct {
+	OrgID     uuid.UUID
+	Name      string
+	Kind      string
+	Config    json.RawMessage
+	CredsEnc  string
+	IsDefault bool
+}
+
+// CreateTargetInput creates one target row from the exported input shape.
+func (s *Store) CreateTargetInput(ctx context.Context, in TargetInput) (*Target, error) {
+	return s.CreateTarget(ctx, &targetRow{
+		Target: Target{Organization: in.OrgID, Name: in.Name, Kind: in.Kind,
+			Config: in.Config, IsDefault: in.IsDefault},
+		CredsEnc: in.CredsEnc,
+	})
+}
+
 func (s *Store) CreateTarget(ctx context.Context, t *targetRow) (*Target, error) {
 	row := s.Pool.QueryRow(ctx, `
 		INSERT INTO backup_targets (organization_id, name, kind, config, creds_enc, is_default)

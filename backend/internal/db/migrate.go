@@ -12,6 +12,16 @@ import (
 )
 
 func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
+	// Serialize migrators (api boot, test packages): concurrent migrations on
+	// one database race on shared pg catalog entries (pg_type) and produce
+	// spurious duplicate-key failures. The lock key is an arbitrary constant.
+	if _, err := pool.Exec(ctx, `SELECT pg_advisory_lock(918273645)`); err != nil {
+		return fmt.Errorf("acquire migration lock: %w", err)
+	}
+	defer func() {
+		_, _ = pool.Exec(ctx, `SELECT pg_advisory_unlock(918273645)`)
+	}()
+
 	_, err := pool.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			version TEXT PRIMARY KEY,

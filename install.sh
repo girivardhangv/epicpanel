@@ -102,7 +102,7 @@ do_install() {
   if command -v apt-get >/dev/null; then
     log "Installing prerequisites (curl, postgresql, nginx)…"
     apt-get update -y >/dev/null 2>&1 || warn "apt-get update had warnings (continuing)"
-    apt-get install -y --no-install-recommends curl ca-certificates gnupg postgresql nginx >/dev/null 2>&1 \
+    apt-get install -y --no-install-recommends curl ca-certificates gnupg postgresql nginx sudo >/dev/null 2>&1 \
       || fail "failed to install prerequisites"
   else
     fail "Only Debian/Ubuntu (apt) is supported by this installer right now"
@@ -147,6 +147,7 @@ do_install() {
     # shellcheck disable=SC1090
     . "$ENV_FILE"
   else
+    mkdir -p "$ETC_DIR" && chmod 700 "$ETC_DIR"
     SECRET="$(random_bytes 64)"
     cat >"$ENV_FILE" <<EOF
 EPICPANEL_DATABASE_URL=postgres://$DB_USER:$DB_PASS@127.0.0.1:5432/$DB_NAME?sslmode=disable
@@ -213,7 +214,7 @@ After=network-online.target epicpanel-api.service
 
 [Service]
 ExecStart=$BIN_DIR/epicpanel-agent run
-EnvironmentFile=$ETC_DIR/agent.env
+EnvironmentFile=-$ETC_DIR/agent.env
 Environment=EPICPANEL_CONTROL_PLANE_URL=http://127.0.0.1:8080
 Restart=always
 RestartSec=3

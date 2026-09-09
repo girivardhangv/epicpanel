@@ -3,7 +3,7 @@
 # EpicPanel installer / updater / uninstaller — one script for the lifecycle.
 #
 #   Install (fresh VPS):
-#     curl -fsSL https://get.epichostly.com | bash
+#     curl -fsSL https://get.epichostly.in | bash
 #     (or: bash install.sh)
 #
 #   Update (same script, explicit):
@@ -148,7 +148,7 @@ EOF
 
   # --- 3. Binaries -----------------------------------------------------------
   ARCH="$(uname -m)"; case "$ARCH" in x86_64) ARCH=amd64;; aarch64) ARCH=arm64;; esac
-  RELEASE_BASE="${EPICPANEL_DOWNLOAD_BASE:-https://downloads.epichostly.com/latest}"
+  RELEASE_BASE="${EPICPANEL_DOWNLOAD_BASE:-https://downloads.epichostly.in/latest}"
   log "Downloading EpicPanel binaries ($ARCH)…"
   tmp="$(mktemp -d)"
   for f in epicpanel-api epicpanel-agent; do

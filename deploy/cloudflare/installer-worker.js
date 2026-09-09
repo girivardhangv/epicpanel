@@ -1,8 +1,8 @@
 /**
- * EpicPanel installer CDN worker — get.epichostly.com
+ * EpicPanel installer CDN worker — get.epichostly.in
  *
  * Serves install.sh for the curl|bash flow and proxies release binaries for
- * downloads.epichostly.com. Design:
+ * downloads.epichostly.in. Design:
  *   - INSTALLER source of truth: R2 bucket (or GitHub raw as fallback). The
  *     worker caches at the edge (1 min) so pushing a new installer is fast.
  *   - BINARIES are proxied from your origin/pointer (set BINARY_ORIGIN) with
@@ -14,7 +14,7 @@
  *   2. wrangler r2 object put epicpanel-releases/installer/install.sh --file install.sh
  *   3. wrangler r2 object put epicpanel-releases/releases/v1.0.0/epicpanel-api-linux-amd64 --file backend/bin/epicpanel-api   (per OS/arch)
  *   4. wrangler r2 object put epicpanel-releases/releases/latest.json --file latest.json
- *   5. wrangler deploy  (routes bound to get.epichostly.com + downloads.epichostly.com)
+ *   5. wrangler deploy  (routes bound to get.epichostly.in + downloads.epichostly.in)
  *
  * The installer auto-detects the channel via EPICPANEL_INSTALL_URL: when the
  * worker serves it, it sets that env var below so `epicpanel-update` re-pulls
@@ -26,7 +26,7 @@ export default {
     const url = new URL(request.url);
     const host = url.hostname;
 
-    // ---------------- get.epichostly.com ----------------
+    // ---------------- get.epichostly.in ----------------
     if (host === env.GET_HOST) {
       const installer = await env.RELEASES.get("installer/install.sh");
       if (!installer) {
@@ -42,7 +42,7 @@ export default {
       return new Response(body, { headers });
     }
 
-    // ---------------- downloads.epichostly.com ----------------
+    // ---------------- downloads.epichostly.in ----------------
     if (host === env.DOWNLOADS_HOST) {
       // /latest/<file> resolves latest.json then redirects to the versioned key.
       // /v1.0.0/<file> serves the versioned object directly.
@@ -83,8 +83,8 @@ export default {
 // main = "worker.js"
 // compatibility_date = "2026-09-01"
 // routes = [
-//   { pattern = "get.epichostly.com", custom_domain = true },
-//   { pattern = "downloads.epichostly.com", custom_domain = true },
+//   { pattern = "get.epichostly.in", custom_domain = true },
+//   { pattern = "downloads.epichostly.in", custom_domain = true },
 // ]
 //
 // [[r2_buckets]]
@@ -92,5 +92,5 @@ export default {
 // bucket_name = "epicpanel-releases"
 //
 // [vars]
-// GET_HOST = "get.epichostly.com"
-// DOWNLOADS_HOST = "downloads.epichostly.com"
+// GET_HOST = "get.epichostly.in"
+// DOWNLOADS_HOST = "downloads.epichostly.in"

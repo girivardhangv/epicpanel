@@ -9,7 +9,7 @@
 ## 2. Install (one command)
 
 ```bash
-curl -fsSL https://get.epichostly.com | bash
+curl -fsSL https://get.epichostly.in | bash
 ```
 
 or from the repo:
@@ -54,7 +54,7 @@ sudo epicpanel-update          # helper installed on the box
 # or:
 sudo bash install.sh update
 # or simply re-run:
-curl -fsSL https://get.epichostly.com | bash
+curl -fsSL https://get.epichostly.in | bash
 ```
 
 ## 5. Rollback a bad update
@@ -82,8 +82,8 @@ installed (other services may use them).
 
 `deploy/cloudflare/installer-worker.js` powers:
 
-- `get.epichostly.com` → serves `install.sh` (from R2, 60 s edge cache)
-- `downloads.epichostly.com/latest/<binary>` → resolves `latest.json` and
+- `get.epichostly.in` → serves `install.sh` (from R2, 60 s edge cache)
+- `downloads.epichostly.in/latest/<binary>` → resolves `latest.json` and
   streams the binary from R2 (versioned objects are immutable-cached)
 
 One-time setup:
@@ -110,7 +110,7 @@ cd deploy/cloudflare && wrangler deploy
 ```
 
 Then in Cloudflare DNS, add the two hostnames as **custom domains** on the
-worker (get.epichostly.com, downloads.epichostly.com).
+worker (get.epichostly.in, downloads.epichostly.in).
 
 ### Releasing a new version
 

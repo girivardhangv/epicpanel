@@ -586,6 +586,27 @@ func (s *Store) SetEnvEnc(ctx context.Context, botID uuid.UUID, envEnc string) e
 	return nil
 }
 
+// ListBotsInStatus returns bots in exactly one status (reconciler drives
+// 'deleting' rows until agent truth lands — a failed delete job must never
+// wedge them forever).
+func (s *Store) ListBotsInStatus(ctx context.Context, st Status) ([]Bot, error) {
+	rows, err := s.Pool.Query(ctx, `SELECT `+botCols+` FROM bot_instances
+		WHERE status = $1 ORDER BY updated_at ASC`, st)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Bot
+	for rows.Next() {
+		r, err := scanBot(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *r.Public())
+	}
+	return out, rows.Err()
+}
+
 // ListActiveBots returns bots the reconciliation loop cares about (anything
 // live or transitioning; deleted excluded).
 func (s *Store) ListActiveBots(ctx context.Context) ([]Bot, error) {

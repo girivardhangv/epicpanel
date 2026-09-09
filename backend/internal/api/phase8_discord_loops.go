@@ -73,6 +73,37 @@ func (s *Server) reconcileBots(ctx context.Context) {
 		slog.Debug("bot reconcile list failed", "err", err)
 		return
 	}
+	// Deleting bots are excluded from ListActiveBots by design — but a
+	// failed delete job must never wedge them in 'deleting' forever (field
+	// case: restart counter 2300+ on a CHDIR-crashing unit). Drive them to
+	// completion here: success or permanently-failed delete job → deleted;
+	// anything else → re-drive the idempotent delete job.
+	if wedged, werr := store.ListBotsInStatus(ctx, discord.StatusDeleting); werr == nil {
+		for i := range wedged {
+			b := &wedged[i]
+			recent, jerr := botListRecent(ctx, s.Jobs, b.ID, 1, true)
+			if jerr == nil && len(recent) > 0 {
+				j := &recent[0]
+				if j.Type == jobs.Type(discord.JobBotDelete) {
+					if j.Status == jobs.StatusSuccess ||
+						(j.Status == jobs.StatusFailed && j.Attempts >= j.MaxAttempts) {
+						if j.Status == jobs.StatusFailed {
+							slog.Warn("bot delete job failed; finalizing row anyway", "bot", b.ID, "err", j.Error)
+						}
+						if err := store.MarkDeleted(ctx, b.ID); err == nil {
+							discord.DropConsole(b.ID)
+							continue
+						}
+					}
+				}
+			}
+			if _, err := botEnqueueIdempotent(ctx, s.Jobs, b.ServerID, b.ID,
+				jobs.Type(discord.JobBotDelete), discord.BotIDPayload{BotID: b.ID.String()},
+				"botdel-"+b.ID.String()); err != nil {
+				slog.Debug("bot delete re-drive failed", "bot", b.ID, "err", err)
+			}
+		}
+	}
 	for i := range bots {
 		bot := &bots[i]
 
@@ -208,6 +239,14 @@ func (s *Server) applyBotJobOutcomes(ctx context.Context, store *discord.Store, 
 			}
 		case jobs.Type(discord.JobBotDelete):
 			if job.Status == jobs.StatusSuccess {
+				_ = store.MarkDeleted(ctx, bot.ID)
+				discord.DropConsole(bot.ID)
+			} else if job.Status == jobs.StatusFailed && job.Attempts >= job.MaxAttempts {
+				// Deletion is desired state: never wedge the bot in
+				// 'deleting' because the agent-side cleanup failed. The
+				// reconcile loop re-drives the idempotent delete job for
+				// residual tree/user cleanup; the panel row is done.
+				slog.Warn("bot delete job failed permanently; finalizing row anyway", "bot", bot.ID, "err", job.Error)
 				_ = store.MarkDeleted(ctx, bot.ID)
 				discord.DropConsole(bot.ID)
 			}

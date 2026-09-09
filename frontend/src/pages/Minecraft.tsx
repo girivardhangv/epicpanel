@@ -124,7 +124,7 @@ export function MinecraftPage() {
         api.get<{ servers: { id: string; hostname: string; status: string }[] }>(`/v1/organizations/${org!.id}/servers`).catch(() => ({ servers: [] })),
       ])
       setOffers(off.providers ?? [])
-      setServers((srv.servers ?? []).filter((s) => s.status !== 'offline'))
+      setServers(srv.servers ?? [])
     } catch (ex: any) {
       setErr(ex.message)
     }
@@ -200,7 +200,7 @@ function NewInstanceModal({ open, onClose, offers, servers, onDone }: {
   open: boolean
   onClose: () => void
   offers: ProviderOffer[]
-  servers: { id: string; hostname: string }[]
+  servers: { id: string; hostname: string; status: string }[]
   onDone: () => void
 }) {
   const { org } = useAuth()
@@ -208,6 +208,8 @@ function NewInstanceModal({ open, onClose, offers, servers, onDone }: {
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   const sel = useMemo(() => offers.find((o) => o.provider === form.provider) ?? offers[0], [offers, form.provider])
+  const eligible = servers.filter((s) => s.status === 'online')
+  const ineligible = servers.filter((s) => s.status !== 'online')
 
   useEffect(() => {
     if (open && sel) setForm((f) => ({ ...f, provider: sel.provider, version: sel.default }))
@@ -249,11 +251,25 @@ function NewInstanceModal({ open, onClose, offers, servers, onDone }: {
             options={[{ value: 'always', label: 'Always' }, { value: 'on-failure', label: 'On failure' }, { value: 'never', label: 'Never' }]} />
         </Field>
       </div>
-      {servers.length > 1 && (
-        <Field label="Server">
-          <Select value={form.server_id} onChange={(v) => setForm({ ...form, server_id: v })}
-            options={[{ value: '', label: 'Auto-place (least loaded)' }, ...servers.map((s) => ({ value: s.id, label: s.hostname }))]} />
-        </Field>
+      <Field label="Server" hint="Eligible = online + heartbeating + not in maintenance. Java is auto-installed on the target during provisioning.">
+        <Select value={form.server_id} onChange={(v) => setForm({ ...form, server_id: v })}
+          options={[
+            { value: '', label: eligible.length > 0 ? 'Auto-place (least loaded eligible)' : 'Auto-place — no eligible server' },
+            ...eligible.map((s) => ({ value: s.id, label: `${s.hostname} — eligible` })),
+            ...ineligible.map((s) => ({ value: s.id, label: `${s.hostname} — ${s.status === 'offline' ? 'offline' : s.status === 'pending' ? 'agent never connected' : 'maintenance mode'}` })),
+          ]} />
+      </Field>
+      {eligible.length === 0 && servers.length > 0 && (
+        <div className="rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-300">
+          {servers.length === 1
+            ? `Your server "${servers[0].hostname}" is ${servers[0].status === 'offline' ? 'offline (agent not heartbeating — is epicpanel-agent running?)' : servers[0].status === 'pending' ? 'enrolled but the agent has never connected' : 'in maintenance mode'}. Fix that, or pick it explicitly once it is eligible.`
+            : "No enrolled server is online + out of maintenance. See the Server field for each one's status."}
+        </div>
+      )}
+      {servers.length === 0 && (
+        <div className="rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-300">
+          No servers enrolled in this organization yet. Enroll one first (Servers → Add server).
+        </div>
       )}
       <label className="flex cursor-pointer items-center gap-2 py-1 text-[12.5px] text-ink">
         <input type="checkbox" checked={form.accept_eula} onChange={(e) => setForm({ ...form, accept_eula: e.target.checked })} />

@@ -360,7 +360,8 @@ func (h *mcHandler) resolveServer(r *http.Request, serverIDParam string, javaMaj
 		// auto-installs the required Java during provisioning.
 		id, err = h.srv.Servers.AutoPickServer(r.Context(), "", "")
 		if err != nil {
-			return uuid.Nil, httpapi.ErrValidation("no server available; enroll a server or pick one explicitly")
+			return uuid.Nil, httpapi.ErrValidation(
+				"no eligible server: placement requires a server that is online (agent heartbeating within 2 minutes), not in maintenance mode; Java is auto-installed during provisioning — enroll a server or pick one explicitly")
 		}
 	}
 	return id, nil

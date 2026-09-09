@@ -54,6 +54,17 @@ func main() {
 		}
 		return
 	}
+	// Subcommand: `epicpanel-api reset-password --email a@b --password X`
+	// Operator recovery when no admin can log in. Root-only on the box; also
+	// disables MFA on the account (TOTP may be un-recoverable) and revokes
+	// every session (Phase 12 rule: password change ⇒ session revocation).
+	if len(os.Args) > 1 && os.Args[1] == "reset-password" {
+		if err := resetPasswordCmd(os.Args[2:]); err != nil {
+			slog.Error("reset-password failed", "err", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(); err != nil {
 		slog.Error("fatal", "err", err)
 		os.Exit(1)

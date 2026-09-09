@@ -45,6 +45,18 @@ log()  { printf '\033[1;36m[epicpanel]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[epicpanel]\033[0m %s\n' "$*"; }
 fail() { printf '\033[1;31m[epicpanel]\033[0m %s\n' "$*" >&2; exit 1; }
 
+# random_bytes N — N lowercase-hex chars without the SIGPIPE-kill trap.
+# `tr </dev/urandom | head` dies under `set -o pipefail` when head closes the
+# pipe (tr exits 141 → set -e aborts the whole installer silently). od reads
+# a bounded block; no pipe kill possible. 2 hex chars per byte.
+random_bytes() {
+  local n="$1"
+  head -c $(( (n + 1) / 2 )) /dev/urandom | od -An -tx1 | tr -d ' \n' | cut -c1-"$n"
+}
+
+# ERR trap: never die silently — print the failing line + location.
+trap 'fail "installer aborted at line $LINENO (set -x and re-run for details)"' ERR
+
 usage() {
   cat <<EOF
 Usage: bash install.sh [command]
@@ -103,7 +115,7 @@ do_install() {
   log "Preparing the panel database…"
   mkdir -p "$EPIC_DIR"
   if [ ! -f "$DB_PASS_FILE" ]; then
-    tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32 >"$DB_PASS_FILE"
+    random_bytes 24 >"$DB_PASS_FILE"
     chmod 600 "$DB_PASS_FILE"
   fi
   DB_PASS="$(cat "$DB_PASS_FILE")"
@@ -135,7 +147,7 @@ do_install() {
     # shellcheck disable=SC1090
     . "$ENV_FILE"
   else
-    SECRET="$(tr -dc 'a-f0-9' </dev/urandom | head -c 64)"
+    SECRET="$(random_bytes 64)"
     cat >"$ENV_FILE" <<EOF
 EPICPANEL_DATABASE_URL=postgres://$DB_USER:$DB_PASS@127.0.0.1:5432/$DB_NAME?sslmode=disable
 EPICPANEL_HTTP_ADDR=0.0.0.0:8080

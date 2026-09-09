@@ -64,6 +64,8 @@ Usage: bash install.sh [command]
 Commands:
   install     Install or update the panel (default when piped from curl)
   update      Alias of install (explicit upgrade path)
+  agent       Install ONLY the node agent (add this VPS to an existing panel)
+              --url http://panel:8080 --token <registration-token>
   uninstall   Remove services + binaries; keeps DB unless --purge
               --purge   also drop the panel DB, role, config and backups
               --dry-run print what would be removed, change nothing
@@ -424,11 +426,71 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
+# agent — node-only install (attach this VPS to an existing panel)
+# ---------------------------------------------------------------------------
+do_agent() {
+  [ "$(id -u)" -eq 0 ] || fail "Run as root: sudo bash install.sh agent --url … --token …"
+
+  local URL="" TOKEN=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --url)   URL="$2"; shift 2 ;;
+      --token) TOKEN="$2"; shift 2 ;;
+      *) fail "unknown flag: $1 (usage: agent --url http://panel:8080 --token TOKEN)" ;;
+    esac
+  done
+  [ -n "$URL" ] || fail "--url is required (your panel's address, e.g. http://PANEL_IP:8080)"
+  [ -n "$TOKEN" ] || fail "--token is required (generate in the panel: Servers -> Connect Server)"
+  command -v systemctl >/dev/null || fail "systemd is required (Ubuntu 20.04+/Debian 11+)"
+
+  log "Installing the EpicPanel node agent…"
+  ARCH="$(uname -m)"; case "$ARCH" in x86_64) ARCH=amd64;; aarch64) ARCH=arm64;; esac
+  RELEASE_BASE="${EPICPANEL_DOWNLOAD_BASE:-https://downloads.epichostly.in/latest}"
+  tmp="$(mktemp -d)"
+  curl -fsSL -o "$tmp/epicpanel-agent" "$RELEASE_BASE/epicpanel-agent-linux-${ARCH}" \
+    || fail "download epicpanel-agent failed — check EPICPANEL_DOWNLOAD_BASE"
+  [ -f "$BIN_DIR/epicpanel-agent" ] && cp -a "$BIN_DIR/epicpanel-agent" "$BIN_DIR/epicpanel-agent.prev"
+  install -m 0755 "$tmp/epicpanel-agent" "$BIN_DIR/epicpanel-agent"
+  rm -rf "$tmp"
+
+  log "Enrolling with the control plane at $URL …"
+  "$BIN_DIR/epicpanel-agent" enroll --url "$URL" --token "$TOKEN" --no-run \
+    || fail "enrollment failed — token expired/used? Generate a new one in the panel (Servers -> Connect Server)"
+
+  cat >/etc/systemd/system/epicpanel-agent.service <<EOF
+[Unit]
+Description=EpicPanel Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=$BIN_DIR/epicpanel-agent run
+Environment=EPICPANEL_CONTROL_PLANE_URL=$URL
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload
+  systemctl enable --now epicpanel-agent
+
+  sleep 3
+  if systemctl is-active --quiet epicpanel-agent; then
+    log "Node agent is running and streaming to $URL"
+    log "Open the panel -> Servers: this node shows ONLINE with live metrics."
+  else
+    fail "agent did not start — check: journalctl -u epicpanel-agent"
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # dispatch
 # ---------------------------------------------------------------------------
 CMD="${1:-install}"
 case "$CMD" in
   install|update) shift 2>/dev/null || true; do_install "$@" ;;
+  agent)          shift; do_agent "$@" ;;
   uninstall)      shift; do_uninstall "$@" ;;
   rollback)       do_rollback ;;
   -h|--help|help) usage ;;

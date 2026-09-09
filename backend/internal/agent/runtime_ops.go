@@ -270,11 +270,14 @@ func (e errStr2) Error() string { return string(e) }
 //  2. Very new distro releases (e.g. codename "resolute") are not published
 //     on the PPA yet → apt 404 "does not have a Release file", which then
 //     poisons EVERY later apt-get update. → probe Launchpad for supported
-//     suites and fall back to the nearest one the PPA actually has (e.g. the
-//     previous LTS), with a warning.
+//     suites and refuse foreign-suite pins (they deadlock on Depends).
 //  3. Leftover broken PPA list files from a previous attempt. → removed
 //     before writing ours (the fingerprint is fetched from Launchpad's API
 //     over HTTPS — no keyserver, no hkp, no hardcoded key material).
+//  4. Derivative distros (Linux Mint "zena", Pop!_OS, …): the PPA never
+//     publishes the derivative codename, but DOES publish the base Ubuntu
+//     suite the derivative is built against (Mint 22.x → noble, verified
+//     live on this box). → ppaCodename falls back to UBUNTU_CODENAME.
 func (e *Executor) addOndrejPPA(ctx context.Context) error {
 	// Clean ALL previous ondrej state FIRST (stale 404 entries and
 	// conflicting Signed-By keyrings are the field killers) — and never
@@ -283,19 +286,9 @@ func (e *Executor) addOndrejPPA(ctx context.Context) error {
 		return err
 	}
 
-	codename, err := e.distroCodename(ctx)
+	codename, err := e.ppaCodename(ctx, "ondrej/php")
 	if err != nil {
 		return err
-	}
-
-	// Decide the suite up front: the PPA's real dists/ index is the source
-	// of truth. If THIS distro's suite is not published, DO NOT bridge a
-	// foreign suite — noble-built packages deadlocked on libxml2 Depends
-	// against resolute's newer libs (field case). Caller falls to static PHP.
-	if !e.ppaHasSuite(ctx, codename) {
-		slog.Warn("PPA does not publish this distro suite; refusing foreign-suite pin (dependency conflicts)",
-			"distro", codename)
-		return errSuiteUnsupported
 	}
 
 	// Signing key: fingerprint from Launchpad's HTTPS API (no hardcoded key
@@ -321,6 +314,77 @@ func (e *Executor) addOndrejPPA(ctx context.Context) error {
 	return e.aptUpdateTolerant(ctx)
 }
 
+// addDeadsnakesPPA enables ppa:deadsnakes/ppa for the suite ppaCodename
+// selects (derivative-safe, like addOndrejPPA) — but writes the sources
+// entry directly: add-apt-repository would use the raw distro codename
+// (Mint "zena"), which Launchpad does not publish for deadsnakes either.
+func (e *Executor) addDeadsnakesPPA(ctx context.Context, codename string) error {
+	// Prune previous deadsnakes state (same poisoning rules as ondrej).
+	c0, cancel0 := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel0()
+	if err := e.run(c0, "bash", "-c",
+		"rm -f /etc/apt/sources.list.d/deadsnakes*.list /etc/apt/sources.list.d/deadsnakes*.list.save /etc/apt/sources.list.d/deadsnakes-*.gpg 2>/dev/null || true; true"); err != nil {
+		return err
+	}
+	if err := e.run(ctx, "mkdir", "-p", "/etc/apt/keyrings"); err != nil {
+		return err
+	}
+	c, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
+	if err := e.run(c, "bash", "-c",
+		"set -e; FP=$(curl -fsSL --max-time 30 'https://api.launchpad.net/devel/~deadsnakes/+archive/ubuntu/ppa' | python3 -c \"import sys,json;print(json.load(sys.stdin).get('signing_key_fingerprint',''))\") && [ -n \"$FP\" ] && curl -fsSL --max-time 60 \"https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x$FP\" | gpg --batch --yes --no-tty --dearmor -o /etc/apt/keyrings/deadsnakes.gpg"); err != nil {
+		return fmt.Errorf("fetch deadsnakes signing key: %w", err)
+	}
+	c2, cancel2 := context.WithTimeout(ctx, 1*time.Minute)
+	defer cancel2()
+	if err := e.run(c2, "bash", "-c",
+		"echo 'deb [signed-by=/etc/apt/keyrings/deadsnakes.gpg] https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu "+codename+" main' > /etc/apt/sources.list.d/deadsnakes.list"); err != nil {
+		return err
+	}
+	return e.aptUpdateTolerant(ctx)
+}
+
+// ppaCodename picks the suite the PPA actually publishes for this system:
+// VERSION_CODENAME first; when unpublished (Debian/Ubuntu derivatives like
+// Mint), UBUNTU_CODENAME if the PPA carries it. Never bridges a foreign
+// suite blindly — only the derivative's OWN base suite, which is what its
+// packages are built against (Mint zena → noble; verified live). Foreign
+// suites are the libxml2-Depends deadlock, so anything unpublished is an
+// error, not a guess.
+func (e *Executor) ppaCodename(ctx context.Context, ppaPath string) (string, error) {
+	codename, err := e.distroCodename(ctx)
+	if err != nil {
+		return "", err
+	}
+	probe := func(suite string) bool {
+		return e.ppaHasSuiteGeneral(ctx, ppaPath, suite)
+	}
+	if probe(codename) {
+		return codename, nil
+	}
+	if base := e.ubuntuCodename(ctx); base != "" && base != codename && probe(base) {
+		slog.Warn("derivative distro: using base-Ubuntu suite the PPA publishes",
+			"distro_codename", codename, "base", base)
+		return base, nil
+	}
+	slog.Warn("PPA does not publish this distro suite; refusing foreign-suite pin (dependency conflicts)",
+		"distro", codename)
+	return "", errSuiteUnsupported
+}
+
+// ubuntuCodename returns UBUNTU_CODENAME from /etc/os-release ("" when the
+// file doesn't declare one — plain Debian/Ubuntu).
+func (e *Executor) ubuntuCodename(ctx context.Context) string {
+	c, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(c, "bash", "-c", ". /etc/os-release && echo -n ${UBUNTU_CODENAME:-}")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 // distroCodename returns VERSION_CODENAME from /etc/os-release.
 func (e *Executor) distroCodename(ctx context.Context) (string, error) {
 	c, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -333,15 +397,11 @@ func (e *Executor) distroCodename(ctx context.Context) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// ppaHasSuite probes the PPA's actual repository index (dists/) for a
+// ppaHasSuite probes the ondrej PPA's actual repository index (dists/) for a
 // published suite — the authoritative source (the Launchpad API JSON does
-// not list suites; the repo directory listing does).
+// not list suites; the repo directory listing does). Kept for the test hook.
 func (e *Executor) ppaHasSuite(ctx context.Context, suite string) bool {
-	c, cancel := context.WithTimeout(ctx, 45*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(c, "bash", "-c",
-		`curl -fsSL --max-time 20 'https://ppa.launchpadcontent.net/ondrej/php/ubuntu/dists/' | grep -q 'href="`+suite+`/"'`)
-	return cmd.Run() == nil
+	return e.ppaHasSuiteGeneral(ctx, "ondrej/php", suite)
 }
 
 // pruneOndrejSources removes stale/broken/duplicate ondrej list files
@@ -422,18 +482,12 @@ func (e *Executor) installPython(ctx context.Context, runtimeID, version string,
 		p(100, "Python "+major+" installed")
 		return nil
 	}
-	// 2. deadsnakes PPA — but ONLY for the distro's own suite (same
-	//    dependency-conflict rule as the PHP PPA; never bridge a foreign
-	//    suite). Probe the real archive path: ppa.launchpadcontent.net/
-	//    deadsnakes/ppa/ubuntu/dists/ (owner=deadsnakes, ppa=ppa).
-	codename, cnErr := e.distroCodename(ctx)
-	if cnErr == nil && e.ppaHasSuiteGeneral(ctx, "deadsnakes/ppa", codename) {
+	// 2. deadsnakes PPA — only the suite ppaCodename selects (distro's own,
+	//    or the derivative's base-Ubuntu suite; never a blind foreign pin).
+	codename, cnErr := e.ppaCodename(ctx, "deadsnakes/ppa")
+	if cnErr == nil {
 		p(55, "Adding deadsnakes PPA for Python "+major+"…")
-		c6, cancel6 := context.WithTimeout(ctx, 3*time.Minute)
-		defer cancel6()
-		if err := e.runEnv(c6, []string{"DEBIAN_FRONTEND=noninteractive"},
-			"add-apt-repository", "-y", "ppa:deadsnakes/ppa"); err == nil {
-			_ = e.aptUpdateTolerant(ctx)
+		if err := e.addDeadsnakesPPA(ctx, codename); err == nil {
 			if err := e.run(c5, "apt-get", "install", "-y", "python"+major, "python"+major+"-venv"); err == nil {
 				p(100, "Python "+major+" installed")
 				return nil
@@ -503,10 +557,15 @@ func (e *Executor) installStandalonePython(ctx context.Context, major string, p 
 		return fmt.Errorf("extract standalone python: %w", err)
 	}
 	_ = os.Remove(tmp)
-	// The build ships bin/python3; alias the requested python<major>.
-	_ = os.Remove(bin) // stale symlink from a failed prior attempt
-	if err := os.Symlink(filepath.Join(base, "bin", "python3"), bin); err != nil {
-		return fmt.Errorf("link python%s: %w", major, err)
+	// Alias python<major>: the tarball ships bin/python3.11 (real binary)
+	// plus bin/python3 → python3.11. Only create the alias when the real
+	// binary is absent — clobbering it with a symlink to python3 makes a
+	// self-referencing loop ("too many levels of symbolic links").
+	if fi, err := os.Lstat(bin); err != nil || fi.Mode()&os.ModeSymlink != 0 {
+		_ = os.Remove(bin)
+		if err := os.Symlink("python3", bin); err != nil {
+			return fmt.Errorf("link python%s: %w", major, err)
+		}
 	}
 	_ = e.symlinkIfAbsent(bin, "/usr/local/bin/python"+major)
 	// app_ops venvs need pip: ensurepip ships enabled in these builds.

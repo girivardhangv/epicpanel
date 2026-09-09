@@ -92,6 +92,17 @@ func newBotTestEnv(t *testing.T) *botTestEnv {
 	if env.serverID == "" {
 		t.Fatalf("create server: %v", resp.body)
 	}
+	// Online + node 22 available: create() auto-picks this server through
+	// AutoPickServer (the billing tests seed the same shape directly).
+	if _, err := srv.Pool.Exec(context.Background(),
+		`UPDATE servers SET status = 'online', last_seen_at = now() WHERE id = $1`, env.serverID); err != nil {
+		t.Fatalf("server online: %v", err)
+	}
+	if _, err := srv.Pool.Exec(context.Background(),
+		`INSERT INTO runtimes (server_id, type, version, status, created_by)
+		 VALUES ($1, 'node', '22', 'available', (SELECT id FROM users WHERE email = 'botadmin@example.test'))`, env.serverID); err != nil {
+		t.Fatalf("seed runtime: %v", err)
+	}
 
 	// Truncate bot tables (harness drop-list does not know them).
 	ctx := context.Background()
@@ -172,7 +183,13 @@ func TestBotCRUDAndPlanGate(t *testing.T) {
 	resp = env.app.do("POST", "/v1/organizations", map[string]string{"name": "WebCo"})
 	webOrg, _ := resp.body["id"].(string)
 	if webOrg != "" {
-		// keep the default plan (web) — create must be refused
+		// The default plan is now a Discord plan (Discord Starter seed, the
+		// migration fix) so an UNASSIGNED org passes the kind gate — pin the
+		// org to an explicit web package: the genuine-conflict 403.
+		if _, err := env.srv.Pool.Exec(context.Background(),
+			`UPDATE organizations SET package_id = (SELECT id FROM hosting_packages WHERE name = 'Starter') WHERE id = $1`, webOrg); err != nil {
+			t.Fatalf("assign web plan: %v", err)
+		}
 		resp = env.bots.do("POST", "/v1/organizations/"+webOrg+"/bots", map[string]any{
 			"name": "wb", "runtime": "node", "startup_file": "index.js",
 		})

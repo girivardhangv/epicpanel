@@ -12,6 +12,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	"github.com/epicbyte/epicpanel/backend/internal/jobs"
 	"github.com/epicbyte/epicpanel/backend/internal/organizations"
 	"github.com/epicbyte/epicpanel/backend/internal/resources"
+	"github.com/epicbyte/epicpanel/backend/internal/runtimes"
 	"github.com/epicbyte/epicpanel/backend/internal/servers"
 )
 
@@ -194,6 +196,14 @@ func (h *botHandler) create(w http.ResponseWriter, r *http.Request) {
 	// bot count must fit. On Discord plans the per-workload count column is
 	// max_websites (Discord Basic/Pro = 1 bot). Fail closed when the plan
 	// cannot be resolved.
+	//
+	// Unassigned orgs are NOT blocked here: when no hosting package is
+	// explicitly assigned (and no platform default exists), PlanForOrg
+	// cannot name a bot-capable plan — failing that lookup would make bot
+	// hosting dead on arrival for every fresh organization. Those orgs run
+	// on the platform-default limits (the resolved fallback plan still
+	// feeds the count gate below). A GENUINE plan conflict — the org is
+	// explicitly on a non-Discord package — stays a hard 403.
 	if h.srv.ResourceLimits == nil {
 		httpapi.RespondError(w, httpapi.ErrForbidden("plan limits unavailable; bot creation blocked"))
 		return
@@ -203,7 +213,7 @@ func (h *botHandler) create(w http.ResponseWriter, r *http.Request) {
 		httpapi.RespondError(w, httpapi.ErrForbidden("plan limits unavailable; bot creation blocked"))
 		return
 	}
-	if plan.Kind != string(resources.KindDiscord) {
+	if plan.Kind != string(resources.KindDiscord) && h.orgHasOwnPlan(r.Context(), orgID) {
 		httpapi.RespondError(w, httpapi.ErrForbidden("the organization plan does not include Discord bot hosting"))
 		return
 	}
@@ -217,10 +227,27 @@ func (h *botHandler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	serverID, apiErr := h.resolveServer(r, orgID, req.ServerID, req.Runtime, req.RuntimeVersion)
+	serverID, needsRuntime, apiErr := h.resolveServer(r, orgID, req.ServerID, req.Runtime, req.RuntimeVersion)
 	if apiErr != nil {
 		httpapi.RespondError(w, apiErr)
 		return
+	}
+
+	// Runtime missing on the picked server: register a runtime row and
+	// enqueue install_runtime HERE (validation phase — nothing mutated yet).
+	// Jobs claim oldest-first, so this install runs before the bot_install
+	// job enqueued below: the agent has the interpreter on the box before it
+	// provisions the bot tree. Only AFTER this passed do the mutating steps
+	// run, so a runtime-registration error cannot orphan a half-created bot.
+	if needsRuntime {
+		runtimeType := req.Runtime
+		if runtimeType == "" {
+			runtimeType = "node"
+		}
+		if err := h.enqueueBotRuntimeInstall(r.Context(), orgID, h.actorID(r), serverID, runtimeType, req.RuntimeVersion); err != nil {
+			httpapi.RespondError(w, httpapi.ErrInternal(err))
+			return
+		}
 	}
 
 	bot, err := discord.CreateBot(r.Context(), h.bots, orgID, serverID, h.actorID(r), discord.CreateInput{
@@ -253,22 +280,93 @@ func (h *botHandler) create(w http.ResponseWriter, r *http.Request) {
 	httpapi.WriteJSON(w, http.StatusCreated, bot)
 }
 
-func (h *botHandler) resolveServer(r *http.Request, orgID uuid.UUID, serverIDParam, runtime, version string) (uuid.UUID, *httpapi.APIError) {
+// orgHasOwnPlan reports whether the org is EXPLICITLY assigned a hosting
+// package (package_id set) — i.e. a non-Discord plan kind is a real admin
+// decision, not the platform default fallback. Best effort: on error the
+// org is treated as unassigned (gate stays satisfiable; a missing row would
+// 404/500 at insert time anyway).
+func (h *botHandler) orgHasOwnPlan(ctx context.Context, orgID uuid.UUID) bool {
+	var has bool
+	if err := h.srv.Pool.QueryRow(ctx,
+		`SELECT package_id IS NOT NULL FROM organizations WHERE id = $1`, orgID).Scan(&has); err != nil {
+		return false
+	}
+	return has
+}
+
+// resolveServer resolves the target server for a bot.
+//
+// Runtime placement, best effort in order (Phase 12 placement model):
+//  1. explicit server_id wins (admin/customer choice — no runtime filter);
+//  2. auto-pick an ONLINE server that already has the bot runtime registered;
+//  3. auto-pick any online server and signal the caller to enqueue an
+//     install_runtime job FIRST — jobs claim oldest-first, so the runtime
+//     install runs before the bot_install provisioning job.
+//
+// A missing runtime is therefore never a dead end; only an empty/offline
+// fleet is.
+func (h *botHandler) resolveServer(r *http.Request, orgID uuid.UUID, serverIDParam, runtime, version string) (uuid.UUID, bool, *httpapi.APIError) {
 	if serverIDParam != "" {
 		id, err := uuid.Parse(serverIDParam)
 		if err != nil {
-			return uuid.Nil, httpapi.ErrValidation("invalid server_id")
+			return uuid.Nil, false, httpapi.ErrValidation("invalid server_id")
 		}
 		if _, err := h.srv.Servers.GetByID(r.Context(), id); err != nil {
-			return uuid.Nil, httpapi.ErrNotFound("server not found")
+			return uuid.Nil, false, httpapi.ErrNotFound("server not found")
 		}
-		return id, nil
+		return id, false, nil
 	}
-	id, err := h.srv.Servers.AutoPickServer(r.Context(), runtime, version)
+	runtimeType := runtime
+	if runtimeType == "" {
+		runtimeType = "node"
+	}
+	id, err := h.srv.Servers.AutoPickServer(r.Context(), runtimeType, version)
+	if err == nil {
+		return id, false, nil
+	}
+	// No server has the bot runtime registered: fall back to any online
+	// server; the caller queues the runtime install ahead of bot_install.
+	id, err = h.srv.Servers.AutoPickServer(r.Context(), "", "")
 	if err != nil {
-		return uuid.Nil, httpapi.ErrValidation("no server available for this runtime; enroll a server with it installed or pick one explicitly")
+		return uuid.Nil, false, httpapi.ErrValidation("no online server available for this bot")
 	}
-	return id, nil
+	return id, true, nil
+}
+
+// enqueueBotRuntimeInstall registers the runtime row + enqueues the
+// install_runtime job for a bot runtime missing on the target server. Uses
+// the platform runtimes pipeline verbatim (same registry row, same job
+// payload contract, same fanout) so the bot path stays one code path behind
+// the runtime manager.
+func (h *botHandler) enqueueBotRuntimeInstall(ctx context.Context, orgID, actorID, serverID uuid.UUID, runtimeType, version string) error {
+	rt, err := discord.RuntimeFor(runtimeType)
+	if err != nil {
+		return fmt.Errorf("bot runtime %q has no installable runtime", runtimeType)
+	}
+	if version == "" {
+		version = rt.DefaultVersion()
+	}
+	// Registry majors: node/java take a single major, python takes major.minor.
+	regType := runtimes.Type(runtimeType)
+	regVersion := version
+	if strings.Contains(regVersion, ".") && (regType == runtimes.TypeNode || regType == runtimes.TypeJava) {
+		regVersion = strings.Split(regVersion, ".")[0]
+	}
+	// Store.Create resets a FAILED row for retry; an existing
+	// installing/available row means the runtime is already there — reuse it.
+	if _, err := h.srv.Runtimes.Create(ctx, serverID, actorID, regType, regVersion); err != nil && err != runtimes.ErrDuplicate {
+		return err
+	}
+	row, err := h.srv.Runtimes.GetByTypeVersion(ctx, serverID, regType, regVersion)
+	if err != nil {
+		return err
+	}
+	payload := runtimes.InstallPayload{RuntimeID: row.ID, Type: string(regType), Version: regVersion}
+	if _, err := h.srv.Jobs.Enqueue(ctx, serverID, nil, jobs.TypeInstallRuntime, payload); err != nil {
+		_ = h.srv.Runtimes.SetStatus(ctx, row.ID, runtimes.StatusFailed, "enqueue failed: "+err.Error())
+		return err
+	}
+	return nil
 }
 
 func (h *botHandler) list(w http.ResponseWriter, r *http.Request) {

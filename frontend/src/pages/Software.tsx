@@ -46,6 +46,7 @@ const ENGINE_LABELS: Record<string, string> = {
   go: 'Go',
   apache: 'Apache',
   openlitespeed: 'OpenLiteSpeed',
+  java: 'Java',
 }
 
 const CATALOG: { type: string; label: string; versions: string[] }[] = [
@@ -55,9 +56,10 @@ const CATALOG: { type: string; label: string; versions: string[] }[] = [
   { type: 'go', label: 'Go (official toolchain)', versions: ['1.22', '1.23'] },
   { type: 'apache', label: 'Apache HTTP Server 2.4', versions: ['2.4'] },
   { type: 'openlitespeed', label: 'OpenLiteSpeed 1.8', versions: ['1.8'] },
+  { type: 'java', label: 'Java (OpenJDK / Temurin)', versions: ['21', '17', '8'] },
 ]
 
-const DEFAULTS: Record<string, string> = { php: '8.3', node: '22', python: '3.12', go: '1.22', apache: '2.4', openlitespeed: '1.8' }
+const DEFAULTS: Record<string, string> = { php: '8.3', node: '22', python: '3.12', go: '1.22', apache: '2.4', openlitespeed: '1.8', java: '21' }
 
 // Live job progress pill for one install job.
 function JobProgress({ job }: { job: SetupJob }) {

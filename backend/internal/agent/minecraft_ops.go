@@ -253,6 +253,26 @@ func mcRestartPolicy(p string) string {
 var defaultDriver ContainerDriver = SystemdDriver{}
 
 // ============================================================================
+// java dependency — Minecraft auto-installs the Java major it needs
+// ============================================================================
+
+// ensureJavaForInstance makes sure a JVM of the requested major exists before
+// the instance runs. Satisfied → no-op; otherwise routes through the shared
+// runtime installer (distro packages, Temurin tarball fallback) exactly like
+// a Software-page install. Idempotent and bounded by ctx.
+func (e *Executor) ensureJavaForInstance(ctx context.Context, javaMajor int) error {
+	if javaMajor <= 0 {
+		javaMajor = 21
+	}
+	major := strconv.Itoa(javaMajor)
+	if out, err := exec.CommandContext(ctx, "java", "-version").CombinedOutput(); err == nil && javaOutputMatches(string(out), major) {
+		return nil
+	}
+	slog.Info("ensuring java for minecraft instance", "major", javaMajor)
+	return e.installJava(ctx, "", major, func(int, string) {})
+}
+
+// ============================================================================
 // install — unix user, directories, jar download / installer run (provider
 // steps), server.properties + eula.txt
 // ============================================================================
@@ -266,6 +286,9 @@ func HandleMCInstall(ctx context.Context, e *Executor, c *Client, cfg Config, pa
 	}
 	if _, err := uuid.Parse(p.InstanceID); err != nil {
 		return nil, fmt.Errorf("invalid instance id")
+	}
+	if err := e.ensureJavaForInstance(ctx, p.JavaMajor); err != nil {
+		return nil, fmt.Errorf("java %d for minecraft: %w", p.JavaMajor, err)
 	}
 	provider, err := minecraft.ProviderFor(p.Provider)
 	if err != nil {
@@ -451,6 +474,9 @@ func HandleMCStart(ctx context.Context, e *Executor, c *Client, cfg Config, payl
 	root := MCRoot(p.InstanceID)
 	if _, err := os.Stat(root); err != nil {
 		return nil, fmt.Errorf("instance tree missing (install first)")
+	}
+	if err := e.ensureJavaForInstance(ctx, p.JavaMajor); err != nil {
+		return nil, fmt.Errorf("java %d for minecraft: %w", p.JavaMajor, err)
 	}
 	provider, err := minecraft.ProviderFor(p.Provider)
 	if err != nil {

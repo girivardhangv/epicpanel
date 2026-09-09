@@ -111,17 +111,29 @@ func HandleBotInstall(ctx context.Context, e *Executor, c *Client, cfg Config, p
 	if err := ensureBotUser(botUser); err != nil {
 		return nil, fmt.Errorf("bot user: %w", err)
 	}
+	// Ownership MUST come from the bot's unix user, not from the current
+	// owner of the tree: the agent runs as root, so a freshly created tree
+	// is root-owned and the circular stat would "chown" it to root — the
+	// bot user (and systemd's User=) would then be unable to read or write
+	// its own working directory (caught live: start crash-loops on
+	// permission denied).
+	uid, gid, err := idsForUser(botUser)
+	if err != nil {
+		return nil, fmt.Errorf("bot user ids: %w", err)
+	}
 	root := BotRoot(p.BotID)
 	for _, dir := range []string{root, filepath.Join(root, "data")} {
 		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return nil, err
 		}
 	}
-	uid, gid, err := botOwnerIDs(root)
-	if err != nil {
-		return nil, err
-	}
 	_ = chownRecursive(root, uid, gid)
+	// The bot base (/srv/epicpanel/bots) is root-owned 0750: systemd needs to
+	// CHDIR through it into the tree before ReadWritePaths applies. Grant the
+	// bot's group traverse-only (--x) on the base — the tree below stays
+	// bot-private (mirrors the www-data ACL pattern for websites).
+	_ = exec.Command("setfacl", "-m", "g:"+botUser+":--x", BotRootBase).Run()
+	_ = exec.Command("setfacl", "-m", "d:g:"+botUser+":--x", BotRootBase).Run()
 
 	// Dependency install via the runtime abstraction (new runtime = provider).
 	log := &strings.Builder{}
@@ -301,6 +313,7 @@ func HandleBotDeployGit(ctx context.Context, e *Executor, c *Client, cfg Config,
 	if p.RepoURL == "" {
 		return nil, fmt.Errorf("repo_url is required")
 	}
+	_ = chownRecursive(root, uid, gid)
 
 	timeout := time.Duration(p.BuildTimeout) * time.Second
 	if timeout <= 0 || timeout > 15*time.Minute {
@@ -570,9 +583,16 @@ func HandleBotStart(ctx context.Context, e *Executor, c *Client, cfg Config, pay
 	if err != nil {
 		return nil, err
 	}
-	uid, gid, err := botOwnerIDs(root)
-	if err != nil {
-		return nil, err
+	// Trust the bot USER for ownership (not the tree's current owner): if a
+	// retried start races a fresh tree, root ownership would silently break
+	// the unit again. Fall back to the tree owner only when the user lookup
+	// fails (user removed mid-flight).
+	uid, gid, uerr := idsForUser(botUser)
+	if uerr != nil {
+		uid, gid, err = botOwnerIDs(root)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Startup command: provider default when the payload carries none.

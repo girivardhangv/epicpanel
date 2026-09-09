@@ -29,11 +29,12 @@ var (
 
 // ValidVersionForType validates per runtime type: node takes a single major
 // ("22"); go takes major.minor ("1.22" — the agent resolves the newest patch
-// from go.dev); php/python take major.minor ("8.3", "3.12"). The old
-// one-size regex rejected "22" for Node — field-reported bug.
+// from go.dev); php/python take major.minor ("8.3", "3.12"); java takes a
+// single major ("21", "17", "8" — the agent resolves the newest build). The
+// old one-size regex rejected "22" for Node — field-reported bug.
 func ValidVersionForType(t Type, v string) bool {
 	switch t {
-	case TypeNode:
+	case TypeNode, TypeJava:
 		return versionMajorRe.MatchString(v)
 	default:
 		return versionRe.MatchString(v)
@@ -49,6 +50,7 @@ const (
 	TypeGo          Type = "go"
 	TypeApache      Type = "apache"
 	TypeOpenLiteSpd Type = "openlitespeed"
+	TypeJava        Type = "java"
 )
 
 type Status string
@@ -93,7 +95,7 @@ func scanRow(row pgx.Row) (*Runtime, error) {
 
 func ValidType(t string) bool {
 	switch Type(t) {
-	case TypePHP, TypeNode, TypePython, TypeGo, TypeApache, TypeOpenLiteSpd:
+	case TypePHP, TypeNode, TypePython, TypeGo, TypeApache, TypeOpenLiteSpd, TypeJava:
 		return true
 	}
 	return false

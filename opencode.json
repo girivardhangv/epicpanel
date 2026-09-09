@@ -41,15 +41,28 @@
       "npm": "@ai-sdk/openai-compatible",
       "name": "EPIC",
       "options": {
-        "baseURL": "http://localhost:9300/v1"
+        "baseURL": "http://localhost:9100/v1"
       },
       "models": {
         "glm-5.3-flash": {
           "name": "Claude-99 Opus Prime"
         }
       }
+    },
+
+    "kiro": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "KIRO",
+      "options": {
+        "baseURL": "http://localhost:9300/v1"
+      },
+      "models": {
+        "deepseek/deepseek-v4-pro": {
+          "name": "GPT-6 Astra"
+        }
+      }
     }
   },
 
-  "model": "epic/glm-5.3-flash"
+  "model": "giri1/deepseek-v4-flash"
 }

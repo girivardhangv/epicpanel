@@ -47,6 +47,8 @@ func (e *Executor) InstallRuntime(ctx context.Context, runtimeID, rtType, versio
 		return e.installApache(ctx, p)
 	case "openlitespeed":
 		return e.installOpenLiteSpeed(ctx, p)
+	case "java":
+		return e.installJava(ctx, runtimeID, version, p)
 	default:
 		return fmt.Errorf("unsupported runtime type %q", rtType)
 	}
@@ -662,6 +664,8 @@ func (e *Executor) RemoveRuntime(ctx context.Context, runtimeID, rtType, version
 			}
 		}
 		return nil
+	case "java":
+		return e.RemoveJava(ctx, versionMajorDot(version))
 	default:
 		return fmt.Errorf("removal for %s not implemented", rtType)
 	}

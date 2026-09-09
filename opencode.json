@@ -59,6 +59,9 @@
       "models": {
         "deepseek/deepseek-v4-pro": {
           "name": "GPT-6 Astra"
+        },
+        "glm-5.3-flash": {
+          "name": "GLM 5.3 FLASH"
         }
       }
     }

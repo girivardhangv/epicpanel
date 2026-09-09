@@ -1,4 +1,4 @@
-f70a79538558cd6efaa5e3a389e3e8ce532dc682b26a7d38294c5d850e6dff8b  ./epicpanel-agent-linux-amd64
-15391ff164792581ae4493482de9ac100cbca29f22111254c36fd760c29ac318  ./epicpanel-agent-linux-arm64
-bdb82c3c5ba53dc631bf098705231ee699426c72aa8fbb3356f61fa67cc06091  ./epicpanel-api-linux-amd64
-b51b23c9988e875d5295fe46279954ff523f324810c59bf6fd65f9f412078a4a  ./epicpanel-api-linux-arm64
+091b1d09fe04c377cba9f6a8bcf4a2d80512907c656a943ac2706141ae436551  ./epicpanel-agent-linux-amd64
+751cf6a73e49effefbc0bbb9ea34860b3440b7017c379abd26d859a67bb16b25  ./epicpanel-agent-linux-arm64
+744a5759d355fdfbcc332ba405dd503516442716a341926142935fec875a3a7c  ./epicpanel-api-linux-amd64
+affc8b75e71d632e0314041b9ccbbd777a009597a7e9f3f078493d0164b1dbfb  ./epicpanel-api-linux-arm64

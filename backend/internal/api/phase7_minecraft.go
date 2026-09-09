@@ -283,7 +283,7 @@ func (h *mcHandler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	serverID, apiErr := h.resolveServer(r, req.ServerID)
+	serverID, apiErr := h.resolveServer(r, req.ServerID, javaMajor)
 	if apiErr != nil {
 		httpapi.RespondError(w, apiErr)
 		return
@@ -340,7 +340,7 @@ func (h *mcHandler) create(w http.ResponseWriter, r *http.Request) {
 	httpapi.WriteJSON(w, http.StatusCreated, h.instanceView(r, inst))
 }
 
-func (h *mcHandler) resolveServer(r *http.Request, serverIDParam string) (uuid.UUID, *httpapi.APIError) {
+func (h *mcHandler) resolveServer(r *http.Request, serverIDParam string, javaMajor int) (uuid.UUID, *httpapi.APIError) {
 	if serverIDParam != "" {
 		id, err := uuid.Parse(serverIDParam)
 		if err != nil {
@@ -351,9 +351,17 @@ func (h *mcHandler) resolveServer(r *http.Request, serverIDParam string) (uuid.U
 		}
 		return id, nil
 	}
-	id, err := h.srv.Servers.AutoPickServer(r.Context(), "minecraft", "")
+	// Prefer a server that already carries the Java major this provider
+	// needs ("minecraft" is NOT a runtime type — the old call here matched
+	// nothing and dead-ended every auto-placement with "no server available").
+	id, err := h.srv.Servers.AutoPickServer(r.Context(), "java", strconv.Itoa(javaMajor))
 	if err != nil {
-		return uuid.Nil, httpapi.ErrValidation("no server available; enroll a server or pick one explicitly")
+		// No exact-Java server: any online server still works — the agent
+		// auto-installs the required Java during provisioning.
+		id, err = h.srv.Servers.AutoPickServer(r.Context(), "", "")
+		if err != nil {
+			return uuid.Nil, httpapi.ErrValidation("no server available; enroll a server or pick one explicitly")
+		}
 	}
 	return id, nil
 }

@@ -163,7 +163,7 @@ EOF
   # --- 3b. One-command updater -----------------------------------------------
   # The installer URL is captured at install time so the box can self-update:
   #   sudo epicpanel-update
-  INSTALL_URL="${EPICPANEL_INSTALL_URL:-}"
+  INSTALL_URL="${EPICPANEL_INSTALL_URL:-https://get.epichostly.in}"
   if [ -n "$INSTALL_URL" ]; then
     cat >"$UPDATE_HELPER" <<EOF
 #!/usr/bin/env bash

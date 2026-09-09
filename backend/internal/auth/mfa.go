@@ -227,7 +227,7 @@ func (h *MFAHandler) Verify(w http.ResponseWriter, r *http.Request) {
 		httpapi.RespondError(w, httpapi.ErrInternal(err))
 		return
 	}
-	writeSessionCookie(w, h.Cfg, token)
+	writeSessionCookie(w, r, h.Cfg.SessionTTL, token)
 	h.audit(r, "auth.login", userID, map[string]any{"mfa": true})
 	httpapi.WriteJSON(w, http.StatusOK, authResponse{Token: token, ExpiresAt: sess.ExpiresAt, User: u})
 }

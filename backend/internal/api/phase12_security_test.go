@@ -851,11 +851,30 @@ func TestPhase12SessionSecurity(t *testing.T) {
 	if prodValue == "" {
 		t.Fatalf("no production session cookie: %v", presp.Header.Values("Set-Cookie"))
 	}
-	if _, ok := prodAttrs["secure"]; !ok {
-		t.Errorf("production cookie must set Secure: %v", presp.Header.Values("Set-Cookie"))
+	// Per-request Secure (Phase 12 rev.): Secure is set when the request is
+	// HTTPS (r.TLS or X-Forwarded-Proto=https), never over plain HTTP — a
+	// global Secure flag silently broke http:// installs (browsers drop the
+	// cookie). Probe both transports here.
+	preq2, _ := http.NewRequest("POST", prod.URL+"/v1/auth/register",
+		strings.NewReader(`{"email":"prod2@phase12.test","password":"supersecret123","name":"Prod2"}`))
+	preq2.Header.Set("Content-Type", "application/json")
+	// Simulate TLS termination by a trusted proxy:
+	preq2.Header.Set("X-Forwarded-Proto", "https")
+	presp2, err := http.DefaultClient.Do(preq2)
+	if err != nil {
+		t.Fatalf("prod register (https): %v", err)
+	}
+	defer presp2.Body.Close()
+	_, prodAttrsHTTPS := setCookieAttrs(t, presp2.Header, "epicpanel_session")
+	if _, ok := prodAttrsHTTPS["secure"]; !ok {
+		t.Errorf("HTTPS request cookie must set Secure: %v", presp2.Header.Values("Set-Cookie"))
+	}
+	// The plain-HTTP request above must NOT set Secure (browser would drop it):
+	if _, ok := prodAttrs["secure"]; ok {
+		t.Errorf("plain-HTTP cookie must NOT set Secure (browser drops it, breaking login): %v", presp.Header.Values("Set-Cookie"))
 	}
 	if _, ok := prodAttrs["httponly"]; !ok {
-		t.Error("production cookie must set HttpOnly")
+		t.Error("cookie must set HttpOnly")
 	}
 
 	// --- 2FA enable -> login issues a ROTATED session (new token, new

@@ -93,7 +93,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		httpapi.RespondError(w, httpapi.ErrInternal(err))
 		return
 	}
-	h.setSessionCookie(w, token)
+	h.setSessionCookie(w, r, token)
 	h.audit(r, "user.registered", &u.ID, nil, map[string]any{"is_first_user": u.IsAdmin})
 	httpapi.WriteJSON(w, http.StatusCreated, authResponse{Token: token, ExpiresAt: sess.ExpiresAt, User: u})
 }
@@ -153,7 +153,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		httpapi.RespondError(w, httpapi.ErrInternal(err))
 		return
 	}
-	h.setSessionCookie(w, token)
+	h.setSessionCookie(w, r, token)
 	h.audit(r, "auth.login", &u.ID, nil, nil)
 	httpapi.WriteJSON(w, http.StatusOK, authResponse{Token: token, ExpiresAt: sess.ExpiresAt, User: u})
 }
@@ -171,7 +171,7 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	clearSessionCookie(w, h.Cfg)
+	clearSessionCookie(w, r)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -226,32 +226,45 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 
 const cookieName = "epicpanel_session"
 
-func writeSessionCookie(w http.ResponseWriter, cfg config.Config, token string) {
+// requestIsHTTPS reports whether THIS request arrived over TLS — directly
+// (r.TLS) or through a proxy that set X-Forwarded-Proto (trusted proxies
+// are enforced upstream in the chain). A global Secure flag breaks plain-
+// HTTP installs: browsers silently drop Secure cookies over http://, so
+// login "succeeds" but every following request is 401. Per-request is the
+// boring correct behavior: Secure when HTTPS, not when HTTP.
+func requestIsHTTPS(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	return r.Header.Get("X-Forwarded-Proto") == "https"
+}
+
+func writeSessionCookie(w http.ResponseWriter, r *http.Request, ttl time.Duration, token string) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     cookieName,
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   cfg.CookieSecure,
+		Secure:   requestIsHTTPS(r),
 		SameSite: http.SameSiteLaxMode,
-		MaxAge:   int(cfg.SessionTTL.Seconds()),
+		MaxAge:   int(ttl.Seconds()),
 	})
 }
 
-func clearSessionCookie(w http.ResponseWriter, cfg config.Config) {
+func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     cookieName,
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   cfg.CookieSecure,
+		Secure:   requestIsHTTPS(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
 	})
 }
 
-func (h *Handler) setSessionCookie(w http.ResponseWriter, token string) {
-	writeSessionCookie(w, h.Cfg, token)
+func (h *Handler) setSessionCookie(w http.ResponseWriter, r *http.Request, token string) {
+	writeSessionCookie(w, r, h.Cfg.SessionTTL, token)
 }
 
 func sessionToken(r *http.Request) string {

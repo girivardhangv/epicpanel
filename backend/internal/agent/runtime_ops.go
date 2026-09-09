@@ -180,6 +180,13 @@ func (e *Executor) installPHP(ctx context.Context, runtimeID, version string, p 
 		if err := e.addOndrejPPA(ctx); err != nil {
 			return fmt.Errorf("add PPA: %w (original install error: %v)", err, err)
 		}
+		// The index refresh is deliberately tolerant of unrelated broken repos
+		// — which means a poisoned PPA entry only surfaces here. Verify apt can
+		// actually SEE the core packages before retrying (field case: "Unable
+		// to locate package php8.3-fpm" after a silently failed update).
+		if err := e.aptPackagesVisible(ctx, core); err != nil {
+			return fmt.Errorf("PPA added but PHP %s packages are not visible to apt — indexes did not land: %w", major, err)
+		}
 		if err := install(); err != nil {
 			return err
 		}
@@ -231,93 +238,76 @@ func (e *Executor) EnsureComposer(ctx context.Context) error {
 // addOndrejPPA enables ppa:ondrej/php.
 //
 // Field-observed failure modes, all handled here:
-//   1. `add-apt-repository ppa:ondrej/php` hangs forever: it fetches the GPG
-//      key over hkp://keyserver.ubuntu.com:11371 — a port many cloud networks
-//      block — with no timeout. → hard timeouts + noninteractive env.
-//   2. Very new distro releases (e.g. codename "resolute") are not published
-//      on the PPA yet → apt 404 "does not have a Release file", which then
-//      poisons EVERY later apt-get update. → probe Launchpad for supported
-//      suites and fall back to the nearest one the PPA actually has (e.g. the
-//      previous LTS), with a warning.
-//   3. Leftover broken PPA list files from a previous attempt. → removed
-//      before writing ours (the fingerprint is fetched from Launchpad's API
-//      over HTTPS — no keyserver, no hkp, no hardcoded key material).
+//  1. `add-apt-repository ppa:ondrej/php` hangs forever: it fetches the GPG
+//     key over hkp://keyserver.ubuntu.com:11371 — a port many cloud networks
+//     block — with no timeout. → hard timeouts + noninteractive env.
+//  2. Very new distro releases (e.g. codename "resolute") are not published
+//     on the PPA yet → apt 404 "does not have a Release file", which then
+//     poisons EVERY later apt-get update. → probe Launchpad for supported
+//     suites and fall back to the nearest one the PPA actually has (e.g. the
+//     previous LTS), with a warning.
+//  3. Leftover broken PPA list files from a previous attempt. → removed
+//     before writing ours (the fingerprint is fetched from Launchpad's API
+//     over HTTPS — no keyserver, no hkp, no hardcoded key material).
 func (e *Executor) addOndrejPPA(ctx context.Context) error {
-	if _, err := exec.LookPath("add-apt-repository"); err != nil {
-		c, cancel := context.WithTimeout(ctx, 5*time.Minute)
-		err = e.run(c, "apt-get", "install", "-y", "software-properties-common")
-		cancel()
-		if err != nil {
-			return fmt.Errorf("install software-properties-common: %w", err)
-		}
+	// Clean ALL previous ondrej state FIRST (stale 404 entries and
+	// conflicting Signed-By keyrings are the field killers) — and never
+	// after a write, so our own result is never pruned.
+	if err := e.pruneOndrejSources(ctx); err != nil {
+		return err
 	}
 
-	// Noninteractive + hard timeout: never hang the job forever.
-	c, cancel := context.WithTimeout(ctx, 3*time.Minute)
-	err := e.runEnv(c,
-		[]string{"DEBIAN_FRONTEND=noninteractive", "ACCEPT_EULA=Y"},
-		"add-apt-repository", "-y", "ppa:ondrej/php")
-	cancel()
-	if err == nil {
-		if err := e.pruneOndrejSources(ctx); err != nil {
-			return err
-		}
-		return e.aptUpdateTolerant(ctx)
-	}
-	slog.Warn("add-apt-repository path failed; using HTTPS keyring fallback", "err", err)
-
-	// Distro identity (Ubuntu codename).
 	codename, err := e.distroCodename(ctx)
 	if err != nil {
 		return err
 	}
-	// Probe the PPA's REAL repo index (dists/) for published suites; fall
-	// back through newer→older LTS until one matches (verified: "resolute"
-	// is absent while "noble"/"jammy" exist — a 404 suite poisons all later
-	// apt-get updates if written blindly).
+
+	// Decide the suite up front: the PPA's real dists/ index is the source
+	// of truth (resolute absent, noble/jammy published — verified live).
+	// Never let add-apt-repository create an entry for an unpublished suite
+	// (it does not validate; the 404 then poisons every later apt update).
 	suite := codename
 	if !e.ppaHasSuite(ctx, suite) {
-		found := ""
-		for _, fallback := range []string{"devel", "noble", "jammy", "focal"} {
-			if e.ppaHasSuite(ctx, fallback) {
-				found = fallback
+		suite = ""
+		for _, candidate := range []string{"noble", "jammy", "focal", "devel"} {
+			if e.ppaHasSuite(ctx, candidate) {
+				suite = candidate
 				break
 			}
 		}
-		if found == "" {
-			return fmt.Errorf("ppa:ondrej/php publishes no usable suite for %q (tried devel/noble/jammy/focal)", codename)
+		if suite == "" {
+			return fmt.Errorf("ppa:ondrej/php publishes no usable suite for %q (tried noble/jammy/focal/devel)", codename)
 		}
 		slog.Warn("PPA has no suite for this distro release; pinning nearest supported suite",
-			"distro", codename, "using", found)
-		suite = found
+			"distro", codename, "using", suite)
 	}
 
 	// Signing key: fingerprint from Launchpad's HTTPS API (no hardcoded key
 	// material), fetched from keyserver.ubuntu.com over HTTPS 443 — no hkp
 	// port, so firewalled VPS networks still work.
-	c2, cancel2 := context.WithTimeout(ctx, 2*time.Minute)
-	defer cancel2()
-	if err := e.run(c2, "mkdir", "-p", "/etc/apt/keyrings"); err != nil {
+	if err := e.run(ctx, "mkdir", "-p", "/etc/apt/keyrings"); err != nil {
 		return err
 	}
-	c3, cancel3 := context.WithTimeout(ctx, 2*time.Minute)
-	defer cancel3()
-	if err := e.run(c3, "bash", "-c",
-		"set -e; FP=$(curl -fsSL --max-time 30 'https://api.launchpad.net/devel/~ondrej/+archive/ubuntu/php' | python3 -c \"import sys,json;print(json.load(sys.stdin).get('signing_key_fingerprint',''))\") && [ -n \"$FP\" ] && curl -fsSL --max-time 60 \"https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x$FP\" | gpg --dearmor -o /etc/apt/keyrings/ondrej-php.gpg"); err != nil {
+	c, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
+	if err := e.run(c, "bash", "-c",
+		"set -e; FP=$(curl -fsSL --max-time 30 'https://api.launchpad.net/devel/~ondrej/+archive/ubuntu/php' | python3 -c \"import sys,json;print(json.load(sys.stdin).get('signing_key_fingerprint',''))\") && [ -n \"$FP\" ] && curl -fsSL --max-time 60 \"https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x$FP\" | gpg --batch --yes --no-tty --dearmor -o /etc/apt/keyrings/ondrej-php.gpg"); err != nil {
 		return fmt.Errorf("fetch ondrej signing key (fingerprint→keyserver over HTTPS): %w", err)
 	}
 
-	// Remove any broken attempt from a previous run, then write ours.
-	if err := e.pruneOndrejSources(ctx); err != nil {
-		return err
-	}
-	c4, cancel4 := context.WithTimeout(ctx, 1*time.Minute)
-	defer cancel4()
-	if err := e.run(c4, "bash", "-c",
+	// Write the single canonical sources entry for the chosen suite.
+	c2, cancel2 := context.WithTimeout(ctx, 1*time.Minute)
+	defer cancel2()
+	if err := e.run(c2, "bash", "-c",
 		"echo 'deb [signed-by=/etc/apt/keyrings/ondrej-php.gpg] https://ppa.launchpadcontent.net/ondrej/php/ubuntu "+suite+" main' > /etc/apt/sources.list.d/ondrej-php.list"); err != nil {
 		return err
 	}
 	return e.aptUpdateTolerant(ctx)
+}
+
+// AddOndrejPPATest exposes the PPA flow for integration testing.
+func (e *Executor) AddOndrejPPATest(ctx context.Context) error {
+	return e.addOndrejPPA(ctx)
 }
 
 // distroCodename returns VERSION_CODENAME from /etc/os-release.
@@ -375,6 +365,20 @@ func (e *Executor) runEnv(ctx context.Context, env []string, name string, args .
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s %s: %s (%w)", name, strings.Join(args, " "), tail(out, 500), err)
+	}
+	return nil
+}
+
+// aptPackagesVisible reports whether apt's indexes actually contain the
+// packages (apt-cache show exits 100 when none resolve).
+func (e *Executor) aptPackagesVisible(ctx context.Context, pkgs []string) error {
+	c, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	args := append([]string{"show", "-q"}, pkgs...)
+	cmd := exec.CommandContext(c, "apt-cache", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("apt-cache show %s: %s (%w)", strings.Join(pkgs, " "), tail(out, 300), err)
 	}
 	return nil
 }

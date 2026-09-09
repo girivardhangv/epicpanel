@@ -77,8 +77,11 @@ func setupTokenCmd() error {
 	if err != nil {
 		return err
 	}
-	host := outboundIP()
-	fmt.Printf("PANEL_SETUP_URL=http://%s:%s/setup?token=%s\n", host, httpPort(cfg.HTTPAddr), token)
+	host := cfg.PublicURL
+	if host == "" {
+		host = outboundIP()
+	}
+	fmt.Printf("PANEL_SETUP_URL=%s/setup?token=%s\n", host, token)
 	fmt.Fprintf(os.Stderr, "setup link valid until %s (single use)\n", expires.Format(time.RFC1123))
 	return nil
 }

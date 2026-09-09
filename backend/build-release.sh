@@ -24,6 +24,14 @@ for arch in amd64 arm64; do
     -o "$OUT/epicpanel-agent-linux-$arch" ./cmd/agent
 done
 
+# Panel web UI bundle (frontend/dist) — served by the API from EPICPANEL_WEB_DIR.
+if [ -f ../frontend/dist/index.html ]; then
+  tar -czf "$OUT/web-dist.tar.gz" -C ../frontend/dist .
+  echo "web bundle: $OUT/web-dist.tar.gz ($(du -h "$OUT/web-dist.tar.gz" | cut -f1))"
+else
+  echo "WARNING: ../frontend/dist missing — run 'cd frontend && npm run build' first"
+fi
+
 # Checksums manifest (curl|bash users can verify; installer does not enforce).
 ( cd "$OUT" && sha256sum ./*-linux-* > SHA256SUMS )
 
@@ -32,12 +40,13 @@ ls -1 "$OUT"
 
 if [ "$UPLOAD" = 1 ]; then
   command -v wrangler >/dev/null || { echo "wrangler not installed: npm i -g wrangler"; exit 1; }
-  for f in "$OUT"/*linux-*; do
+  for f in "$OUT"/*linux-* "$OUT"/web-dist.tar.gz; do
+    [ -f "$f" ] || continue
     base="$(basename "$f")"
-    wrangler r2 object put "epicpanel-releases/releases/$VERSION/$base" --file "$f"
+    wrangler r2 object put "epicpanel-releases/releases/$VERSION/$base" --file "$f" --remote
   done
   tmp="$(mktemp)"; printf '{"version":"%s"}\n' "$VERSION" >"$tmp"
-  wrangler r2 object put "epicpanel-releases/releases/latest.json" --file "$tmp"
+  wrangler r2 object put "epicpanel-releases/releases/latest.json" --file "$tmp" --remote
   rm -f "$tmp"
   echo "uploaded $VERSION + latest.json — users get it via epicpanel-update"
 fi

@@ -160,6 +160,16 @@ EOF
     . "$ENV_FILE"
   fi
 
+  # --- 2b. Public URL ---------------------------------------------------------
+  # The setup link (and any future user-facing links) must show the PUBLIC
+  # address, not the box's private IP. Detect once, store in the env file.
+  if [ -z "${EPICPANEL_PUBLIC_URL:-}" ]; then
+    PUB_IP="$(curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')"
+    EPICPANEL_PUBLIC_URL="http://${PUB_IP:-$(hostname -I | awk '{print $1}')}:$(printf '%s' "$EPICPANEL_HTTP_ADDR" | awk -F: '{print $2}')"
+    grep -q '^EPICPANEL_PUBLIC_URL=' "$ENV_FILE" 2>/dev/null \
+      || printf 'EPICPANEL_PUBLIC_URL=%s\n' "$EPICPANEL_PUBLIC_URL" >>"$ENV_FILE"
+  fi
+
   # --- 3. Binaries -----------------------------------------------------------
   ARCH="$(uname -m)"; case "$ARCH" in x86_64) ARCH=amd64;; aarch64) ARCH=arm64;; esac
   RELEASE_BASE="${EPICPANEL_DOWNLOAD_BASE:-https://downloads.epichostly.in/latest}"
@@ -172,6 +182,23 @@ EOF
     [ -f "$BIN_DIR/$f" ] && cp -a "$BIN_DIR/$f" "$BIN_DIR/$f.prev"
     install -m 0755 "$tmp/$f" "$BIN_DIR/$f"
   done
+
+  # --- 3a. Panel web UI --------------------------------------------------------
+  # The API serves the built SPA from EPICPANEL_WEB_DIR (default
+  # /opt/epicpanel/web) — one port, one process. Skip gracefully when the
+  # bundle is missing (API-only mode; UI served by dev servers / nginx).
+  if [ "${EPICPANEL_SKIP_WEB:-0}" != "1" ]; then
+    log "Downloading the panel web UI…"
+    if curl -fsSL -o "$tmp/web-dist.tar.gz" "$RELEASE_BASE/web-dist.tar.gz" 2>/dev/null; then
+      mkdir -p "$EPIC_DIR/web"
+      tar -xzf "$tmp/web-dist.tar.gz" -C "$EPIC_DIR/web"
+      grep -q '^EPICPANEL_WEB_DIR=' "$ENV_FILE" 2>/dev/null \
+        || printf 'EPICPANEL_WEB_DIR=%s/web\n' "$EPIC_DIR" >>"$ENV_FILE"
+      log "Web UI installed -> $EPIC_DIR/web"
+    else
+      warn "web bundle not found in this release channel — installing API-only"
+    fi
+  fi
   rm -rf "$tmp"
 
   # --- 3b. One-command updater -----------------------------------------------

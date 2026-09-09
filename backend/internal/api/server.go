@@ -484,6 +484,9 @@ func (s *Server) Handler() http.Handler {
 	registerPhase11(s, mux)
 	registerPhase13(s, mux)
 
+	// Built panel UI (EPICPANEL_WEB_DIR) — SPA catch-all AFTER all API routes.
+	s.mountWebUI(mux)
+
 	// Request flow (inside-out): ScopeEnforce -> CSRF -> SessionAuth ->
 	// CORS -> RateLimit -> RequestLog -> AgentReplayGuard -> APIPrefixRewrite
 	// -> mux. The prefix rewrite is outermost so /api/v1 and /v1 share every

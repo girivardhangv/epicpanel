@@ -21,6 +21,12 @@ type Config struct {
 	// RedisURL enables the Redis pub/sub event driver when set; the default
 	// driver is Postgres LISTEN/NOTIFY (boring, zero extra moving parts).
 	RedisURL string
+	// PublicURL is the externally reachable base (http://IP:8080 or a domain).
+	// Used when minting user-facing links (setup token); never for routing.
+	PublicURL string
+	// WebDir serves the built panel UI (static + SPA fallback). Empty/missing
+	// dir = API-only mode (dev servers serve the UI instead).
+	WebDir string
 }
 
 func Load() Config {
@@ -58,6 +64,8 @@ func Load() Config {
 	if v := os.Getenv("EPICPANEL_TRUSTED_PROXIES"); v != "" {
 		c.TrustedProxies = strings.Split(v, ",")
 	}
+	c.PublicURL = strings.TrimRight(os.Getenv("EPICPANEL_PUBLIC_URL"), "/")
+	c.WebDir = os.Getenv("EPICPANEL_WEB_DIR")
 	c.RedisURL = os.Getenv("EPICPANEL_REDIS_URL")
 	return c
 }

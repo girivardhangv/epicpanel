@@ -255,7 +255,10 @@ EOF
   systemd-tmpfiles --create /etc/tmpfiles.d/epicpanel-fpm.conf
 
   systemctl daemon-reload
-  systemctl enable --now epicpanel-api
+  # enable --now alone does NOT restart an already-running service — upgrades
+  # would keep the old binary + old env (web dir, public URL) in memory.
+  systemctl enable epicpanel-api >/dev/null 2>&1 || true
+  systemctl restart epicpanel-api
 
   # --- 5. Migration-before-start ----------------------------------------------
   # Migrations are applied by the api binary itself at startup; starting the
@@ -276,7 +279,11 @@ EOF
       printf 'EPICPANEL_CONTROL_PLANE_URL=http://127.0.0.1:8080\nEPICPANEL_AGENT_TOKEN=%s\n' "$REG" >"$ETC_DIR/agent.env"
       chmod 600 "$ETC_DIR/agent.env"
     fi
-    systemctl enable --now epicpanel-agent || true
+    systemctl enable epicpanel-agent >/dev/null 2>&1 || true
+    systemctl restart epicpanel-agent || true
+  else
+    # Env may have changed (web dir, public URL) — pick up the new agent env too.
+    systemctl restart epicpanel-agent || true
   fi
 
   # --- 6. Setup link ---------------------------------------------------------

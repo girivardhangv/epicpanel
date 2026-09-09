@@ -6,6 +6,7 @@ import { Card, EmptyState, SkeletonRows } from '@/components/cards'
 import { Modal, Field, ErrorNote, Select } from '@/components/ui'
 import { fmtBytes } from '@/lib/types'
 import { confirmAction } from '@/lib/confirm'
+import { pushToast } from '@/components/ref'
 
 interface Pkg {
   id: string
@@ -130,7 +131,7 @@ export function PackagesPage() {
       await api.del(`/v1/admin/packages/${p.id}`)
       await load()
     } catch (ex: any) {
-      alert(ex.message)
+      pushToast('error', ex.message)
     }
   }
 
@@ -141,12 +142,12 @@ export function PackagesPage() {
       const r = await api.post<{ sites_reconciled: number }>(`/v1/admin/organizations/${assignOrg}/package`, {
         package_id: assigning.id,
       })
-      alert(`Assigned. ${r.sites_reconciled} site(s) reconciled with new limits.`)
+      pushToast('success', `Assigned. ${r.sites_reconciled} site(s) reconciled with new limits.`)
       setAssigning(null)
       await load()
     } catch (ex: any) {
       setErr(ex.message)
-      alert(ex.message)
+      pushToast('error', ex.message)
     } finally {
       setBusy(false)
     }

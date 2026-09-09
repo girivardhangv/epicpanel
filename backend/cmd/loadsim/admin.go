@@ -7,12 +7,18 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
+
+func newCookieJar() http.CookieJar {
+	jar, _ := cookiejar.New(nil)
+	return jar
+}
 
 // adminClient handles the panel-side REST surface the simulator needs:
 // first-user bootstrap (or login), org create, servers create, agent enroll.
@@ -24,18 +30,25 @@ type adminClient struct {
 }
 
 func newAdminClient(base, email, pass string) (*adminClient, error) {
-	c := &adminClient{base: trimSlash(base), hc: &http.Client{Timeout: 15 * time.Second}}
+	c := &adminClient{base: trimSlash(base), hc: &http.Client{
+		Timeout: 15 * time.Second,
+		// Session auth is cookie-based; the jar stores the epicpanel_session
+		// cookie so every subsequent call is authenticated.
+		Jar: newCookieJar(),
+	}}
 	// Try login first (repeat runs), then first-user register (fresh DBs).
+	// The login response carries is_platform_admin (role is per-org and only
+	// appears on /v1/auth/me); either marks an account able to see the fleet.
 	if code, body, err := c.post("/v1/auth/login", map[string]string{"email": email, "password": pass}); err == nil && code == 200 {
 		var out struct {
 			User struct {
-				Role string `json:"role"`
+				IsPlatformAdmin bool `json:"is_platform_admin"`
 			} `json:"user"`
 		}
-		if json.Unmarshal(body, &out) == nil && out.User.Role == "admin" {
+		if json.Unmarshal(body, &out) == nil && out.User.IsPlatformAdmin {
 			return c, nil
 		}
-		return nil, fmt.Errorf("login ok but role is not admin (role=%q)", out.User.Role)
+		return nil, fmt.Errorf("login ok but account is not a platform admin")
 	}
 	code, body, err := c.post("/v1/auth/register", map[string]string{
 		"email": email, "password": pass, "name": "loadsim",
@@ -202,13 +215,13 @@ func (c *adminClient) enrollOne(orgID, hostname string) (nodeToken, error) {
 					return tok, fmt.Errorf("token rotate status %d: %s", code, truncate(body, 200))
 				}
 				var rot struct {
-					Token string `json:"token"`
+					RegistrationToken string `json:"registration_token"`
 				}
-				if err := json.Unmarshal(body, &rot); err != nil || rot.Token == "" {
-					return tok, fmt.Errorf("rotate response missing token")
+				if err := json.Unmarshal(body, &rot); err != nil || rot.RegistrationToken == "" {
+					return tok, fmt.Errorf("rotate response missing registration_token")
 				}
 				tok.ServerID = s.ID
-				return c.enrollWithToken(rot.Token, hostname)
+				return c.enrollWithToken(rot.RegistrationToken, hostname)
 			}
 		}
 		return tok, fmt.Errorf("existing server %q not found in list", hostname)

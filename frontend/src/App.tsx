@@ -2,7 +2,7 @@ import { useEffect, useState, ReactNode, useMemo, useCallback } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { Globe, LogOut, PanelLeftClose, UserRound } from 'lucide-react'
 import { AuthProvider, useAuth } from '@/context/AuthContext'
-import { CommandPalette, SkeletonScreen } from '@epicpanel/ui'
+import { CommandPalette, SkeletonScreen, Toaster } from '@epicpanel/ui'
 import type { CommandResultsProvider } from '@epicpanel/ui'
 import { Sidebar, filterNavForUser } from '@/components/Sidebar'
 import { Header } from '@/components/Header'
@@ -130,6 +130,7 @@ function Shell({ children }: { children: ReactNode }) {
         providers={paletteProviders}
         placeholder="Search tools, accounts and actions..."
       />
+      <Toaster />
       {!user && <Navigate to="/login" replace />}
     </div>
   )

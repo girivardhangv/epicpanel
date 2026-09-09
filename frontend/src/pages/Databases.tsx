@@ -3,7 +3,7 @@ import { Database, Plus, Trash2, KeyRound, X, ExternalLink } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
 import { Card, StatusBadge, EmptyState, SkeletonRows } from '@/components/cards'
-import { PageTitle, Toolbar, ToolbarSearch } from '@/components/ref'
+import { PageTitle, Toolbar, ToolbarSearch, pushToast } from '@/components/ref'
 import { Modal, Field, ErrorNote, Select } from '@/components/ui'
 import type { Database as DB, Server, Website } from '@/lib/types'
 import { confirmAction } from '@/lib/confirm'
@@ -62,7 +62,7 @@ export function DatabasesPage() {
       )
       setCreds(c)
     } catch (ex: any) {
-      alert(ex.message)
+      pushToast('error', ex.message)
     }
   }
 
@@ -74,7 +74,7 @@ export function DatabasesPage() {
       const target = `${window.location.hostname}:8081`
       window.open(`${window.location.origin}${r.url}&h=${encodeURIComponent(target)}`, '_blank', 'noopener')
     } catch (ex: any) {
-      alert(ex.message)
+      pushToast('error', ex.message)
     }
   }
 

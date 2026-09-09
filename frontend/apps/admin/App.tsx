@@ -11,6 +11,8 @@ import type { SidebarGroup } from '@epicpanel/ui'
 import { adminview } from './adminview'
 import { LoginPage } from './pages/Login'
 import { routes } from './routes.admin'
+import { routes as billingRoutes } from './routes.billing'
+import { routes as monitoringRoutes } from './routes.monitoring'
 
 /**
  * Admin WHM navigation — the 20 verbatim tools from the master doc:
@@ -157,7 +159,7 @@ function Shell() {
           wsConnected={connected}
           onMenu={() => setNavOpen(true)}
         />
-        <main className="fade-up">{useRoutes(routes)}</main>
+        <main className="fade-up">{useRoutes([...monitoringRoutes, ...routes, ...billingRoutes])}</main>
         <footer className="pb-8 pt-4 text-center text-[11px] text-muted">
           EpicHost WHM — powered by EpicPanel
         </footer>

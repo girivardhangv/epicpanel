@@ -1,14 +1,15 @@
-import { useEffect, useState, ReactNode } from 'react'
+import { useEffect, useMemo, useState, ReactNode } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   LayoutGrid, Globe, FolderOpen, Database, History, Lock, UserRound,
   Server as ServerIcon, Network, Clock, KeyRound, Menu, Bell, ShieldCheck,
+  Gamepad2, Bot, CreditCard, Receipt,
 } from 'lucide-react'
-import { AuthProvider, useAuth, roleLabel, api } from '@epicpanel/core'
+import { AuthProvider, useAuth, roleLabel, api, ROLE_RANK } from '@epicpanel/core'
 import type { Organization, Alert } from '@epicpanel/core'
 import { useMetrics, useFreshness } from '@epicpanel/core'
-import { AppSidebar, Toaster, FreshnessBadge } from '@epicpanel/ui'
-import type { SidebarGroup } from '@epicpanel/ui'
+import { AppSidebar, Toaster, FreshnessBadge, CommandPalette, useCommandPaletteHotkey } from '@epicpanel/ui'
+import type { SidebarGroup, CommandResultsProvider } from '@epicpanel/ui'
 import { Field, ErrorNote } from '@epicpanel/forms'
 import { LoginPage, RegisterPage } from './pages/Auth'
 import { DashboardPage } from './pages/Dashboard'
@@ -25,6 +26,10 @@ import { MetricsPage } from './pages/Metrics'
 import { SslPage } from './pages/Ssl'
 import { SecurityPage } from './pages/Security'
 import { AccountPage } from './pages/Account'
+import { routes as minecraftRoutes } from './routes.minecraft'
+import { routes as botsRoutes } from './routes.bots'
+import { routes as billingRoutes } from './routes.billing'
+import { routes as backupsRoutes } from './routes.backups'
 
 /**
  * Customer cPanel navigation. Raw Terminal & SSH keys are intentionally
@@ -87,6 +92,7 @@ function Shell({ children }: { children: ReactNode }) {
   const [navOpen, setNavOpen] = useState(false)
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('eh.sidebar.collapsed') === '1')
   const [alerts, setAlerts] = useState<Alert[]>([])
+  const [paletteOpen, setPaletteOpen] = useState(false)
   const { frames } = useMetrics()
 
   useEffect(() => {
@@ -110,6 +116,53 @@ function Shell({ children }: { children: ReactNode }) {
     await logout()
     navigate('/login', { replace: true })
   }
+
+  // Command palette (Phase 14, verbatim component list) — Cmd/Ctrl+K.
+  // Results providers are RBAC-filtered: entries whose backing routes are
+  // gated server-side at RoleBilling (minecraft, bots, billing) only surface
+  // for members with that rank or above; server enforcement stays the law.
+  const canBilling = useMemo(() => {
+    if (user?.is_platform_admin) return true
+    return (ROLE_RANK[myRole] ?? 0) >= ROLE_RANK.billing
+  }, [user?.is_platform_admin, myRole])
+  useCommandPaletteHotkey(() => setPaletteOpen(true))
+  const paletteProviders = useMemo<CommandResultsProvider[]>(() => {
+    const nav = (to: string, label: string, group: string, icon: ReactNode, keywords?: string) => ({
+      id: `${group.toLowerCase()}:${to}`,
+      label,
+      group,
+      hint: to,
+      icon,
+      keywords,
+      perform: () => navigate(to),
+    })
+    return [
+      () => [
+        nav('/', 'Dashboard', 'Tools', <LayoutGrid size={14} strokeWidth={1.8} />),
+        nav('/websites', 'Websites', 'Tools', <Globe size={14} strokeWidth={1.8} />),
+        nav('/domains', 'Domains', 'Tools', <Network size={14} strokeWidth={1.8} />),
+        nav('/dns', 'DNS Zone', 'Tools', <Network size={14} strokeWidth={1.8} />),
+        nav('/files', 'File Manager', 'Tools', <FolderOpen size={14} strokeWidth={1.8} />),
+        nav('/ftp', 'FTP Accounts', 'Tools', <KeyRound size={14} strokeWidth={1.8} />),
+        nav('/databases', 'Databases', 'Tools', <Database size={14} strokeWidth={1.8} />),
+        nav('/php', 'PHP', 'Tools', <ServerIcon size={14} strokeWidth={1.8} />),
+        nav('/crons', 'Cron Jobs', 'Tools', <Clock size={14} strokeWidth={1.8} />),
+        nav('/backups', 'Backups', 'Tools', <History size={14} strokeWidth={1.8} />),
+        nav('/metrics', 'Metrics', 'Tools', <ServerIcon size={14} strokeWidth={1.8} />),
+        nav('/ssl', 'SSL / TLS', 'Tools', <Lock size={14} strokeWidth={1.8} />),
+        nav('/security', 'Security', 'Tools', <ShieldCheck size={14} strokeWidth={1.8} />),
+        nav('/account', 'Account', 'Tools', <UserRound size={14} strokeWidth={1.8} />),
+        ...(canBilling
+          ? [
+              nav('/minecraft', 'Minecraft', 'Tools', <Gamepad2 size={14} strokeWidth={1.8} />, 'server mc'),
+              nav('/bots', 'Discord Bots', 'Tools', <Bot size={14} strokeWidth={1.8} />, 'bot discord'),
+              nav('/billing', 'Billing', 'Tools', <CreditCard size={14} strokeWidth={1.8} />, 'invoices subscriptions'),
+              nav('/billing/invoices', 'Invoices', 'Tools', <Receipt size={14} strokeWidth={1.8} />, 'billing'),
+            ]
+          : []),
+      ],
+    ]
+  }, [canBilling, navigate])
 
   return (
     <div className="min-h-screen bg-app">
@@ -152,6 +205,12 @@ function Shell({ children }: { children: ReactNode }) {
         </footer>
       </div>
       <Toaster />
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        providers={paletteProviders}
+        placeholder="Search tools and actions..."
+      />
       {!user && <Navigate to="/login" replace />}
     </div>
   )
@@ -238,6 +297,9 @@ function Guarded() {
         <Route path="/ssl" element={<SslPage />} />
         <Route path="/security" element={<SecurityPage />} />
         <Route path="/account" element={<AccountPage />} />
+        {[...minecraftRoutes, ...botsRoutes, ...billingRoutes, ...backupsRoutes].map((r, i) => (
+          <Route key={i} path={r.path} element={r.element} />
+        ))}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Shell>

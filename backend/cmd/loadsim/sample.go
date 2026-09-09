@@ -67,7 +67,7 @@ func syntheticSample(nodeIdx, sites int, ts time.Time) agentproto.Sample {
 				InodesUsed:  1_200_000,
 			}},
 			IO: agentproto.DiskIOSample{
-				ReadBPS:  r.Float64() * 5e6, WriteBPS: r.Float64() * 3e6,
+				ReadBPS: r.Float64() * 5e6, WriteBPS: r.Float64() * 3e6,
 				ReadIOPS: r.Float64() * 400, WriteIOPS: r.Float64() * 250,
 				TotalRead: ts.UnixNano() % 1e15, TotalWrite: ts.UnixNano() % 1e15,
 			},

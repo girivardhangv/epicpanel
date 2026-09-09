@@ -116,6 +116,11 @@ var ErrInvalid = errors.New("invalid sink configuration")
 // Open builds a Sink from a wire config. Sealed credentials are decrypted
 // here (the caller holds the panel key on both control plane and agent).
 func Open(cfg Config) (Sink, error) {
+	// Vocabulary normalization: the DB CHECK + UI say "s3"; the driver kind
+	// is "object" (master doc: "Object Storage"). "remote" is verbatim.
+	if cfg.Kind == "s3" {
+		cfg.Kind = KindObject
+	}
 	switch cfg.Kind {
 	case KindLocal:
 		return &LocalSink{Root: cfg.LocalDir}, nil

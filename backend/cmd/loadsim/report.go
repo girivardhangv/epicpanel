@@ -9,23 +9,23 @@ import (
 // end of a run. Every field is measured; extrapolations live only in
 // docs/scale-report.md prose, never in this file.
 type report struct {
-	Label      string          `json:"label"`
-	Version    string          `json:"loadsim_version"`
-	API        string          `json:"api"`
-	Nodes      int             `json:"nodes"`
-	Sites      int             `json:"sites_per_node"`
-	Interval   string          `json:"interval"`
-	Duration   string          `json:"duration"`
-	StartedAt  string          `json:"started_at"`
-	Fleet      fleetStats      `json:"fleet"`
-	Fanout     fanoutStats     `json:"fanout"`
-	REST       restStats       `json:"rest"`
-	IngestCPU  *cpuSample      `json:"ingest_cpu,omitempty"`
-	History    *historyStats   `json:"history,omitempty"`
-	Freshness  freshnessReport `json:"freshness_chaos,omitempty"`
-	Dropped    bool            `json:"chaos_node_dropped"`
-	Resumed    bool            `json:"chaos_resume_ok"`
-	Notes      []string        `json:"notes,omitempty"`
+	Label     string          `json:"label"`
+	Version   string          `json:"loadsim_version"`
+	API       string          `json:"api"`
+	Nodes     int             `json:"nodes"`
+	Sites     int             `json:"sites_per_node"`
+	Interval  string          `json:"interval"`
+	Duration  string          `json:"duration"`
+	StartedAt string          `json:"started_at"`
+	Fleet     fleetStats      `json:"fleet"`
+	Fanout    fanoutStats     `json:"fanout"`
+	REST      restStats       `json:"rest"`
+	IngestCPU *cpuSample      `json:"ingest_cpu,omitempty"`
+	History   *historyStats   `json:"history,omitempty"`
+	Freshness freshnessReport `json:"freshness_chaos,omitempty"`
+	Dropped   bool            `json:"chaos_node_dropped"`
+	Resumed   bool            `json:"chaos_resume_ok"`
+	Notes     []string        `json:"notes,omitempty"`
 }
 
 type fleetStats struct {
@@ -81,13 +81,13 @@ type historyStats struct {
 }
 
 type freshnessReport struct {
-	Observed     bool   `json:"observed"`
-	DroppedAt    string `json:"dropped_at,omitempty"`
-	StaleAt      string `json:"stale_at,omitempty"`
-	OfflineAt    string `json:"offline_at,omitempty"`
-	Final        string `json:"final_state"`
-	LiveAfterDrop bool  `json:"live_after_drop"`
-	Samples      int    `json:"state_polls"`
+	Observed      bool   `json:"observed"`
+	DroppedAt     string `json:"dropped_at,omitempty"`
+	StaleAt       string `json:"stale_at,omitempty"`
+	OfflineAt     string `json:"offline_at,omitempty"`
+	Final         string `json:"final_state"`
+	LiveAfterDrop bool   `json:"live_after_drop"`
+	Samples       int    `json:"state_polls"`
 }
 
 type durStr struct{ time.Duration }

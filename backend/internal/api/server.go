@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -483,8 +485,9 @@ func (s *Server) Handler() http.Handler {
 	registerPhase13(s, mux)
 
 	// Request flow (inside-out): ScopeEnforce -> CSRF -> SessionAuth ->
-	// CORS -> RateLimit -> RequestLog -> APIPrefixRewrite -> mux. The prefix
-	// rewrite is outermost so /api/v1 and /v1 share every route below.
+	// CORS -> RateLimit -> RequestLog -> AgentReplayGuard -> APIPrefixRewrite
+	// -> mux. The prefix rewrite is outermost so /api/v1 and /v1 share every
+	// route below.
 	var h http.Handler = mux
 	h = httpapi.ScopeEnforce(h)
 	h = httpapi.CSRFGuard(h)
@@ -492,8 +495,53 @@ func (s *Server) Handler() http.Handler {
 	h = httpapi.CORSMiddleware(s.Cfg.CORSOrigins, h)
 	h = httpapi.RateLimit(s.Limiter, h)
 	h = httpapi.RequestLog(h)
+	// Phase 12: advisory replay protection on the agent channel (forward-
+	// moving X-EpicPanel-Seq/Time when present; absent = pass for rollout).
+	h = httpapi.AgentReplayGuard(httpapi.NewInMemoryAgentReplay(), agentKeyFromRequest, h)
+	// Phase 13: /metrics request counters (route-class attribution).
+	h = requestMetricsMiddleware(h)
 	h = httpapi.APIPrefixRewrite(h)
 	return h
+}
+
+// agentKeyFromRequest extracts the stable per-agent key for the replay
+// guard (hashed bearer token; mirrors the server agent-token lookup).
+func agentKeyFromRequest(r *http.Request) (string, bool) {
+	authz := r.Header.Get("Authorization")
+	if authz == "" {
+		return "", false
+	}
+	const prefix = "Bearer "
+	if len(authz) <= len(prefix) || authz[:len(prefix)] != prefix {
+		return "", false
+	}
+	raw := authz[len(prefix):]
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:16]), true
+}
+
+// requestMetricsMiddleware attributes every request to a route class for
+// the /metrics exposition (Phase 13 self-telemetry; async-safe counters).
+func requestMetricsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		next.ServeHTTP(w, r)
+		class := "other"
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/v1/auth"), strings.HasPrefix(r.URL.Path, "/api/v1/auth"):
+			class = "auth"
+		case strings.HasPrefix(r.URL.Path, "/v1/agent"), strings.HasPrefix(r.URL.Path, "/api/v1/agent"):
+			class = "agent"
+		case strings.HasPrefix(r.URL.Path, "/v1/admin"), strings.HasPrefix(r.URL.Path, "/api/v1/admin"),
+			strings.HasPrefix(r.URL.Path, "/metrics"):
+			class = "admin"
+		case strings.HasPrefix(r.URL.Path, "/v1/organizations"), strings.HasPrefix(r.URL.Path, "/api/v1/organizations"):
+			class = "org"
+		case r.URL.Path == "/healthz" || r.URL.Path == "/readyz":
+			class = "public"
+		}
+		ObserveRequest(class, time.Since(start).Milliseconds())
+	})
 }
 
 // setupCompleted reports whether first-boot setup has finished; used to lock

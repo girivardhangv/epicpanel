@@ -1,0 +1,74 @@
+# EpicPanel Node Agent — hardened unit.
+#
+# Companion to deploy/epicpanel-api.service and deploy/epicpanel.env.example.
+# Baseline compared against the live unit (systemctl cat epicpanel-agent),
+# which carries only ExecStart + Restart. This unit adds hardening that is
+# COMPATIBLE with the agent's duties; capabilities are documented below.
+#
+# Why the agent needs privileges (it is the one service that must NOT run
+# with an empty capability set):
+#
+#   1. CAP_DAC_READ_SEARCH / CAP_DAC_OVERRIDE
+#        - per-site usage walks under /home/<user> (siteDiskMB)
+#        - quota/cgroup accounting across user slices
+#        - log collection, database dump/restore as site owners
+#      Scope it: the agent only reads; write access stays with the users.
+#   2. CAP_SYS_ADMIN (cgroups v2 delegation when systemd user-slices are
+#      not delegated) — writes cpu.max / memory.max / pids.max under
+#      /sys/fs/cgroup/epicpanel.slice. If your host delegates the subtree
+#      to a dedicated user/group (recommended), you can drop this.
+#   3. CAP_NET_ADMIN — nftables bandwidth counters + shaping
+#      (agent enforce.go: per-account RX+TX counters). Drop it if you run
+#      accounting-only mode (nftAvailable()==false path).
+#
+# The three above are the ONLY ambient capabilities granted; everything
+# else is bounded away. ProtectSystem stays non-strict because the agent
+# must write: /etc (nginx/php config), /var/www, /home, cgroupfs.
+
+[Unit]
+Description=EpicPanel Node Agent
+Documentation=https://github.com/epicbyte/epicpanel
+After=network-online.target epicpanel-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/epicpanel-agent run
+Environment=EPICPANEL_CONTROL_PLANE_URL=http://127.0.0.1:8080
+# Enrollment token lives in /etc/epicpanel; provide via EnvironmentFile if
+# you enroll non-interactively (see docs/operator-guide.md).
+# EnvironmentFile=/etc/epicpanel/agent.env
+Restart=always
+RestartSec=3
+TimeoutStopSec=15
+
+# --- Sandboxing (relaxed where the agent's job demands it) ----------------
+NoNewPrivileges=true
+ProtectHome=true
+# /home reads happen via capabilities (CAP_DAC_READ_SEARCH), so files stay
+# mode-hidden from every other process on the box.
+ProtectSystem=full
+ProtectKernelTunables=false
+ProtectControlGroups=false
+PrivateTmp=false
+PrivateDevices=false
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectClock=true
+ProtectHostname=true
+RestrictRealtime=true
+RestrictSUIDSGID=false
+LockPersonality=true
+UMask=0022
+
+# Exactly what enforce.go needs; see header. Remove CAP_SYS_ADMIN when the
+# cgroup subtree is delegated, CAP_NET_ADMIN when nftables is not managed.
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE CAP_SYS_ADMIN CAP_NET_ADMIN
+AmbientCapabilities=CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE CAP_SYS_ADMIN CAP_NET_ADMIN
+
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

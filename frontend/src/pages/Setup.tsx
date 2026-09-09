@@ -307,7 +307,7 @@ export function SetupPage() {
                           </div>
                           <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-app">
                             <div
-                              className={`h-full rounded-full transition-all duration-500 ${failed ? 'bg-danger' : 'bg-brand'}`}
+                              className={`h-full rounded-full transition-all ${failed ? 'bg-danger' : 'bg-brand'}`}
                               style={{ width: `${j.status === 'success' ? 100 : failed ? 100 : Math.max(4, j.progress)}%` }}
                             />
                           </div>

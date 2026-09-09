@@ -1,6 +1,12 @@
 // Shared UI primitives (Phase 5): ONE design system for the customer cPanel
 // (apps/customer) and the admin WHM (apps/admin, Phase 6). Nothing here may
 // import app code — components are pure presentation + props.
+// Phase 14: side-effect import of the design-system token stylesheet so every
+// app that pulls in shared components automatically gets the ui-ref :root
+// custom properties, the dp-* motion/skeleton classes, the focus-visible ring
+// and the reduced-motion guards. Relative on purpose — the vite aliases map
+// the bare specifier to index.ts, which cannot express the css subpath.
+import '../design-system/tokens.css'
 export * from './cards'
 export * from './kit'
 export * from './AppSidebar'

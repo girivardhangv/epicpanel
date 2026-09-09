@@ -13,6 +13,7 @@ package authzmatrix
 // This is the executable form of the mandatory checklist line "RBAC".
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -24,12 +25,16 @@ type routeProbe struct {
 	Method, Path string
 	// Class: public | customer | admin | agent.
 	Class string
-	// MinOrgRole for customer routes ("" = any authenticated member).
+	// MinOrgRole for customer routes: "any" (lowest member rank suffices),
+	// "developer" (rank >= 2), "billing" (rank >= 1), or "admin" (rank >= 4,
+	// the organization-admin role — distinct from platform admin).
 	MinOrgRole string
 }
 
-// probeTable is the route contract (kept in sync with server.go registration;
-// a registration drift fails the "route table completeness" test below).
+// probeTable is the spot-matrix route contract (kept in sync with server.go
+// registration; a registration drift fails the "route table completeness"
+// test in the api bridge). Read routes probe the lowest role; write routes
+// probe the role each module's handler actually requires.
 var probeTable = []routeProbe{
 	// Public / auth.
 	{"POST", "/v1/auth/register", "public", ""},
@@ -44,7 +49,7 @@ var probeTable = []routeProbe{
 	{"GET", "/v1/ws", "customer", ""},
 	// Agent-only (server-scope).
 	{"GET", "/v1/agent/stream", "agent", ""},
-	// Admin-only platform surface.
+	// Admin-only platform surface (session-only; API tokens refused).
 	{"GET", "/v1/admin/alerts", "admin", ""},
 	{"GET", "/v1/admin/alert-rules", "admin", ""},
 	{"GET", "/v1/admin/observability/nodes", "admin", ""},
@@ -53,18 +58,18 @@ var probeTable = []routeProbe{
 	{"GET", "/v1/admin/observability/workloads", "admin", ""},
 	{"GET", "/v1/admin/users", "admin", ""},
 	// Customer org-scoped (spot matrix: read + mutate per module).
-	{"GET", "/v1/organizations/{org_id}/servers", "customer", "viewer"},
-	{"GET", "/v1/organizations/{org_id}/websites", "customer", "viewer"},
+	{"GET", "/v1/organizations/{org_id}/servers", "customer", "any"},
+	{"GET", "/v1/organizations/{org_id}/websites", "customer", "any"},
 	{"POST", "/v1/organizations/{org_id}/websites", "customer", "developer"},
-	{"GET", "/v1/organizations/{org_id}/databases", "customer", "viewer"},
-	{"GET", "/v1/organizations/{org_id}/domains", "customer", "viewer"},
-	{"GET", "/v1/organizations/{org_id}/packages", "customer", "viewer"},
-	{"GET", "/v1/organizations/{org_id}/crons", "customer", "viewer"},
-	{"GET", "/v1/organizations/{org_id}/backups2", "customer", "billing"},
+	{"GET", "/v1/organizations/{org_id}/databases", "customer", "any"},
+	{"GET", "/v1/organizations/{org_id}/domains", "customer", "any"},
+	{"GET", "/v1/organizations/{org_id}/package", "customer", "any"},
+	{"GET", "/v1/organizations/{org_id}/websites/{website_id}/crons", "customer", "developer"},
+	{"GET", "/v1/organizations/{org_id}/backups2", "customer", "any"},
 	{"POST", "/v1/organizations/{org_id}/backups2", "customer", "admin"},
-	{"GET", "/v1/organizations/{org_id}/minecraft/instances", "customer", "viewer"},
-	{"GET", "/v1/organizations/{org_id}/discord/bots", "customer", "viewer"},
-	{"GET", "/v1/organizations/{org_id}/billing/subscription", "customer", "billing"},
+	{"GET", "/v1/organizations/{org_id}/minecraft", "customer", "any"},
+	{"GET", "/v1/organizations/{org_id}/bots", "customer", "any"},
+	{"GET", "/v1/organizations/{org_id}/billing/subscriptions", "customer", "any"},
 }
 
 // TestRouteTableCompleteness asserts the probe table stays in sync with the
@@ -128,14 +133,24 @@ func isIDLike(s string) bool {
 }
 
 // TestUnauthenticatedDenied asserts unauthenticated requests never reach
-// protected routes (401/404, never 2xx).
+// protected routes: no 2xx (logout's 204-without-token is the documented
+// exemption — revocation of nothing is a no-op that leaks nothing), no 405
+// (declared-method drift), and never the mux's plain-text "404 page not
+// found" (a handler 404 is JSON; the mux's means the route vanished from
+// the server). Registered-but-denied is expected to surface as 401/403/404.
 func TestUnauthenticatedDenied(t *testing.T) {
 	h := ProbeHandler
 	if h == nil {
 		t.Skip("probe handler not provided (run via internal/api tests)")
 	}
+	// Logout without credentials revokes nothing (no session token in the
+	// request): a deliberate no-op that cannot leak data or state.
+	noOpOK := map[string]bool{"POST /v1/auth/logout": true}
 	for _, p := range probeTable {
 		if p.Class == "public" {
+			continue
+		}
+		if noOpOK[p.Method+" "+p.Path] {
 			continue
 		}
 		path := strings.ReplaceAll(p.Path, "{org_id}", "00000000-0000-0000-0000-000000000000")
@@ -145,6 +160,15 @@ func TestUnauthenticatedDenied(t *testing.T) {
 		h.ServeHTTP(rec, req)
 		if rec.Code >= 200 && rec.Code < 300 {
 			t.Errorf("%s %s: unauthenticated request succeeded (%d)", p.Method, p.Path, rec.Code)
+			continue
+		}
+		if rec.Code == http.StatusMethodNotAllowed {
+			t.Errorf("%s %s: registered method drifted (405); update the probe table", p.Method, p.Path)
+			continue
+		}
+		if ct := rec.Header().Get("Content-Type"); strings.Contains(ct, "text/plain") &&
+			strings.Contains(rec.Body.String(), "404 page not found") {
+			t.Errorf("%s %s: route is not registered on the mux (plain-text 404)", p.Method, p.Path)
 		}
 	}
 }

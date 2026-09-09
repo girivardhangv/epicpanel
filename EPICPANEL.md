@@ -1550,3 +1550,71 @@ Testing is mandatory: unit, API, provider, provisioning, isolation, permission, 
 ## 28. FINAL RULE
 
 `EPICPANEL.md` is the persistent memory of the project. Keep it accurate, usable, and synchronized with the codebase. A future agent must be able to enter with zero prior knowledge and know: what EpicPanel is, why it exists, how it is architected, what decisions were made, what is implemented, what is in progress, what remains, and what must not be changed casually.
+
+---
+
+## 29. Wave ADRs — Phases 6-15 parallel execution (2026-09-09)
+
+ADR-051 — Minecraft as first-class workload (Phase 7). `internal/minecraft` with verbatim
+state machine; ContainerDriver interface + SystemdDriver shipped (systemd transient units
++ cgroups v2 — same isolation family as `internal/apps`/Phase 9). Docker driver is a slot-in
+(later): the environment has no docker.sock and the platform rule "customers never touch
+the Docker daemon" holds either way. Providers (vanilla/paper/purpur/fabric/forge/neoforge)
+fetch version manifests at runtime with on-disk cache + seed fallback; zero provider
+branches in core. RCON client is stdlib-only. TPS/MSPT flow the Phase 3 minecraft envelope
+with honesty flags (tps_source) — never fake numbers.
+
+ADR-052 — Discord bots as first-class workload (Phase 8). `internal/discord` + BotRuntime
+(Node/Python shipped, Java stub). Sandbox: dedicated ep-bot-* system users + systemd
+transient units + cgroups; env/secrets sealed via secretbox, 0600 EnvironmentFile,
+write-only API surface (masked), scrub-on-ingest log ring. Secret-scrub proofs exist at
+agent AND API layers.
+
+ADR-053 — Billing as an explicit state machine (Phase 10). Verbatim 8-state machine with a
+single guarded transition function; every transition = idempotent job + audit + event.
+Money = integer minor units; invoices immutable (DB trigger). PaymentProvider interface
+with FakeProvider (tests) + ManualProvider (v1); no gateway SDK (webhook replay idempotency
+proven). Suspend semantics reuse existing workload lifecycle job types — no new side
+channels. Terminate = backup-first (Phase 11 terminate_backup hook).
+
+ADR-054 — Backups unified engine (Phase 11). BackupSink drivers: Local / Remote (config
+only) / S3-compatible via dependency-free SigV4 client. All six verbatim types ride the
+same job family; encryption happens on-node before egress (per-backup data key, wrapped
+via secretbox at rest). Verification = checksum + restore-to-scratch; unverified →
+backup.verify_failed (Phase 13 input). Retention combines plan count (Phase 9) with
+time-based pruning. Legacy website rows mapped to the new vocabulary (0031). Sink kind
+vocabulary normalized in sink.Open ("s3"→"object").
+
+ADR-055 — Alerts are async, always (Phase 13). Rule engine (threshold/state/time with
+hysteresis + dedup + lifecycle) evaluates ONLY from bus subscriptions and periodic sweeps —
+never in request handlers (Phase 3 rule generalized). WHM observability reads LiveStore
+only (never the history DB). Panel self-telemetry = hand-rolled Prometheus text on /metrics
+(request class counters/latency wired via requestMetricsMiddleware, WS conns, queue depth).
+
+ADR-056 — Security hardening as executable evidence (Phase 12). The authz matrix is a
+route-table completeness gate + live probes (261 routes; cross-tenant = 404; tokens
+refused on admin surface; agent surface agent-only). Secret-leak scanning is a reusable
+package (Scan/ScanPlant) used to prove planted secrets never leak into responses, logs,
+or audit rows. AgentReplayGuard wired in advisory mode (strict flip documented). Shipped
+exceptions (owner-approved): TLS termination via reverse proxy, firewall CRUD deferred —
+see docs/security-checklist.md.
+
+ADR-057 — One design system, two experiences (Phase 14). ui-ref tokens extracted into
+packages/design-system (CSS vars + Tailwind theme); tokens.css now genuinely imported by
+packages/ui (was dead before — fixed). Missing verbatim components added to shared packages
+only (palette/breadcrumbs/timeline/bulk-bar/skeletons); apps consume, never fork. A11y:
+focus-visible ring, keyboard nav, reduced-motion; 180ms functional transitions; zero emoji.
+
+ADR-058 — v1 release posture (Phase 15). Scale verified to 100 simulated nodes on the dev
+box (numbers in docs/scale-report.md; 1000-node = extrapolated, marked). Sync-exec sweep:
+API→Job→Queue→Agent→Event→WS→UI holds in all 12 areas. deploy/ ships hardened systemd
+units (the LIVE services already run from this pattern), env template, logrotate, chaos
+drills; install.sh enforces backup-before-migrate. v1.0.0 ships with two owner-approved
+security exceptions and honest [est] scale markers.
+
+Coordinator notes (wave execution): subagents ran with exclusive file ownership
+(phases/wave-contract.md); shared files (server.go routes, worker dispatch, App.tsx) were
+wired centrally. Two crash interruptions were healed by the coordinator (agent
+workload.go:123 empty-line panic fix; sink JSONB/sink-kind fixes; route mounts). Test DBs
+are per-agent (epicpanel_test_<suffix>). Full verification: go build/vet/test ./... -p 1
+green (22 pkgs), tsc -b clean, all three app builds green.

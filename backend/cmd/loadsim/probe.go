@@ -13,16 +13,16 @@ import (
 // while the fleet streams: healthz (no DB) and the live fleet metrics
 // projection (in-memory read at fleet scale).
 type restProbe struct {
-	base      string
-	admin     *adminClient
-	orgID     string
-	every     time.Duration
-	mu        sync.Mutex
-	healthMS  []float64
-	fleetMS   []float64
-	fleetB    []int64
-	stopOnce  sync.Once
-	stopCh    chan struct{}
+	base     string
+	admin    *adminClient
+	orgID    string
+	every    time.Duration
+	mu       sync.Mutex
+	healthMS []float64
+	fleetMS  []float64
+	fleetB   []int64
+	stopOnce sync.Once
+	stopCh   chan struct{}
 }
 
 func newRESTProbe(base string, admin *adminClient, orgID string, every time.Duration) *restProbe {

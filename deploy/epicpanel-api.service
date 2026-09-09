@@ -1,0 +1,79 @@
+# EpicPanel Control Plane — hardened production unit.
+#
+# Companion to deploy/epicpanel-agent.service and deploy/epicpanel.env.example.
+# Baseline compared against the live unit (systemctl cat epicpanel-api), which
+# carries only EnvironmentFile + ExecStart + Restart. This unit adds the
+# hardening required by the Phase 15 release checklist.
+#
+# Install:
+#   install -m 0644 deploy/epicpanel-api.service /etc/systemd/system/
+#   useradd -r -s /usr/sbin/nologin -d /nonexistent epicpanel-api
+#   mkdir -p /etc/epicpanel && chown root:root /etc/epicpanel && chmod 750 /etc/epicpanel
+#   # api.env must be readable by the service user:
+#   chown root:epicpanel-api /etc/epicpanel/api.env && chmod 640 /etc/epicpanel/api.env
+#   systemctl daemon-reload && systemctl restart epicpanel-api
+#
+# Notes
+# - User=epicpanel-api: the live unit runs as root; the API needs no root
+#   privileges (it binds 8080 unprivileged, talks to Postgres over TCP, and
+#   proxies work to node agents over WebSocket).
+# - ProtectSystem=strict mounts / read-only; ReadWritePaths whitelists only
+#   what the API actually writes (backup staging + runtime state). Trim
+#   further per-host if you relocate those paths.
+# - ProtectHome=read-only keeps agent SSH-key uploads at /home readable if
+#   you mirror keys there; set to true if you do not.
+# - EPICPANEL_HTTP_ADDR must be 0.0.0.0:8080 (or a >=1024 port). Binding a
+#   privileged port as epicpanel-api requires AmbientCapabilities instead —
+#   prefer a port >=1024 behind nginx.
+
+[Unit]
+Description=EpicPanel Control Plane
+Documentation=https://github.com/epicbyte/epicpanel
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=epicpanel-api
+Group=epicpanel-api
+EnvironmentFile=/etc/epicpanel/api.env
+ExecStart=/usr/local/bin/epicpanel-api
+Restart=always
+RestartSec=3
+TimeoutStopSec=15
+
+# --- Sandboxing -----------------------------------------------------------
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/epicpanel /var/cache/epicpanel
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RemoveIPC=true
+UMask=0027
+
+# The API is a network service + Postgres client; nothing else.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# Keep CPU accounting visible for /proc self-sampling (loadsim -api-pid);
+# drop this line if you tighten further with proc subsets on future distros.
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

@@ -20,6 +20,8 @@ type fanoutProbes struct {
 	count  int
 	sample int // only anchor 1-in-N frames when the fleet is huge
 
+	serverIdx map[string]int64 // broadcast frame server_id -> fleet node index
+
 	mu      sync.Mutex
 	pending map[string]time.Time // "node:seq" -> sent instant
 	lat     []time.Duration
@@ -28,8 +30,13 @@ type fanoutProbes struct {
 	anchors int64
 }
 
-func newFanoutProbes(base string, admin *adminClient, n int) *fanoutProbes {
-	return &fanoutProbes{base: base, admin: admin, count: n, sample: 1, pending: map[string]time.Time{}}
+func newFanoutProbes(base string, admin *adminClient, n int, tokens []nodeToken) *fanoutProbes {
+	idx := make(map[string]int64, len(tokens))
+	for i, t := range tokens {
+		idx[t.ServerID] = int64(i)
+	}
+	return &fanoutProbes{base: base, admin: admin, count: n, sample: 1,
+		pending: map[string]time.Time{}, serverIdx: idx}
 }
 
 func (p *fanoutProbes) anchor(node, seq int64, at time.Time) {
@@ -86,11 +93,11 @@ func (p *fanoutProbes) readLoop(ctx context.Context, conn *websocket.Conn) {
 		if json.Unmarshal(raw, &msg) != nil || msg.Type != "metrics" || msg.Data.Seq == 0 {
 			continue
 		}
-		node := nodeIdxFromServerID(msg.Data.ServerID)
-		if node < 0 {
-			continue
+		node, ok := p.serverIdx[msg.Data.ServerID]
+		if !ok {
+			continue // frame from a server outside the simulated fleet
 		}
-		key := fmtKey(int64(node), msg.Data.Seq)
+		key := fmtKey(node, msg.Data.Seq)
 		p.mu.Lock()
 		if t, ok := p.pending[key]; ok {
 			delete(p.pending, key)
@@ -99,11 +106,6 @@ func (p *fanoutProbes) readLoop(ctx context.Context, conn *websocket.Conn) {
 		p.mu.Unlock()
 	}
 }
-
-// nodeIdxFromServerID recovers which simulated node a broadcast frame came
-// from. The fleet frames' server_id is the enrolled server UUID, so we match
-// against the token list order via the admin client's enrollment map.
-func nodeIdxFromServerID(string) int { return -1 } // replaced below by bound method
 
 func (p *fanoutProbes) stop() {
 	for _, c := range p.conns {

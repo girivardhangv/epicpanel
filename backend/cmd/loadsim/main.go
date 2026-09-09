@@ -92,7 +92,7 @@ func run(api string, nNodes, nSites int, interval, duration time.Duration,
 	}
 
 	fleet := newFleet(api, tokens, nSites, interval)
-	fan := newFanoutProbes(api, admin, nFanout)
+	fan := newFanoutProbes(api, admin, nFanout, tokens)
 	rest := newRESTProbe(api, admin, orgID, probeEvery)
 	fresh := newFreshnessWatcher(api, admin, orgID)
 

@@ -1,0 +1,57 @@
+{
+  "label": "100-node + chaos",
+  "loadsim_version": "1.0.0",
+  "api": "http://127.0.0.1:8080",
+  "nodes": 100,
+  "sites_per_node": 4,
+  "interval": "5s",
+  "duration": "1m0.686s",
+  "started_at": "2026-09-08T19:58:26.625390309Z",
+  "fleet": {
+    "nodes": 100,
+    "frames_sent": 1294,
+    "frames_acked": 1193,
+    "bytes_sent": 2595898,
+    "errors": 0,
+    "resumes": 1,
+    "ack_latency_avg_ms": 0.939443,
+    "ack_latency_max_ms": 17.048237
+  },
+  "fanout": {
+    "matched": 1190,
+    "unmatched_pending": 0,
+    "p50_ms": 0.418414,
+    "p95_ms": 0.842182,
+    "p99_ms": 1.239408,
+    "max_ms": 3.285926
+  },
+  "rest": {
+    "healthz_n": 30,
+    "healthz_p50_ms": 4.446763,
+    "healthz_p99_ms": 20.142691,
+    "fleet_n": 30,
+    "fleet_p50_ms": 4.695289,
+    "fleet_p99_ms": 18.004923,
+    "fleet_max_ms": 18.004923,
+    "fleet_avg_bytes": 478915,
+    "fleet_max_bytes": 597324
+  },
+  "ingest_cpu": {
+    "wall": "1m0.501s",
+    "cpu_percent_of_one_core": 1.8181506410154595,
+    "cpu_percent_of_machine": 0.22726883012693244,
+    "cores": 8,
+    "rss_start_mb": 26,
+    "rss_end_mb": 37,
+    "frames_acked_per_second": 19.71867013392221,
+    "cpu_microseconds_per_1000_frames": 922.0452640402348
+  },
+  "freshness_chaos": {
+    "observed": false,
+    "final_state": "",
+    "live_after_drop": false,
+    "state_polls": 0
+  },
+  "chaos_node_dropped": true,
+  "chaos_resume_ok": true
+}

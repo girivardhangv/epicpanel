@@ -120,6 +120,11 @@ func (w *workloadCollector) siteIORates(user string, b []byte, now time.Time) (r
 	var rbytes, wbytes uint64
 	for _, line := range strings.Split(string(b), "\n") {
 		fields := strings.Fields(line)
+		// Guard: truncated/empty io.stat lines (kernel can emit partial
+		// lines under load) previously panicked on fields[1:].
+		if len(fields) < 2 {
+			continue
+		}
 		for _, f := range fields[1:] {
 			if strings.HasPrefix(f, "rbytes=") {
 				v, _ := strconv.ParseUint(strings.TrimPrefix(f, "rbytes="), 10, 64)

@@ -4,6 +4,7 @@ import { api } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
 import { Card, StatusBadge, EmptyState, SkeletonRows } from '@/components/cards'
 import { Modal, Field, ErrorNote, Select } from '@/components/ui'
+import { pushToast } from '@/components/ref'
 import type { Server } from '@/lib/types'
 import { confirmAction } from '@/lib/confirm'
 
@@ -75,7 +76,7 @@ function JobProgress({ job }: { job: SetupJob }) {
       </div>
       <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-app">
         <div
-          className={`h-full rounded-full transition-all duration-500 ${failed ? 'bg-danger' : 'bg-brand'}`}
+          className={`h-full rounded-full transition-all ${failed ? 'bg-danger' : 'bg-brand'}`}
           style={{ width: `${job.status === 'success' ? 100 : failed ? 100 : Math.max(4, job.progress)}%` }}
         />
       </div>
@@ -190,7 +191,7 @@ export function SoftwarePage() {
       await api.del(`/v1/organizations/${org.id}/servers/${r.server_id}/runtimes/${r.id}`)
       await load()
     } catch (ex: any) {
-      alert(ex.message)
+      pushToast('error', ex.message)
     }
   }
 

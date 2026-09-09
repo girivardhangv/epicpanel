@@ -61,6 +61,16 @@
   border-radius: 6px;
 }
 
+/* Global keyboard focus ring (Phase 14 a11y pass): :where() keeps
+   specificity at zero so any explicit focus style still wins; interactive
+   elements without one (sidebar links, row actions, plain buttons) always
+   show a visible ring for keyboard users. Inputs/buttons with their own
+   visible focus treatment (ring/border) are unaffected. */
+:where(a, button, summary, [role='button'], [role='menuitem'], [role='option'], [role='tab'], [tabindex]:not([tabindex='-1'])):focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
 /* Skeleton loaders (no spinners-as-content). */
 .dp-skeleton {
   border-radius: 9px;

@@ -1,0 +1,21 @@
+name = "epicpanel-installer"
+main = "installer-worker.js"
+compatibility_date = "2026-09-01"
+
+# Custom domains: add both zones to your Cloudflare account first, then these
+# custom_domain routes attach automatically on `wrangler deploy`.
+routes = [
+  { pattern = "get.epichostly.com", custom_domain = true },
+  { pattern = "downloads.epichostly.com", custom_domain = true },
+]
+
+[[r2_buckets]]
+binding = "RELEASES"
+bucket_name = "epicpanel-releases"
+
+[vars]
+GET_HOST = "get.epichostly.com"
+DOWNLOADS_HOST = "downloads.epichostly.com"
+
+[observability]
+enabled = true

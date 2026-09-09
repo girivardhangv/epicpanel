@@ -22,7 +22,23 @@ var (
 	ErrTypeUnsupported = errors.New("unsupported runtime type")
 )
 
-var versionRe = regexp.MustCompile(`^[0-9]+\.[0-9]+$`)
+var (
+	versionRe      = regexp.MustCompile(`^[0-9]+\.[0-9]+$`) // php, python: "8.3", "3.12"
+	versionMajorRe = regexp.MustCompile(`^[0-9]+$`)         // node, go: "22", "1"
+)
+
+// ValidVersionForType validates per runtime type: node takes a single major
+// ("22"); go takes major.minor ("1.22" — the agent resolves the newest patch
+// from go.dev); php/python take major.minor ("8.3", "3.12"). The old
+// one-size regex rejected "22" for Node — field-reported bug.
+func ValidVersionForType(t Type, v string) bool {
+	switch t {
+	case TypeNode:
+		return versionMajorRe.MatchString(v)
+	default:
+		return versionRe.MatchString(v)
+	}
+}
 
 type Type string
 

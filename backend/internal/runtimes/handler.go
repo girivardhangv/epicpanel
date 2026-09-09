@@ -137,8 +137,8 @@ func (h *Handler) Install(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Version = strings.TrimSpace(req.Version)
-	if !ValidVersion(req.Version) {
-		httpapi.RespondError(w, httpapi.ErrValidation("version must be in major.minor form, e.g. 8.3"))
+	if !ValidVersionForType(Type(req.Type), req.Version) {
+		httpapi.RespondError(w, httpapi.ErrValidation("invalid version for "+req.Type+": node wants a major (e.g. 22), php/python/go want major.minor (e.g. 8.3, 3.12, 1.22)"))
 		return
 	}
 

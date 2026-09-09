@@ -71,6 +71,7 @@ do_install() {
   # Everything the installer itself depends on. Missing pieces are installed in
   # step 1, but curl/pg_dump must be judged early: backups happen before any
   # migration and without pg_dump there is no backup.
+  MISSING=""
   for dep in curl psql pg_dump; do
     command -v "$dep" >/dev/null || MISSING="$MISSING $dep"
   done

@@ -86,6 +86,11 @@ type DesiredPayload struct {
 	// limits seam; zero = agent defaults.
 	FpmMemoryLimitMB int `json:"fpm_memory_limit_mb,omitempty"`
 	FpmMaxChildren   int `json:"fpm_max_children,omitempty"`
+	// PHPSettings are validated per-site php.ini overrides rendered into the
+	// FPM pool (MultiPHP INI Editor equivalent).
+	PHPSettings map[string]string `json:"php_settings,omitempty"`
+	// RequestTerminateTimeout caps a single PHP request (seconds; 0 = default).
+	RequestTerminateTimeout int `json:"request_terminate_timeout,omitempty"`
 }
 
 // DesiredRedirect is one rewrite-style redirect (from -> to) served by the

@@ -1,8 +1,8 @@
 // Service: the billing business flows on top of the store + providers.
 //
-//  Purchase:  Order -> Payment -> Invoice -> Provision -> Active
-//  Renewal:   Renewal -> Payment -> Extend
-//  Failure:   Payment failed -> Grace period -> Suspend -> Terminate
+//	Purchase:  Order -> Payment -> Invoice -> Provision -> Active
+//	Renewal:   Renewal -> Payment -> Extend
+//	Failure:   Payment failed -> Grace period -> Suspend -> Terminate
 //
 // Every state change goes through the ONE Transition function (guard + audit
 // + event) and every workload-changing action is an idempotent, retryable
@@ -12,8 +12,8 @@ package billing
 import (
 	"context"
 	"crypto/hmac"
-	"encoding/base64"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -32,11 +32,11 @@ import (
 // Defaults for the failure walk (configurable via settings keys
 // billing.grace_days / billing.suspend_terminate_days / billing.invoice_due_days).
 const (
-	DefaultGraceDays          = 3
-	DefaultSuspendThenDays    = 7
-	DefaultInvoiceDueDays     = 7
-	DefaultRenewalLeadDays    = 3 // renewal invoiced N days before period end
-	DefaultWebhookSecretKey   = "billing.webhook_secret"
+	DefaultGraceDays        = 3
+	DefaultSuspendThenDays  = 7
+	DefaultInvoiceDueDays   = 7
+	DefaultRenewalLeadDays  = 3 // renewal invoiced N days before period end
+	DefaultWebhookSecretKey = "billing.webhook_secret"
 )
 
 // Service wires the billing flows.
@@ -236,11 +236,11 @@ func (s *Service) Transition(ctx context.Context, sub *Subscription, to State, a
 
 // CheckoutInput creates an order (pending) for a product.
 type CheckoutInput struct {
-	OrgID    uuid.UUID
-	ActorID  uuid.UUID
+	OrgID     uuid.UUID
+	ActorID   uuid.UUID
 	ProductID uuid.UUID
-	Period   string
-	Provider string
+	Period    string
+	Provider  string
 }
 
 // Checkout validates the product + period and creates the pending order +

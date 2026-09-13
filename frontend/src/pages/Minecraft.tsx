@@ -4,12 +4,13 @@ import {
   Gamepad2, Plus, RefreshCw, Trash2, Terminal, SlidersHorizontal, FolderOpen,
   Clock, Archive, Settings, Gauge, Users, MemoryStick, Timer, Save, File,
 } from 'lucide-react'
-import { api, fmtBytes } from '@/lib/api'
+import { api, fmtBytes, useMetrics } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
 import { Card, CardHeader, StatusBadge, EmptyState } from '@/components/cards'
 import { PageTitle } from '@/components/ref'
 import { Modal, Field, ErrorNote, Select } from '@/components/ui'
-import { PteroServerPage, PteroConsole, PteroStat, PteroTab, ConsoleLine } from '@/components/ptero'
+import { PteroServerPage, PteroConsole, PteroStat, PteroTab } from '@/components/ptero'
+import { useConsoleStream } from '@/lib/console'
 import { confirmAction } from '@/lib/confirm'
 import { timeAgo } from '@/lib/types'
 
@@ -30,6 +31,9 @@ interface Metrics {
   status?: string
   cpu_percent?: number
   memory_bytes?: number
+  net_rx_bps?: number
+  net_tx_bps?: number
+  disk_used_mb?: number
   uptime_s?: number
   players?: number
   max_players?: number
@@ -41,6 +45,7 @@ interface Metrics {
 
 interface Instance {
   id: string
+  server_id: string
   name: string
   provider: string
   version: string
@@ -290,6 +295,7 @@ export function MinecraftDetailPage() {
   const { id } = useParams()
   const { org } = useAuth()
   const navigate = useNavigate()
+  const { frames } = useMetrics()
   const [inst, setInst] = useState<Instance | null>(null)
   const [tab, setTab] = useState('console')
   const [err, setErr] = useState('')
@@ -306,7 +312,9 @@ export function MinecraftDetailPage() {
 
   useEffect(() => {
     load()
-    const t = setInterval(load, POLL_MS)
+    // Status transitions still come from the API; the fast-moving numbers
+    // (CPU/RAM/players/TPS) come from the pushed live frame below.
+    const t = setInterval(load, 20000)
     return () => clearInterval(t)
   }, [load])
 
@@ -327,36 +335,66 @@ export function MinecraftDetailPage() {
     }
   }
 
-  const m = inst.metrics
+  // Live numbers come from the pushed WS frame (agent samples every 2s) —
+  // no REST round-trip, so CPU/RAM/players update smoothly. Fall back to the
+  // REST snapshot only until the first frame lands.
+  const liveApp = frames[inst.server_id || '']?.apps?.find(
+    (a) => a.website_id === inst.id && a.kind === 'minecraft',
+  )
+  const liveFresh = frames[inst.server_id || '']?.freshness
+  const m: Metrics | undefined = liveApp
+    ? {
+        status: liveApp.status,
+        cpu_percent: liveApp.cpu_percent,
+        memory_bytes: liveApp.memory_bytes,
+        net_rx_bps: liveApp.net_rx_bps,
+        net_tx_bps: liveApp.net_tx_bps,
+        disk_used_mb: liveApp.disk_used_mb,
+        uptime_s: liveApp.uptime_s,
+        players: liveApp.players,
+        tps: liveApp.tps,
+        mspt: liveApp.mspt,
+        tps_source: inst.provider === 'vanilla' || inst.provider === 'fabric' || inst.provider === 'forge' || inst.provider === 'neoforge' ? 'unsupported' : 'rcon',
+        freshness: liveFresh,
+      }
+    : inst.metrics
   const tps = m?.tps
   const tpsLive = tps !== undefined && tps > 0
   const mspt = m?.mspt
   const mem = m?.memory_bytes
   const memPct = mem !== undefined && mem > 0 && inst.xmx_mb > 0 ? (mem / (inst.xmx_mb * 1048576)) * 100 : null
-  const fresh = m?.freshness?.state?.toLowerCase()
 
+  const cpu = m?.cpu_percent
+  const disk = m?.disk_used_mb
   const stats: PteroStat[] = [
     {
       label: 'Players',
-      value: m?.players !== undefined ? String(m.players) : '—',
-      hint: m?.max_players !== undefined ? `of ${m.max_players} max` : 'connected now',
+      value: m?.players != null ? String(m.players) : '0',
+      hint: m?.max_players ? `of ${m.max_players} max` : 'connected now',
     },
     {
       label: 'TPS',
-      value: tpsLive ? tps.toFixed(1) : '—',
+      value: tpsLive ? tps.toFixed(1) : (m?.tps_source === 'unsupported' ? 'n/a' : '—'),
       percent: tpsLive ? Math.min(100, (tps / 20) * 100) : null,
       tone: tpsLive ? (tps >= 19 ? 'brand' : tps >= 15 ? 'warn' : 'danger') : undefined,
       hint: m?.tps_source === 'rcon' ? 'via RCON · target 20'
-        : m?.tps_source === 'unsupported' ? 'vanilla does not expose TPS over RCON'
+        : m?.tps_source === 'unsupported' ? 'server type does not expose TPS over RCON'
         : m?.tps_source === 'waiting' ? 'waiting for first sample'
         : 'target 20 ticks/s',
     },
     {
       label: 'MSPT',
-      value: mspt !== undefined && mspt > 0 ? `${mspt.toFixed(1)} ms` : '—',
+      value: mspt !== undefined && mspt > 0 ? `${mspt.toFixed(1)} ms` : (m?.tps_source === 'unsupported' ? 'n/a' : '—'),
       percent: mspt !== undefined && mspt > 0 ? Math.min(100, (mspt / 50) * 100) : null,
       tone: mspt !== undefined && mspt > 0 ? (mspt >= 50 ? 'danger' : mspt >= 25 ? 'warn' : 'brand') : undefined,
       hint: 'target < 50 ms per tick',
+    },
+    {
+      label: 'CPU',
+      value: cpu != null ? `${cpu.toFixed(1)}%` : '—',
+      percent: cpu != null ? Math.min(100, cpu) : null,
+      tone: cpu != null ? (cpu > 90 ? 'danger' : cpu > 75 ? 'warn' : undefined) : undefined,
+      hint: 'live container usage',
     },
     {
       label: 'Memory',
@@ -364,6 +402,16 @@ export function MinecraftDetailPage() {
       percent: memPct,
       tone: memPct !== null ? (memPct > 90 ? 'danger' : memPct > 75 ? 'warn' : undefined) : undefined,
       hint: `heap -Xmx${inst.xmx_mb} MB allocated`,
+    },
+    {
+      label: 'Disk',
+      value: disk != null ? `${disk} MB` : '—',
+      hint: 'instance tree usage',
+    },
+    {
+      label: 'Address',
+      value: `${window.location.hostname}:${inst.port}`,
+      hint: 'connect here from Minecraft',
     },
     {
       label: 'Uptime',
@@ -403,33 +451,16 @@ export function MinecraftDetailPage() {
 
 function ConsoleTab({ inst }: { inst: Instance }) {
   const { org } = useAuth()
-  const [lines, setLines] = useState<ConsoleLine[]>([])
+  const { lines, live, err: streamErr, echo } = useConsoleStream(org?.id, 'minecraft', inst.id)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
-
-  const pull = useCallback(async () => {
-    if (!org) return
-    try {
-      const r = await api.get<{ lines: ConsoleLine[] }>(
-        `/v1/organizations/${org.id}/minecraft/${inst.id}/console?lines=300`)
-      setLines(r.lines ?? [])
-    } catch (ex: any) {
-      setErr(ex.message)
-    }
-  }, [org?.id, inst.id]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    pull()
-    const t = setInterval(pull, CONSOLE_POLL_MS)
-    return () => clearInterval(t)
-  }, [pull])
 
   const send = async (cmd: string) => {
     setBusy(true)
     setErr('')
+    echo(cmd) // instant local echo — no waiting on the round-trip
     try {
       await api.post(`/v1/organizations/${org!.id}/minecraft/${inst.id}/console/command`, { command: cmd })
-      setTimeout(pull, 800)
     } catch (ex: any) {
       setErr(ex.message)
     } finally {
@@ -439,11 +470,12 @@ function ConsoleTab({ inst }: { inst: Instance }) {
 
   return (
     <div>
-      <div className="mb-2 text-[11.5px] text-muted">
-        commands run through a strict allowlist (no shell) — anything else is refused before it reaches the node
+      <div className="mb-2 flex items-center gap-2 text-[11.5px] text-muted">
+        <span className={`inline-block h-1.5 w-1.5 rounded-full ${live ? 'bg-green-500' : 'bg-line'}`} />
+        {live ? 'live' : 'connecting'} — commands run through a strict allowlist (no shell)
       </div>
       <PteroConsole lines={lines} tone="green" onSend={send} placeholder={COMMAND_PLACEHOLDER} sendLabel="Send" busy={busy} />
-      <ErrorNote message={err} />
+      <ErrorNote message={err || streamErr} />
     </div>
   )
 }

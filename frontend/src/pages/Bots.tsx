@@ -4,12 +4,13 @@ import {
   Bot, Plus, RefreshCw, Trash2, Terminal, KeyRound, FolderOpen, Clock,
   GitBranch, Settings, FileUp, Cpu, MemoryStick,
 } from 'lucide-react'
-import { api, fmtBytes } from '@/lib/api'
+import { api, fmtBytes, useMetrics } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
 import { Card, CardHeader, StatusBadge, EmptyState } from '@/components/cards'
 import { PageTitle } from '@/components/ref'
 import { Modal, Field, ErrorNote, Select } from '@/components/ui'
-import { PteroServerPage, PteroConsole, PteroStat, PteroTab, ConsoleLine } from '@/components/ptero'
+import { PteroServerPage, PteroConsole, PteroStat, PteroTab } from '@/components/ptero'
+import { useConsoleStream } from '@/lib/console'
 import { confirmAction } from '@/lib/confirm'
 import { timeAgo } from '@/lib/types'
 
@@ -28,6 +29,7 @@ interface Metrics {
 
 interface Bot {
   id: string
+  server_id: string
   name: string
   runtime: string
   runtime_version: string
@@ -241,6 +243,7 @@ export function BotDetailPage() {
   const { id } = useParams()
   const { org } = useAuth()
   const navigate = useNavigate()
+  const { frames } = useMetrics()
   const [bot, setBot] = useState<Bot | null>(null)
   const [tab, setTab] = useState('console')
   const [err, setErr] = useState('')
@@ -257,7 +260,9 @@ export function BotDetailPage() {
 
   useEffect(() => {
     load()
-    const t = setInterval(load, POLL_MS)
+    // Status comes from the API; CPU/RAM/uptime come from the pushed live
+    // frame below (agent samples every 2s) — no 8s REST polling.
+    const t = setInterval(load, 20000)
     return () => clearInterval(t)
   }, [load])
 
@@ -278,9 +283,21 @@ export function BotDetailPage() {
     }
   }
 
-  // No memory-limit bar: the API never exposes bot limits (anti-drift rule —
-  // the same numbers the bars show must come from the backend).
-  const m = bot.metrics
+  // Live numbers come from the pushed WS frame (2s) — no REST round-trip, so
+  // CPU/RAM update smoothly; fall back to the REST snapshot until it lands.
+  const liveApp = frames[bot.server_id || '']?.apps?.find(
+    (a) => a.website_id === bot.id && a.kind === 'discord',
+  )
+  const liveFresh = frames[bot.server_id || '']?.freshness
+  const m = liveApp
+    ? {
+        cpu_percent: liveApp.cpu_percent,
+        memory_bytes: liveApp.memory_bytes,
+        uptime_s: liveApp.uptime_s,
+        restart_count: liveApp.restart_count,
+        freshness: liveFresh,
+      }
+    : bot.metrics
   const cpu = m?.cpu_percent
   const fresh = m?.freshness?.state?.toLowerCase()
   const stats: PteroStat[] = [
@@ -325,30 +342,13 @@ export function BotDetailPage() {
 
 function ConsoleTab({ bot }: { bot: Bot }) {
   const { org } = useAuth()
-  const [lines, setLines] = useState<ConsoleLine[]>([])
-  const [err, setErr] = useState('')
-
-  const pull = useCallback(async () => {
-    if (!org) return
-    try {
-      const r = await api.get<{ lines: ConsoleLine[] }>(
-        `/v1/organizations/${org.id}/bots/${bot.id}/console?lines=300`)
-      setLines(r.lines ?? [])
-    } catch (ex: any) {
-      setErr(ex.message)
-    }
-  }, [org?.id, bot.id]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    pull()
-    const t = setInterval(pull, 5000)
-    return () => clearInterval(t)
-  }, [pull])
+  const { lines, live, err } = useConsoleStream(org?.id, 'bots', bot.id)
 
   return (
     <div>
-      <div className="mb-2 text-[11.5px] text-muted">
-        read-only — bots are systemd-managed on the node, so there is no command input · env values are scrubbed before leaving the node
+      <div className="mb-2 flex items-center gap-2 text-[11.5px] text-muted">
+        <span className={`inline-block h-1.5 w-1.5 rounded-full ${live ? 'bg-green-500' : 'bg-line'}`} />
+        {live ? 'live' : 'connecting'} — read-only · env values are scrubbed before leaving the node
       </div>
       <PteroConsole lines={lines} tone="sky" />
       <ErrorNote message={err} />

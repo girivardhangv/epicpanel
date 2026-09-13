@@ -64,7 +64,7 @@ func FormatMinor(amount int64, currency string) string {
 type BillingPeriod string
 
 const (
-	PeriodMonthly  BillingPeriod = "monthly"
+	PeriodMonthly   BillingPeriod = "monthly"
 	PeriodQuarterly BillingPeriod = "quarterly"
 	PeriodYearly    BillingPeriod = "yearly"
 )
@@ -141,10 +141,10 @@ func ValidState(s string) bool {
 type WorkloadKind string
 
 const (
-	KindWeb      WorkloadKind = "web"
+	KindWeb       WorkloadKind = "web"
 	KindMinecraft WorkloadKind = "minecraft"
-	KindDiscord  WorkloadKind = "discord"
-	KindService  WorkloadKind = "service" // no node workload; admin fulfils manually
+	KindDiscord   WorkloadKind = "discord"
+	KindService   WorkloadKind = "service" // no node workload; admin fulfils manually
 )
 
 // WorkloadKindForProductType maps a Phase 2 product type to the workload

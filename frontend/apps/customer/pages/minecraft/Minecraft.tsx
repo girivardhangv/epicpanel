@@ -77,7 +77,8 @@ export function MinecraftPage() {
   const [confirmBusy, setConfirmBusy] = useState(false)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
-  const [form, setForm] = useState({ name: '', provider: 'paper', version: '', eula: false, motd: '' })
+  const [form, setForm] = useState<{ name: string; provider: string; version: string; javaMajor: string; eula: boolean; motd: string }>({ name: '', provider: 'paper', version: '', javaMajor: '', eula: false, motd: '' })
+  const [javaMajors, setJavaMajors] = useState<number[]>([8, 11, 17, 21, 25])
 
   const load = useCallback(() => {
     if (!org) return
@@ -97,6 +98,10 @@ export function MinecraftPage() {
       .get<{ providers: MCProviderOffer[] }>(`/v1/organizations/${org.id}/minecraft/provider-offers`)
       .then((r) => setOffers(r.providers ?? []))
       .catch(() => setOffers([]))
+    api
+      .get<{ java_majors: number[] }>(`/v1/organizations/${org.id}/minecraft/java-versions`)
+      .then((r) => r.java_majors?.length && setJavaMajors(r.java_majors))
+      .catch(() => null)
   }, [load, org?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const create = async () => {
@@ -110,11 +115,12 @@ export function MinecraftPage() {
         accept_eula: form.eula,
       }
       if (form.version) body.version = form.version
+      if (form.javaMajor) body.java_major = Number(form.javaMajor)
       if (form.motd) body.properties = { motd: form.motd }
       const r = await api.post<MCInstance>(`/v1/organizations/${org.id}/minecraft`, body)
       pushToast('success', 'Instance created — install queued')
       setShowCreate(false)
-      setForm({ name: '', provider: form.provider, version: '', eula: false, motd: '' })
+      setForm({ name: '', provider: form.provider, version: '', javaMajor: '', eula: false, motd: '' })
       navigate(`/minecraft/${r.id}`)
     } catch (ex: any) {
       setErr(ex.message ?? 'Failed to create instance')
@@ -236,7 +242,7 @@ export function MinecraftPage() {
             />
           </Field>
         </FormRow>
-        <FormRow cols={2}>
+        <FormRow cols={3}>
           <Field label="Version" hint={offer ? `source: ${offer.source}` : undefined}>
             <Select
               value={form.version}
@@ -244,6 +250,14 @@ export function MinecraftPage() {
               options={versionOptions}
               placeholder="default"
               disabled={!offer || offer.versions.length === 0}
+            />
+          </Field>
+          <Field label="Java version" hint="auto if unset (derived from the Minecraft version)">
+            <Select
+              value={form.javaMajor}
+              onChange={(v) => setForm({ ...form, javaMajor: v })}
+              options={[{ value: '', label: 'auto' }, ...javaMajors.map((m) => ({ value: String(m), label: `Java ${m}` }))]}
+              placeholder="auto"
             />
           </Field>
           <Field label="MOTD (optional)">

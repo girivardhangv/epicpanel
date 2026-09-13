@@ -25,10 +25,10 @@ import (
 
 // ChargeRequest is one authorization attempt against a payment method.
 type ChargeRequest struct {
-	Amount      Money   `json:"amount"`
-	Description string  `json:"description"`
-	MethodRef   string  `json:"method_ref"` // gateway token of the payment method
-	OrderRef    string  `json:"order_ref"`  // panel-side reference (order id)
+	Amount      Money             `json:"amount"`
+	Description string            `json:"description"`
+	MethodRef   string            `json:"method_ref"` // gateway token of the payment method
+	OrderRef    string            `json:"order_ref"`  // panel-side reference (order id)
 	Metadata    map[string]string `json:"metadata,omitempty"`
 }
 
@@ -79,9 +79,9 @@ type PaymentProvider interface {
 
 // WebhookEvent is the canonical, verified webhook payload.
 type WebhookEvent struct {
-	EventID   string `json:"event_id"`            // provider idempotency key
-	Type      string `json:"type"`                // payment.captured | payment.failed
-	OrderRef  string `json:"order_ref"`           // panel order id (string form)
+	EventID   string `json:"event_id"`  // provider idempotency key
+	Type      string `json:"type"`      // payment.captured | payment.failed
+	OrderRef  string `json:"order_ref"` // panel order id (string form)
 	Amount    Money  `json:"amount"`
 	Reason    string `json:"reason,omitempty"`
 	Signature string `json:"-"`
@@ -215,12 +215,12 @@ func (FakeProvider) VerifyWebhook(secret string, header http.Header, body []byte
 		return WebhookEvent{}, errors.New("webhook signature mismatch")
 	}
 	var raw struct {
-		EventID    string         `json:"event_id"`
-		Type       string         `json:"type"`
-		OrderRef   string         `json:"order_ref"`
-		AmountMinor int64         `json:"amount_minor"`
-		Currency   string         `json:"currency"`
-		Reason     string         `json:"reason"`
+		EventID     string `json:"event_id"`
+		Type        string `json:"type"`
+		OrderRef    string `json:"order_ref"`
+		AmountMinor int64  `json:"amount_minor"`
+		Currency    string `json:"currency"`
+		Reason      string `json:"reason"`
 	}
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return WebhookEvent{}, fmt.Errorf("webhook body: %w", err)

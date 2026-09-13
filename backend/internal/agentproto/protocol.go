@@ -60,12 +60,15 @@ func Freshness(age time.Duration, haveData bool) string {
 	}
 }
 
-// Frame is the wire envelope. Data carries the per-type payload.
+// Frame is the wire envelope. Data carries the per-type payload. RequestID
+// links an asynchronous request to its response(s) (console backfill, command
+// acknowledgement) without blocking the stream.
 type Frame struct {
 	Type      string          `json:"type"`
 	SessionID string          `json:"session_id,omitempty"`
 	Seq       int64           `json:"seq"`
 	Ts        time.Time       `json:"ts"`
+	RequestID string          `json:"request_id,omitempty"`
 	Data      json.RawMessage `json:"data,omitempty"`
 }
 

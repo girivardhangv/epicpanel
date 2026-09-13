@@ -105,6 +105,12 @@ func leaseFor(t Type) time.Duration {
 		TypeInstallWP, TypeDBTools, TypeCreateBackup, TypeRestoreBackup, TypeBuildApp,
 		TypeCloneStaging, TypePromoteStaging:
 		return 30 * time.Minute
+	// First-class workload installs (Minecraft/Discord) download large
+	// artifacts and run loaders/installers — they need the long lease or the
+	// reaper requeues them mid-install (the "stuck installing" bug).
+	case Type("mc_install"), Type("mc_reinstall"), Type("bot_install"),
+		Type("bot_reinstall"), Type("bot_deploy_git"), Type("mc_backup_world"), Type("mc_restore_world"):
+		return 30 * time.Minute
 	default:
 		return 10 * time.Minute
 	}
@@ -166,7 +172,9 @@ func (s *Store) ClaimNext(ctx context.Context, serverID uuid.UUID) (*Job, error)
 			lease_expires_at = now() + (CASE
 				WHEN type IN ('install_runtime','remove_runtime','install_extension','remove_extension',
 				              'install_wordpress','install_database_tools','create_backup','restore_backup',
-				              'build_app','clone_staging','promote_staging') THEN interval '30 minutes'
+				              'build_app','clone_staging','promote_staging',
+				              'mc_install','mc_reinstall','bot_install','bot_reinstall','bot_deploy_git',
+				              'mc_backup_world','mc_restore_world') THEN interval '30 minutes'
 				ELSE interval '10 minutes' END)
 		WHERE id = (
 			SELECT j.id FROM jobs j

@@ -113,6 +113,26 @@ do_install() {
   systemctl enable --now postgresql >/dev/null 2>&1 || true
   systemctl enable --now nginx >/dev/null 2>&1 || true
 
+  # --- 0b. Workload isolation + runtimes --------------------------------------
+  # Docker isolates Minecraft and Discord workloads (websites stay native:
+  # dedicated unix user + FPM pools). Java is provisioned here so the first
+  # Minecraft install does not have to fetch a JVM; the agent still installs
+  # other majors on demand. Both steps are best-effort: a host without the
+  # docker package still works (the agent falls back to systemd units).
+  if [ "${EPICPANEL_SKIP_DOCKER:-0}" != "1" ]; then
+    log "Installing Docker (Minecraft/Discord isolation)…"
+    if ! command -v docker >/dev/null; then
+      apt-get install -y --no-install-recommends docker.io >/dev/null 2>&1 \
+        || warn "docker.io install failed — first-class workloads will use systemd units until Docker is available"
+    fi
+    systemctl enable --now docker >/dev/null 2>&1 || true
+  fi
+  if ! command -v java >/dev/null; then
+    log "Installing a baseline JVM (Java 21)…"
+    apt-get install -y --no-install-recommends openjdk-21-jre-headless >/dev/null 2>&1 \
+      || warn "openjdk-21 install failed — the agent will fetch Temurin on first Minecraft install"
+  fi
+
   # --- 1. Panel DB -----------------------------------------------------------
   log "Preparing the panel database…"
   mkdir -p "$EPIC_DIR"
@@ -444,6 +464,23 @@ do_agent() {
   command -v systemctl >/dev/null || fail "systemd is required (Ubuntu 20.04+/Debian 11+)"
 
   log "Installing the EpicPanel node agent…"
+
+  # Node-only installs also need the workload isolation + runtime prerequisites
+  # (same rationale as do_install step 0b).
+  export DEBIAN_FRONTEND=noninteractive
+  if command -v apt-get >/dev/null; then
+    apt-get update -y >/dev/null 2>&1 || warn "apt-get update had warnings (continuing)"
+    if [ "${EPICPANEL_SKIP_DOCKER:-0}" != "1" ] && ! command -v docker >/dev/null; then
+      apt-get install -y --no-install-recommends docker.io ca-certificates curl >/dev/null 2>&1 \
+        || warn "docker.io install failed — first-class workloads will use systemd units until Docker is available"
+      systemctl enable --now docker >/dev/null 2>&1 || true
+    fi
+    if ! command -v java >/dev/null; then
+      apt-get install -y --no-install-recommends openjdk-21-jre-headless >/dev/null 2>&1 \
+        || warn "openjdk-21 install failed — the agent will fetch Temurin on first Minecraft install"
+    fi
+  fi
+
   ARCH="$(uname -m)"; case "$ARCH" in x86_64) ARCH=amd64;; aarch64) ARCH=arm64;; esac
   RELEASE_BASE="${EPICPANEL_DOWNLOAD_BASE:-https://downloads.epichostly.in/latest}"
   tmp="$(mktemp -d)"

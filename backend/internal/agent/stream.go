@@ -43,6 +43,12 @@ type Streamer struct {
 	startedAt time.Time
 
 	connected bool
+
+	// outCh carries asynchronous frames (console.output, server.state,
+	// installation.output) produced by other subsystems. It is the seam that
+	// keeps the read path (docker/journald) and the state machine decoupled
+	// from the network goroutine (spec §37).
+	outCh chan agentproto.Frame
 }
 
 const ringSize = 256 // ~42 min of samples at 10s; replay horizon on reconnect
@@ -61,17 +67,30 @@ func NewStreamer(controlPlaneURL, token, agentVersion string, interval time.Dura
 		collector:       NewCollector(),
 		workloads:       newWorkloadCollector(),
 		ring:            make([]agentproto.Frame, ringSize),
+		outCh:           make(chan agentproto.Frame, 1024),
 	}
 }
 
-// intervalFromEnv resolves the sample cadence (default 5s).
+// Send enqueues an asynchronous frame for delivery on the persistent stream.
+// Non-blocking: when the queue is full the frame is dropped (console frames
+// are re-derivable from the ring via console.request; blocking here would
+// stall the game process — spec §13, §52).
+func (s *Streamer) Send(f agentproto.Frame) {
+	select {
+	case s.outCh <- f:
+	default:
+	}
+}
+
+// intervalFromEnv resolves the sample cadence (default 2s — live-feeling
+// CPU/RAM/console stats without hammering the node).
 func intervalFromEnv() time.Duration {
 	if v := os.Getenv("EPICPANEL_AGENT_METRICS_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {
 			return d
 		}
 	}
-	return 5 * time.Second
+	return 2 * time.Second
 }
 
 // newSessionID returns a fresh random session identifier.
@@ -204,6 +223,10 @@ func (s *Streamer) streamOnce(ctx context.Context) error {
 	// Replay buffered frames the control plane has not acked (resume only).
 	s.replay(conn)
 
+	// Reconnect resynchronization: announce current workload states + console
+	// sequence counters so the panel never renders stale state (spec §36).
+	SendSyncSnapshot(s, s.agentVersion)
+
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
 
@@ -214,6 +237,10 @@ func (s *Streamer) streamOnce(ctx context.Context) error {
 			return ctx.Err()
 		case err := <-errCh:
 			return err
+		case out := <-s.outCh:
+			if err := s.send(conn, out); err != nil {
+				return err
+			}
 		case <-ticker.C:
 			frame, degraded, collectMS := s.nextSampleFrame()
 			if err := s.send(conn, frame); err != nil {
@@ -258,6 +285,10 @@ func (s *Streamer) readLoop(conn *websocket.Conn) error {
 			s.mu.Unlock()
 		case agentproto.TypePing:
 			s.send(conn, agentproto.Frame{Type: agentproto.TypePong, SessionID: s.sessionID, Seq: s.seq, Ts: time.Now().UTC()})
+		case agentproto.TypeServerCommand:
+			go handleServerCommand(frame)
+		case agentproto.TypeConsoleRequest:
+			go handleConsoleRequest(s, frame)
 		}
 	}
 }

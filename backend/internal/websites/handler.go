@@ -29,7 +29,9 @@ type Handler struct {
 	Websites *Store
 	Jobs     *jobs.Store
 	Configs  *ConfigStore
-	Ext      *HandlerExtensions
+	// PHPSettings persists per-site php.ini overrides (MultiPHP INI Editor).
+	PHPSettings *PHPSettingsStore
+	Ext         *HandlerExtensions
 	Orgs     *organizations.Store
 	Servers  *servers.Store
 	Audit    *audit.Store
@@ -132,6 +134,8 @@ func (h *Handler) Register(mux *http.ServeMux, requireAgent func(http.HandlerFun
 	mux.HandleFunc("GET /v1/organizations/{org_id}/websites/{website_id}/config", h.requireOrg(organizations.RoleBilling, h.GetConfig))
 	mux.HandleFunc("GET /v1/organizations/{org_id}/websites/{website_id}/usage", h.requireOrg(organizations.RoleBilling, h.GetUsage))
 	mux.HandleFunc("PUT /v1/organizations/{org_id}/websites/{website_id}/config/rewrite", h.requireOrg(organizations.RoleDeveloper, h.SetRewriteRules))
+	mux.HandleFunc("GET /v1/organizations/{org_id}/websites/{website_id}/php-settings", h.requireOrg(organizations.RoleBilling, h.GetPHPSettings))
+	mux.HandleFunc("PUT /v1/organizations/{org_id}/websites/{website_id}/php-settings", h.requireOrg(organizations.RoleDeveloper, h.SetPHPSettings))
 	mux.HandleFunc("POST /v1/organizations/{org_id}/websites/{website_id}/suspend", h.requireOrg(organizations.RoleAdmin, h.Suspend))
 	mux.HandleFunc("POST /v1/organizations/{org_id}/websites/{website_id}/resume", h.requireOrg(organizations.RoleAdmin, h.Resume))
 
@@ -814,6 +818,15 @@ func (h *Handler) buildDesiredPayload(ctx context.Context, ws *Website, orgID uu
 			pl := limitsForPackage(pkg)
 			payload.FpmMemoryLimitMB = pl.MemoryLimitMB
 			payload.FpmMaxChildren = pl.MaxChildren
+		}
+	}
+	// Per-site PHP INI overrides (MultiPHP INI Editor). The FPM request
+	// watchdog is derived from max_execution_time so an "unlimited" script
+	// does not get killed early.
+	if h.PHPSettings != nil && ws.Runtime == RuntimePHP {
+		if settings, err := h.PHPSettings.Get(ctx, ws.ID); err == nil {
+			payload.PHPSettings = settings
+			payload.RequestTerminateTimeout = requestTimeoutFor(settings)
 		}
 	}
 	return payload, nil

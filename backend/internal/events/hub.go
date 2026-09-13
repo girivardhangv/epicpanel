@@ -85,6 +85,16 @@ func (h *Hub) BroadcastServerState(serverID string, online bool) {
 	h.broadcast(b)
 }
 
+// BroadcastJSON pushes one typed frame (server lifecycle, node sync) to every
+// connected browser WITHOUT persisting to the events table.
+func (h *Hub) BroadcastJSON(msgType string, data any) {
+	b, err := json.Marshal(map[string]any{"type": msgType, "data": data})
+	if err != nil {
+		return
+	}
+	h.broadcast(b)
+}
+
 func (h *Hub) broadcast(b []byte) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

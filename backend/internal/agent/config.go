@@ -18,7 +18,9 @@ type Config struct {
 }
 
 func PollIntervalFromEnv() time.Duration {
-	interval := 10 * time.Second
+	// Snappy default: the agent claims jobs sub-second so console/lifecycle
+	// actions reflect almost immediately (Pterodactyl-like responsiveness).
+	interval := 1 * time.Second
 	if v := os.Getenv("EPICPANEL_AGENT_POLL_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {
 			interval = d

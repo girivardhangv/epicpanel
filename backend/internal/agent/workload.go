@@ -172,13 +172,13 @@ const siteDiskTTL = 60 * time.Second
 // the app kind recorded in the unit description (best effort until Phase
 // 7/8 register kinds explicitly).
 func (w *workloadCollector) CollectApps() []agentproto.AppSample {
-	units := listAppUnits()
-	if len(units) == 0 {
-		return nil
-	}
-	props := w.appProperties(units)
-	now := time.Now()
 	var out []agentproto.AppSample
+	now := time.Now()
+
+	// systemd transient units (non-Docker hosts / the systemd fallback).
+	units := listAppUnits()
+	props := w.appProperties(units)
+	seen := map[string]bool{}
 	for _, unit := range units {
 		id := strings.TrimPrefix(strings.TrimSuffix(unit, ".service"), "epicpanel-app-")
 		p := props[unit]
@@ -199,9 +199,99 @@ func (w *workloadCollector) CollectApps() []agentproto.AppSample {
 			s.MemoryBytes = processMemory(p.pid)
 			s.NetRxBPS, s.NetTxBPS = processNetRates(p.pid)
 		}
+		seen[id] = true
 		out = append(out, s)
 	}
+
+	// Docker workloads (Minecraft/Discord when the daemon is present): the
+	// reconciler's truth source MUST include containers or a containerized
+	// workload never converges (stuck starting/stopping forever).
+	for _, s := range collectDockerApps(now) {
+		if !seen[s.WebsiteID] {
+			out = append(out, s)
+		}
+	}
 	return out
+}
+
+// collectDockerApps samples containers labelled epicpanel.workload=1 and maps
+// them onto the AppSample envelope (same WebsiteID = the instance/bot id).
+func collectDockerApps(now time.Time) []agentproto.AppSample {
+	out, err := execCommand("docker", "ps", "-a",
+		"--filter", "label=epicpanel.workload=1",
+		"--format", "{{.Names}}|{{.State}}|{{.Status}}|{{.Label \"epicpanel.kind\"}}").Output()
+	if err != nil && len(out) == 0 {
+		return nil
+	}
+	// Container memory/CPU/net MUST come from the container's cgroup, not
+	// /proc/<init-pid>/status: the init process (tini) is tiny (~78 KB), so
+	// process-based reads reported a bogus near-zero RAM while the JVM was
+	// using gigabytes. CollectContainers reads memory.current/cpu.stat/net
+	// from the same cgroup the kernel enforces (anti-drift).
+	byName := map[string]agentproto.ContainerSample{}
+	for _, c := range CollectContainers() {
+		if c.Name != "" {
+			byName[c.Name] = c
+		}
+	}
+	var apps []agentproto.AppSample
+	for _, line := range splitLines(out) {
+		fields := strings.Split(strings.TrimSpace(line), "|")
+		if len(fields) < 2 {
+			continue
+		}
+		name := fields[0]
+		id := strings.TrimPrefix(name, "epicpanel-app-")
+		if id == "" || id == name {
+			continue
+		}
+		kind := "app"
+		if len(fields) >= 4 && fields[3] != "" {
+			kind = fields[3]
+		}
+		s := agentproto.AppSample{WebsiteID: id, Kind: kind}
+		switch fields[1] {
+		case "running":
+			s.Status = "active"
+		case "restarting":
+			s.Status = "activating"
+		default:
+			s.Status = "inactive"
+		}
+		// Accurate usage from the container cgroup (memory.current, cpu.stat,
+		// net counters). Fall back to the main-pid /proc reads only when the
+		// cgroup scope is unavailable (older daemon / cgroupfs layouts).
+		if c, ok := byName[name]; ok && c.MemoryBytes > 0 {
+			s.CPUPercent = c.CPUPercent
+			s.MemoryBytes = c.MemoryBytes
+			s.NetRxBPS = c.NetRxBPS
+			s.NetTxBPS = c.NetTxBPS
+		} else if pidOut, perr := execCommand("docker", "inspect", "-f", "{{.State.Pid}}", name).Output(); perr == nil {
+			if pid, aerr := strconv.Atoi(strings.TrimSpace(string(pidOut))); aerr == nil && pid > 1 {
+				s.CPUPercent = processCPUPercent(pid)
+				s.MemoryBytes = processMemory(pid)
+				s.NetRxBPS, s.NetTxBPS = processNetRates(pid)
+			}
+		}
+		// Disk: the workload tree on the host (/srv/epicpanel/...).
+		for _, base := range []string{"/srv/epicpanel/minecraft", "/srv/epicpanel/bots"} {
+			tree := filepath.Join(base, id)
+			if st, serr := os.Stat(tree); serr == nil && st.IsDir() {
+				s.DiskUsedMB = dirSizeMB(tree)
+				break
+			}
+		}
+		// Minecraft players/TPS/MSPT from the RCON poller cache.
+		if kind == "minecraft" {
+			snap := MCMetricsSnapshot(id)
+			s.Players = snap.Players
+			s.TPS = snap.TPS
+			s.MSPT = snap.MSPT
+		}
+		_ = now
+		apps = append(apps, s)
+	}
+	return apps
 }
 
 const appPropsTTL = 10 * time.Second

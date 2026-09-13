@@ -49,6 +49,11 @@ type ProvisionPayload struct {
 	// FPM pool sizing from the org's hosting package; zero = agent defaults.
 	FpmMemoryLimitMB int `json:"fpm_memory_limit_mb,omitempty"`
 	FpmMaxChildren   int `json:"fpm_max_children,omitempty"`
+	// PHPSettings are validated per-site php.ini overrides (allowlisted by the
+	// control plane) rendered as php_admin_value/flag lines in the FPM pool.
+	PHPSettings map[string]string `json:"php_settings,omitempty"`
+	// RequestTerminateTimeout caps a single PHP request (seconds; 0 = default).
+	RequestTerminateTimeout int `json:"request_terminate_timeout,omitempty"`
 }
 
 // effectiveDocroot resolves the serving directory: siteBase/public, or
@@ -179,12 +184,14 @@ func (e *Executor) ProvisionWebsite(ctx context.Context, payload ProvisionPayloa
 			return nil, fmt.Errorf("cleanup stale fpm pools: %w", err)
 		}
 		pool := PoolSpec{
-			WebsiteID:     payload.WebsiteID,
-			UnixUser:      payload.UnixUser,
-			RuntimeVer:    payload.RuntimeVersion,
-			DocumentRoot:  docRoot,
-			PrimaryDomain: payload.PrimaryDomain,
-			PMMaxChildren: payload.FpmMaxChildren,
+			WebsiteID:               payload.WebsiteID,
+			UnixUser:                payload.UnixUser,
+			RuntimeVer:              payload.RuntimeVersion,
+			DocumentRoot:            docRoot,
+			PrimaryDomain:           payload.PrimaryDomain,
+			PMMaxChildren:           payload.FpmMaxChildren,
+			PHPSettings:             payload.PHPSettings,
+			RequestTerminateTimeout: payload.RequestTerminateTimeout,
 		}
 		if payload.FpmMemoryLimitMB > 0 {
 			pool.ProcessMemory = fmt.Sprintf("%dM", payload.FpmMemoryLimitMB)

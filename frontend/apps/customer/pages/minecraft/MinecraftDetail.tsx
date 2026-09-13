@@ -158,6 +158,9 @@ export function MinecraftDetailPage() {
             <button className="btn-danger" disabled={busy !== ''} onClick={() => action('Kill', () => api.post(`${base}/kill`))}>
               <Zap size={15} /> Kill
             </button>
+            <button className="btn-soft" disabled={busy !== ''} onClick={() => action('Reinstall', () => api.post(`${base}/reinstall`))}>
+              <Download size={15} /> Reinstall
+            </button>
           </>
         }
       />
@@ -530,17 +533,21 @@ function PropertiesPanel({ base, keys, reload }: { base: string; keys: string[];
 function VersionsPanel({ base, inst, offers, reload }: { base: string; inst: MCInstance; offers: MCProviderOffer[]; reload: () => void }) {
   const [provider, setProvider] = useState(inst.provider)
   const [version, setVersion] = useState(inst.version)
+  const [javaMajor, setJavaMajor] = useState(String(inst.java_major ?? ''))
   const [busy, setBusy] = useState('')
   const [err, setErr] = useState('')
 
   const offer = offers.find((o) => o.provider === provider)
   const versionOptions = (offer?.versions ?? []).map((v) => ({ value: v, label: v }))
+  const javaOptions = [8, 11, 17, 21, 25].map((m) => ({ value: String(m), label: `Java ${m}` }))
 
   const apply = async () => {
     setErr('')
     setBusy('save')
     try {
-      await api.patch(base, { version })
+      const body: Record<string, unknown> = { version }
+      if (javaMajor) body.java_major = Number(javaMajor)
+      await api.patch(base, body)
       pushToast('success', 'Version saved — restart (or reinstall) to apply')
       reload()
     } catch (ex: any) {
@@ -562,13 +569,16 @@ function VersionsPanel({ base, inst, offers, reload }: { base: string; inst: MCI
           <Field label="Version" hint={offer ? `source: ${offer.source}` : undefined}>
             <Select value={version} onChange={setVersion} options={versionOptions} placeholder="pick version" disabled={!offer} />
           </Field>
+          <Field label="Java version" hint="the agent installs the requested JVM automatically">
+            <Select value={javaMajor} onChange={setJavaMajor} options={javaOptions} placeholder="pick Java" />
+          </Field>
           <div className="flex items-end">
             <button className="btn-brand" onClick={apply} disabled={busy !== ''}>
               <Download size={14} /> {busy !== '' ? 'Saving…' : 'Save version'}
             </button>
           </div>
         </FormRow>
-        <InfoNote message={`Java requirement is derived from the version (current: Java ${inst.java_major}); the agent resolves the JVM on the node.`} />
+        <InfoNote message={`Java is pinned per instance (current: Java ${inst.java_major}); the agent installs that JVM on the node if it is missing. Use Reinstall to re-provision with the new version.`} />
       </div>
     </Card>
   )

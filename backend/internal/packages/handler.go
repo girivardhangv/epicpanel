@@ -103,6 +103,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 
 type packageRequest struct {
 	Name            string   `json:"name"`
+	Kind            string   `json:"kind"`
 	MaxWebsites     int      `json:"max_websites"`
 	MaxDatabases    int      `json:"max_databases"`
 	MaxDiskMB       int      `json:"max_disk_mb"`
@@ -111,6 +112,11 @@ type packageRequest struct {
 	MaxAddonDomains int      `json:"max_addon_domains"`
 	MaxSubdomains   int      `json:"max_subdomains"`
 	AllowedRuntimes []string `json:"allowed_runtimes"`
+	MaxBandwidthMB  int64    `json:"max_bandwidth_mb"`
+	IOWeight        int      `json:"io_weight"`
+	MaxProcesses    int      `json:"max_processes"`
+	MaxPorts        int      `json:"max_ports"`
+	MaxBackups      int      `json:"max_backups"`
 	PriceMonthly    int      `json:"price_monthly_cents"`
 }
 
@@ -135,14 +141,16 @@ func (h *Handler) parseAndValidate(r *http.Request) (*packageRequest, *httpapi.A
 	if req.MemoryLimitMB <= 0 {
 		req.MemoryLimitMB = 128
 	}
-	if req.MemoryLimitMB > 4096 {
-		req.MemoryLimitMB = 4096
-	}
 	if req.CPUCores <= 0 {
 		req.CPUCores = 1.0
 	}
-	if req.CPUCores > 16 {
-		req.CPUCores = 16
+	switch req.Kind {
+	case "web", "minecraft", "discord":
+	default:
+		req.Kind = "web"
+	}
+	if req.IOWeight < 0 || req.IOWeight > 10000 {
+		req.IOWeight = 0
 	}
 	if req.MaxAddonDomains < 0 {
 		req.MaxAddonDomains = 0
@@ -155,6 +163,8 @@ func (h *Handler) parseAndValidate(r *http.Request) (*packageRequest, *httpapi.A
 		req.MaxAddonDomains = req.MaxWebsites
 		req.MaxSubdomains = req.MaxWebsites
 	}
+	// allowed_runtimes is advisory metadata for the UI only; it no longer
+	// gates website creation (packages specify resources, not software).
 	if len(req.AllowedRuntimes) == 0 {
 		req.AllowedRuntimes = []string{"static", "php"}
 	}
@@ -172,10 +182,12 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, err := h.Packages.Create(r.Context(), CreateInput{
-		Name: req.Name, MaxWebsites: req.MaxWebsites, MaxDatabases: req.MaxDatabases,
+		Name: req.Name, Kind: req.Kind, MaxWebsites: req.MaxWebsites, MaxDatabases: req.MaxDatabases,
 		MaxDiskMB: req.MaxDiskMB, MemoryLimitMB: req.MemoryLimitMB, CPUCores: req.CPUCores,
 		MaxAddonDomains: req.MaxAddonDomains, MaxSubdomains: req.MaxSubdomains,
-		AllowedRuntimes: req.AllowedRuntimes, PriceMonthly: req.PriceMonthly,
+		AllowedRuntimes: req.AllowedRuntimes, MaxBandwidthMB: req.MaxBandwidthMB, IOWeight: req.IOWeight,
+		MaxProcesses: req.MaxProcesses, MaxPorts: req.MaxPorts, MaxBackups: req.MaxBackups,
+		PriceMonthly: req.PriceMonthly,
 	})
 	if err == ErrNameTaken {
 		httpapi.RespondError(w, httpapi.ErrConflict("package name already exists"))
@@ -202,10 +214,12 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, err := h.Packages.Update(r.Context(), pkgID, CreateInput{
-		Name: req.Name, MaxWebsites: req.MaxWebsites, MaxDatabases: req.MaxDatabases,
+		Name: req.Name, Kind: req.Kind, MaxWebsites: req.MaxWebsites, MaxDatabases: req.MaxDatabases,
 		MaxDiskMB: req.MaxDiskMB, MemoryLimitMB: req.MemoryLimitMB, CPUCores: req.CPUCores,
 		MaxAddonDomains: req.MaxAddonDomains, MaxSubdomains: req.MaxSubdomains,
-		AllowedRuntimes: req.AllowedRuntimes, PriceMonthly: req.PriceMonthly,
+		AllowedRuntimes: req.AllowedRuntimes, MaxBandwidthMB: req.MaxBandwidthMB, IOWeight: req.IOWeight,
+		MaxProcesses: req.MaxProcesses, MaxPorts: req.MaxPorts, MaxBackups: req.MaxBackups,
+		PriceMonthly: req.PriceMonthly,
 	})
 	if err == ErrNotFound {
 		httpapi.RespondError(w, httpapi.ErrNotFound("package not found"))

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -31,6 +32,12 @@ type PoolSpec struct {
 	// the site tree + /tmp; the sentinel "-" omits the line entirely (used by
 	// the reserved dbadmin pool, which needs the distro session save_path).
 	OpenBaseDir string
+	// PHPSettings are validated per-site php.ini overrides (see
+	// websites.NormalizePHPSettings) rendered as php_admin_value/flag lines.
+	PHPSettings map[string]string
+	// RequestTerminateTimeout caps one request's wall time in seconds;
+	// 0 = agent default (300).
+	RequestTerminateTimeout int
 }
 
 // dbadminPoolSiteID is the reserved (non-website) pool for the panel's
@@ -41,7 +48,8 @@ const fpmSocketDir = "/run/epicpanel/php-fpm"
 
 // RenderPoolConfig renders the per-site php-fpm pool file. Deliberately
 // explicit values over distro defaults: no process group sharing between
-// sites, dedicated socket per site, hardened php_admin settings.
+// sites, dedicated socket per site, hardened php_admin settings, and the
+// per-site INI overrides from the MultiPHP-style settings editor.
 func RenderPoolConfig(p PoolSpec) string {
 	defaults(&p)
 	socket := fmt.Sprintf("%s/%s.sock", fpmSocketDir, p.WebsiteID)
@@ -56,6 +64,17 @@ func RenderPoolConfig(p PoolSpec) string {
 	if baseDir != "" {
 		openBaseDirLine = fmt.Sprintf("php_admin_value[open_basedir] = %s\n", baseDir)
 	}
+
+	// FPM watchdog: kill a worker whose request runs past the cap. An
+	// unlimited max_execution_time (0) must also lift the watchdog.
+	timeout := p.RequestTerminateTimeout
+	if timeout <= 0 {
+		timeout = 300
+	}
+	if p.PHPSettings["max_execution_time"] == "0" {
+		timeout = 0
+	}
+
 	return fmt.Sprintf(`[epicpanel-%s]
 user = %s
 group = %s
@@ -69,16 +88,69 @@ pm.start_servers = %d
 pm.min_spare_servers = %d
 pm.max_spare_servers = %d
 pm.max_requests = 500
+request_terminate_timeout = %d
+request_slowlog_timeout = 10s
+slowlog = /srv/epicpanel/websites/%s/logs/php-fpm-slow.log
 php_admin_value[error_log] = /srv/epicpanel/websites/%s/logs/php-error.log
 php_admin_flag[log_errors] = on
-php_admin_value[memory_limit] = %s
-php_admin_value[upload_max_filesize] = 64M
-php_admin_value[post_max_size] = 64M
-%sphp_admin_value[disable_functions] = exec,passthru,shell_exec,system,proc_open,popen
-catch_workers_output = yes
+%s%scatch_workers_output = yes
 `, p.WebsiteID, p.UnixUser, p.UnixUser, socket,
 		p.PMMaxChildren, p.PMStartServers, p.PMMinSpare, p.PMMaxSpare,
-		p.WebsiteID, p.ProcessMemory, openBaseDirLine)
+		timeout, p.WebsiteID, p.WebsiteID, openBaseDirLine, renderPHPAdminSettings(p))
+}
+
+// phpFlagSettings are directives rendered as php_admin_flag (On/Off) rather
+// than php_admin_value.
+var phpFlagSettings = map[string]bool{
+	"allow_url_fopen":             true,
+	"display_errors":              true,
+	"short_open_tag":              true,
+	"opcache.enable":              true,
+	"opcache.validate_timestamps": true,
+}
+
+// renderPHPAdminSettings emits the per-site INI overrides as php_admin_value /
+// php_admin_flag lines. Secure defaults are overlaid with the validated
+// website_php_settings map (keys already vetted by NormalizePHPSettings).
+func renderPHPAdminSettings(p PoolSpec) string {
+	vals := map[string]string{
+		"memory_limit":        p.ProcessMemory,
+		"upload_max_filesize": "64M",
+		"post_max_size":       "64M",
+		"max_execution_time":  "30",
+		"max_input_time":      "60",
+		"max_input_vars":      "1000",
+		"allow_url_fopen":     "Off",
+		"display_errors":      "Off",
+		"disable_functions":   "exec,passthru,shell_exec,system,proc_open,popen",
+	}
+	// Isolated session + upload scratch INSIDE the site tree so they stay
+	// reachable under open_basedir (the dbadmin pool opts out via "-").
+	if p.WebsiteID != dbadminPoolSiteID {
+		vals["session.save_path"] = "/srv/epicpanel/websites/" + p.WebsiteID + "/tmp/sessions"
+		vals["upload_tmp_dir"] = "/srv/epicpanel/websites/" + p.WebsiteID + "/tmp/uploads"
+	}
+	for k, v := range p.PHPSettings {
+		vals[k] = v
+	}
+	keys := make([]string, 0, len(vals))
+	for k := range vals {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		v := vals[k]
+		if v == "" {
+			continue
+		}
+		if phpFlagSettings[k] {
+			fmt.Fprintf(&b, "php_admin_flag[%s] = %s\n", k, v)
+		} else {
+			fmt.Fprintf(&b, "php_admin_value[%s] = %s\n", k, v)
+		}
+	}
+	return b.String()
 }
 
 func defaults(p *PoolSpec) {
@@ -130,6 +202,20 @@ func (e *Executor) EnsurePool(ctx context.Context, p PoolSpec) error {
 	logsDir := filepath.Join("/srv/epicpanel/websites", p.WebsiteID, "logs")
 	if err := os.MkdirAll(logsDir, 0o755); err != nil {
 		return fmt.Errorf("create logs dir: %w", err)
+	}
+	// Per-site session + upload scratch must exist before FPM starts, or the
+	// pool fails to bind them under open_basedir.
+	if p.WebsiteID != dbadminPoolSiteID {
+		tmpBase := filepath.Join("/srv/epicpanel/websites", p.WebsiteID, "tmp")
+		for _, d := range []string{"sessions", "uploads"} {
+			dir := filepath.Join(tmpBase, d)
+			if err := os.MkdirAll(dir, 0o750); err != nil {
+				return fmt.Errorf("create %s dir: %w", d, err)
+			}
+			if uid, gid, err := siteOwnerIDs(p.WebsiteID); err == nil {
+				_ = chownRecursive(dir, uid, gid)
+			}
+		}
 	}
 
 	content := RenderPoolConfig(p)

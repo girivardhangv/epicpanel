@@ -142,6 +142,9 @@ export function BotDetailPage() {
                 <button className="btn-danger" disabled={busy !== ''} onClick={() => action('Kill', () => api.post(`${base}/kill`))}>
                   <Zap size={15} /> Kill
                 </button>
+                <button className="btn-soft" disabled={busy !== ''} onClick={() => action('Reinstall', () => api.post(`${base}/reinstall`))}>
+                  <RotateCcw size={15} /> Reinstall
+                </button>
               </>
             }
           />

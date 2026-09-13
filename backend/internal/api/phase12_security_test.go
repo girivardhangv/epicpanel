@@ -543,13 +543,13 @@ func TestPhase12AuthzMatrix(t *testing.T) {
 		}
 		cases := []probe{
 			{"GET", "/v1/organizations/" + orgA + "/websites", http.StatusOK},
-			{"POST", "/v1/organizations/" + orgA + "/websites", http.StatusForbidden},   // developer+
-			{"GET", "/v1/organizations/" + orgA + "/minecraft", http.StatusOK},          // billing+
-			{"POST", "/v1/organizations/" + orgA + "/minecraft", http.StatusForbidden},  // developer+
-			{"GET", "/v1/organizations/" + orgA + "/backups2", http.StatusOK},           // billing+
-			{"POST", "/v1/organizations/" + orgA + "/backups2", http.StatusForbidden},   // org admin+
-			{"POST", "/v1/organizations/" + orgA + "/members", http.StatusForbidden},    // org admin+
-			{"PATCH", "/v1/organizations/" + orgA, http.StatusForbidden},                // org admin+
+			{"POST", "/v1/organizations/" + orgA + "/websites", http.StatusForbidden},  // developer+
+			{"GET", "/v1/organizations/" + orgA + "/minecraft", http.StatusOK},         // billing+
+			{"POST", "/v1/organizations/" + orgA + "/minecraft", http.StatusForbidden}, // developer+
+			{"GET", "/v1/organizations/" + orgA + "/backups2", http.StatusOK},          // billing+
+			{"POST", "/v1/organizations/" + orgA + "/backups2", http.StatusForbidden},  // org admin+
+			{"POST", "/v1/organizations/" + orgA + "/members", http.StatusForbidden},   // org admin+
+			{"PATCH", "/v1/organizations/" + orgA, http.StatusForbidden},               // org admin+
 		}
 		for _, c := range cases {
 			resp := userB.do(c.method, c.path, nil)

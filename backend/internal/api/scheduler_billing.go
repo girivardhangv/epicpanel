@@ -28,9 +28,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/epicbyte/epicpanel/backend/internal/billing"
-	"github.com/epicbyte/epicpanel/backend/internal/discord"
 	"github.com/epicbyte/epicpanel/backend/internal/jobs"
-	"github.com/epicbyte/epicpanel/backend/internal/minecraft"
 	"github.com/epicbyte/epicpanel/backend/internal/websites"
 )
 
@@ -158,25 +156,15 @@ func (s *Server) billingReconcileWorkloadTruth(ctx context.Context, svc *billing
 	}
 	for i := range subs {
 		sub := &subs[i]
-		switch {
-		case sub.BotID != nil:
-			if _, err := (&discord.Store{Pool: s.Pool}).GetByIDAny(ctx, *sub.BotID); err != nil {
-				continue
-			}
-		case sub.InstanceID != nil:
-			if _, err := (&minecraft.Store{Pool: s.Pool}).GetByIDAny(ctx, *sub.InstanceID); err != nil {
-				continue
-			}
-		case sub.WebsiteID != nil:
-			ws, err := (&websites.Store{Pool: s.Pool}).GetByIDAny(ctx, *sub.WebsiteID)
-			if err != nil || ws == nil {
-				continue
-			}
-			if ws.Status == websites.StatusDeleted {
-				// Workload deleted out-of-band: terminate the billing side
-				// so the machine never lies about a live service.
-				_ = svc.BeginTerminate(ctx, sub, "workload deleted out-of-band")
-			}
+		if sub.WebsiteID == nil {
+			continue
+		}
+		ws, err := (&websites.Store{Pool: s.Pool}).GetByIDAny(ctx, *sub.WebsiteID)
+		if err != nil || ws == nil {
+			continue
+		}
+		if ws.Status == websites.StatusDeleted {
+			_ = svc.BeginTerminate(ctx, sub, "workload deleted out-of-band")
 		}
 	}
 }

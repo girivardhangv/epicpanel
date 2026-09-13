@@ -31,12 +31,12 @@ import (
 )
 
 type billingTestEnv struct {
-	srv      *Server
-	app      *testClient // full app (register/login/orgs)
-	bl       *testClient // billing routes
-	orgID    string
-	prodID   string
-	botID    string
+	srv    *Server
+	app    *testClient // full app (register/login/orgs)
+	bl     *testClient // billing routes
+	orgID  string
+	prodID string
+	botID  string
 }
 
 func newBillingTestEnv(t *testing.T) *billingTestEnv {
@@ -74,6 +74,9 @@ func newBillingTestEnv(t *testing.T) *billingTestEnv {
 	// + workload rows so tests start isolated (mirrors the phase-8 env).
 	ctx := context.Background()
 	for _, table := range []string{
+		"schedule_tasks", "server_variables", "server_databases", "server_activities",
+		"subusers", "mount_servers", "mount_eggs", "mounts",
+		"egg_variables", "eggs", "nests",
 		"billing_payments", "billing_orders", "bot_schedules", "bot_instances",
 		"minecraft_world_backups", "minecraft_schedules", "minecraft_instances",
 		"jobs",

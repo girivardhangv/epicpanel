@@ -11,6 +11,7 @@ import { pushToast } from '@/components/ref'
 interface Pkg {
   id: string
   name: string
+  kind: string
   max_websites: number
   max_databases: number
   max_disk_mb: number
@@ -19,6 +20,11 @@ interface Pkg {
   max_addon_domains: number
   max_subdomains: number
   allowed_runtimes: string[]
+  max_bandwidth_mb: number
+  io_weight: number
+  max_processes: number
+  max_ports: number
+  max_backups: number
   price_monthly_cents: number
   is_default: boolean
 }
@@ -40,9 +46,10 @@ const RUNTIME_OPTIONS = [
 ]
 
 const emptyForm = {
-  name: '', max_websites: 5, max_databases: 5, max_disk_mb: 5120,
+  name: '', kind: 'web', max_websites: 5, max_databases: 5, max_disk_mb: 5120,
   memory_limit_mb: 256, cpu_cores: 1,
   max_addon_domains: 3, max_subdomains: 5,
+  max_bandwidth_mb: 0, io_weight: 100, max_processes: 128, max_ports: 0, max_backups: 3,
   allowed_runtimes: ['static', 'php'] as string[], price_monthly_cents: 499,
 }
 
@@ -75,11 +82,16 @@ export function PackagesPage() {
   const openEdit = (p: Pkg) => {
     setEditing(p)
     setForm({
-      name: p.name, max_websites: p.max_websites, max_databases: p.max_databases,
+      name: p.name, kind: p.kind || 'web', max_websites: p.max_websites, max_databases: p.max_databases,
       max_disk_mb: p.max_disk_mb, memory_limit_mb: p.memory_limit_mb || 256,
       cpu_cores: p.cpu_cores || 1,
       max_addon_domains: p.max_addon_domains ?? p.max_websites,
       max_subdomains: p.max_subdomains ?? p.max_websites,
+      max_bandwidth_mb: p.max_bandwidth_mb || 0,
+      io_weight: p.io_weight || 0,
+      max_processes: p.max_processes || 0,
+      max_ports: p.max_ports || 0,
+      max_backups: p.max_backups || 0,
       allowed_runtimes: p.allowed_runtimes ?? ['static', 'php'],
       price_monthly_cents: p.price_monthly_cents,
     })
@@ -102,6 +114,7 @@ export function PackagesPage() {
     try {
       const body = {
         name: form.name,
+        kind: form.kind,
         max_websites: Number(form.max_websites),
         max_databases: Number(form.max_databases),
         max_disk_mb: Number(form.max_disk_mb),
@@ -109,6 +122,11 @@ export function PackagesPage() {
         cpu_cores: Number(form.cpu_cores),
         max_addon_domains: Number(form.max_addon_domains),
         max_subdomains: Number(form.max_subdomains),
+        max_bandwidth_mb: Number(form.max_bandwidth_mb),
+        io_weight: Number(form.io_weight),
+        max_processes: Number(form.max_processes),
+        max_ports: Number(form.max_ports),
+        max_backups: Number(form.max_backups),
         allowed_runtimes: form.allowed_runtimes,
         price_monthly_cents: Number(form.price_monthly_cents),
       }
@@ -233,6 +251,15 @@ export function PackagesPage() {
           <div className="col-span-2">
             <Field label="Name"><input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Starter" /></Field>
           </div>
+          <div className="col-span-2">
+            <Field label="Workload kind" hint="Plans define resources only; the workload is chosen by the customer">
+              <Select value={form.kind} onChange={(v) => setForm({ ...form, kind: v })} options={[
+                { value: 'web', label: 'Web hosting' },
+                { value: 'minecraft', label: 'Minecraft' },
+                { value: 'discord', label: 'Discord bots' },
+              ]} />
+            </Field>
+          </div>
           <Field label="Addon domains" hint="Root domains like example.com">
             <input className="input" type="number" min={0} value={form.max_addon_domains} onChange={(e) => setForm({ ...form, max_addon_domains: Number(e.target.value) })} />
           </Field>
@@ -247,9 +274,14 @@ export function PackagesPage() {
           <Field label="CPU cores" hint="e.g. 0.5 or 1 — hard cgroup limit">
             <input className="input" type="number" min={0.1} max={16} step={0.1} value={form.cpu_cores} onChange={(e) => setForm({ ...form, cpu_cores: Number(e.target.value) })} />
           </Field>
+          <Field label="Bandwidth (MB/mo)" hint="0 = unlimited"><input className="input" type="number" value={form.max_bandwidth_mb} onChange={(e) => setForm({ ...form, max_bandwidth_mb: Number(e.target.value) })} /></Field>
+          <Field label="I/O weight" hint="1–10000, 0 = kernel default"><input className="input" type="number" value={form.io_weight} onChange={(e) => setForm({ ...form, io_weight: Number(e.target.value) })} /></Field>
+          <Field label="Max processes"><input className="input" type="number" value={form.max_processes} onChange={(e) => setForm({ ...form, max_processes: Number(e.target.value) })} /></Field>
+          <Field label="Max ports"><input className="input" type="number" value={form.max_ports} onChange={(e) => setForm({ ...form, max_ports: Number(e.target.value) })} /></Field>
+          <Field label="Max backups"><input className="input" type="number" value={form.max_backups} onChange={(e) => setForm({ ...form, max_backups: Number(e.target.value) })} /></Field>
           <Field label="Price ($/mo)"><input className="input" type="number" value={form.price_monthly_cents / 100} onChange={(e) => setForm({ ...form, price_monthly_cents: Math.round(Number(e.target.value) * 100) })} /></Field>
           <div className="col-span-2">
-            <Field label="Allowed software / runtimes">
+            <Field label="Suggested software / runtimes" hint="UI hint only — packages no longer lock runtimes">
               <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                 {RUNTIME_OPTIONS.map((o) => (
                   <label key={o.value} className={`flex cursor-pointer items-center gap-2.5 rounded border p-2.5 transition ${form.allowed_runtimes.includes(o.value) ? 'border-brand bg-brand/[0.04]' : 'border-line hover:border-brand/40'}`}>

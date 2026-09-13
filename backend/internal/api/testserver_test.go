@@ -65,10 +65,14 @@ func newTestServer(t *testing.T) (*Server, *testClient) {
 	t.Cleanup(pool.Close)
 
 	for _, table := range []string{
+		"schedule_tasks", "server_variables", "mount_servers", "mount_eggs", "egg_variables",
+		"eggs", "nests", "mounts", "subusers", "server_databases", "server_activities",
 		"events", "resources", "invoices", "subscriptions", "services", "products", "customers",
 		"recovery_codes", "mfa_challenges", "service_accounts", "api_tokens",
 		"applications", "ssh_keys", "system_settings", "cron_jobs", "hosting_packages", "http_checks", "alerts", "backups", "deployments", "domains", "dns_records", "dns_zones", "domain_redirects", "ftp_accounts", "databases", "runtimes", "jobs", "websites",
-		"workload_resource_usage",
+		"workload_resource_usage", "allocations",
+		"minecraft_world_backups", "minecraft_schedules", "minecraft_instances",
+		"bot_schedules", "bot_instances",
 		"server_metrics", "server_agent_tokens", "server_registration_tokens", "servers",
 		"audit_logs", "sessions", "organization_members", "organizations", "users", "schema_migrations",
 	} {

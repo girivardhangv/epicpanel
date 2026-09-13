@@ -2,70 +2,25 @@
   "$schema": "https://opencode.ai/config.json",
 
   "provider": {
-    "giri2": {
+    "epicrouter": {
       "npm": "@ai-sdk/openai-compatible",
-      "name": "giri2",
+      "name": "EpicRouter",
       "options": {
-        "baseURL": "https://api.b.ai/v1"
+        "baseURL": "http://localhost:9000/v1"
       },
       "models": {
-        "deepseek-v4-flash": {
-          "name": "GPT-10 Sol Ultra"
-        },
-        "glm-5.3-flash": {
-          "name": "GLM 5.3 FLASH"
-        }
-      }
-    },
-
-    "giri1": {
-      "npm": "@ai-sdk/openai-compatible",
-      "name": "giri1",
-      "options": {
-        "baseURL": "https://api.b.ai/v1"
-      },
-      "models": {
-        "deepseek-v4-flash": {
-          "name": "Grok-33 Max Super"
-        },
-        "glm-5.3-flash": {
-          "name": "GLM 5.3 FLASH"
-        },
         "qwen3.8-flash": {
-          "name": "QWEN 3.8 FLASH"
-        }
-      }
-    },
-
-    "epic": {
-      "npm": "@ai-sdk/openai-compatible",
-      "name": "EPIC",
-      "options": {
-        "baseURL": "http://localhost:9100/v1"
-      },
-      "models": {
-        "glm-5.3-flash": {
-          "name": "Claude-99 Opus Prime"
-        }
-      }
-    },
-
-    "kiro": {
-      "npm": "@ai-sdk/openai-compatible",
-      "name": "KIRO",
-      "options": {
-        "baseURL": "http://localhost:9300/v1"
-      },
-      "models": {
-        "deepseek/deepseek-v4-pro": {
-          "name": "GPT-6 Astra"
+          "name": "QWEN 3.8 Flash"
         },
-        "glm-5.3-flash": {
-          "name": "GLM 5.3 FLASH"
+        "deepseek/deepseek-v4-pro": {
+          "name": "DeepSeek V4 Pro"
+        },
+        "deepseek-v4.1-flash:free": {
+          "name": "DeepSeek V4.1 Flash"
         }
       }
     }
   },
 
-  "model": "giri1/deepseek-v4-flash"
+  "model": "epicrouter/deepseek/deepseek-v4-pro"
 }

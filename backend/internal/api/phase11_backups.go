@@ -19,10 +19,8 @@ import (
 	"github.com/epicbyte/epicpanel/backend/internal/audit"
 	"github.com/epicbyte/epicpanel/backend/internal/backups"
 	"github.com/epicbyte/epicpanel/backend/internal/backups/sink"
-	"github.com/epicbyte/epicpanel/backend/internal/discord"
 	"github.com/epicbyte/epicpanel/backend/internal/httpapi"
 	"github.com/epicbyte/epicpanel/backend/internal/jobs"
-	"github.com/epicbyte/epicpanel/backend/internal/minecraft"
 	"github.com/epicbyte/epicpanel/backend/internal/organizations"
 	"github.com/epicbyte/epicpanel/backend/internal/servers"
 )
@@ -31,8 +29,6 @@ import (
 func registerPhase11(s *Server, mux *http.ServeMux) {
 	h := &phase11Handler{
 		srv:        s,
-		mc:         &minecraft.Store{Pool: s.Pool},
-		bots:       &discord.Store{Pool: s.Pool},
 		requireOrg: (&servers.Handler{Orgs: s.Orgs}).ResolveOrg,
 	}
 	// Targets.
@@ -52,8 +48,6 @@ func registerPhase11(s *Server, mux *http.ServeMux) {
 
 type phase11Handler struct {
 	srv        *Server
-	mc         *minecraft.Store
-	bots       *discord.Store
 	requireOrg func(r *http.Request, orgIDParam string, min organizations.Role) (uuid.UUID, *httpapi.APIError)
 }
 
@@ -177,20 +171,6 @@ func (h *phase11Handler) listBackups(w http.ResponseWriter, r *http.Request) {
 		err  error
 	)
 	switch {
-	case q.Get("instance_id") != "":
-		id, perr := uuid.Parse(q.Get("instance_id"))
-		if perr != nil {
-			httpapi.RespondError(w, httpapi.ErrValidation("invalid instance_id"))
-			return
-		}
-		list, err = h.srv.Backups.ListForInstance(r.Context(), id, limit)
-	case q.Get("bot_id") != "":
-		id, perr := uuid.Parse(q.Get("bot_id"))
-		if perr != nil {
-			httpapi.RespondError(w, httpapi.ErrValidation("invalid bot_id"))
-			return
-		}
-		list, err = h.srv.Backups.ListForBot(r.Context(), id, limit)
 	case q.Get("website_id") != "":
 		id, perr := uuid.Parse(q.Get("website_id"))
 		if perr != nil {
@@ -209,51 +189,29 @@ func (h *phase11Handler) listBackups(w http.ResponseWriter, r *http.Request) {
 }
 
 type createBackupReq struct {
-	Type       string `json:"type"`
-	WebsiteID  string `json:"website_id,omitempty"`
-	InstanceID string `json:"instance_id,omitempty"`
-	BotID      string `json:"bot_id,omitempty"`
-	TargetID   string `json:"target_id,omitempty"`
-	Encrypt    bool   `json:"encrypt,omitempty"`
-	Verify     bool   `json:"verify,omitempty"`
+	Type      string `json:"type"`
+	WebsiteID string `json:"website_id,omitempty"`
+	TargetID  string `json:"target_id,omitempty"`
+	Encrypt   bool   `json:"encrypt,omitempty"`
+	Verify    bool   `json:"verify,omitempty"`
 }
 
 // resolveWorkload locates the backing server for a typed backup + verifies
 // org ownership (cross-tenant = 404, never existence leaks).
-func (h *phase11Handler) resolveWorkload(r *http.Request, orgID uuid.UUID, req createBackupReq) (serverID uuid.UUID, websiteID, instanceID, botID *uuid.UUID, apiErr *httpapi.APIError) {
+func (h *phase11Handler) resolveWorkload(r *http.Request, orgID uuid.UUID, req createBackupReq) (serverID uuid.UUID, websiteID *uuid.UUID, apiErr *httpapi.APIError) {
 	switch req.Type {
 	case backups.TypeWebsite, backups.TypeWebsiteFiles, backups.TypeAccount, backups.TypeDatabase:
 		wid, err := uuid.Parse(req.WebsiteID)
 		if err != nil {
-			return uuid.Nil, nil, nil, nil, httpapi.ErrValidation("invalid website_id")
+			return uuid.Nil, nil, httpapi.ErrValidation("invalid website_id")
 		}
 		ws, err := h.srv.Websites.GetByID(r.Context(), orgID, wid)
 		if err != nil {
-			return uuid.Nil, nil, nil, nil, httpapi.ErrNotFound("website not found")
+			return uuid.Nil, nil, httpapi.ErrNotFound("website not found")
 		}
-		return ws.ServerID, &ws.ID, nil, nil, nil
-	case backups.TypeWorld:
-		iid, err := uuid.Parse(req.InstanceID)
-		if err != nil {
-			return uuid.Nil, nil, nil, nil, httpapi.ErrValidation("invalid instance_id")
-		}
-		inst, err := h.mc.GetByID(r.Context(), orgID, iid)
-		if err != nil {
-			return uuid.Nil, nil, nil, nil, httpapi.ErrNotFound("instance not found")
-		}
-		return inst.ServerID, nil, &inst.ID, nil, nil
-	case backups.TypeBot, backups.TypeFull:
-		bid, err := uuid.Parse(req.BotID)
-		if err != nil {
-			return uuid.Nil, nil, nil, nil, httpapi.ErrValidation("invalid bot_id")
-		}
-		bot, err := h.bots.GetByID(r.Context(), orgID, bid)
-		if err != nil {
-			return uuid.Nil, nil, nil, nil, httpapi.ErrNotFound("bot not found")
-		}
-		return bot.ServerID, nil, nil, &bot.ID, nil
+		return ws.ServerID, &ws.ID, nil
 	default:
-		return uuid.Nil, nil, nil, nil, httpapi.ErrValidation("unsupported backup type")
+		return uuid.Nil, nil, httpapi.ErrValidation("unsupported backup type")
 	}
 }
 
@@ -269,24 +227,6 @@ func (h *phase11Handler) serverForWorkload(r *http.Request, orgID uuid.UUID, b *
 			return uuid.Nil, nil, httpapi.ErrNotFound("website not found")
 		}
 		return ws.ServerID, &ws.ID, nil
-	case backups.TypeWorld:
-		if b.InstanceID == nil {
-			return uuid.Nil, nil, httpapi.ErrConflict("backup has no instance scope")
-		}
-		inst, err := h.mc.GetByID(r.Context(), orgID, *b.InstanceID)
-		if err != nil {
-			return uuid.Nil, nil, httpapi.ErrNotFound("instance not found")
-		}
-		return inst.ServerID, nil, nil
-	case backups.TypeBot, backups.TypeFull:
-		if b.BotID == nil {
-			return uuid.Nil, nil, httpapi.ErrConflict("backup has no bot scope")
-		}
-		bot, err := h.bots.GetByID(r.Context(), orgID, *b.BotID)
-		if err != nil {
-			return uuid.Nil, nil, httpapi.ErrNotFound("bot not found")
-		}
-		return bot.ServerID, nil, nil
 	}
 	return uuid.Nil, nil, httpapi.ErrValidation("unsupported backup type")
 }
@@ -377,7 +317,7 @@ func (h *phase11Handler) createBackup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	b, err := h.srv.Backups.Create(r.Context(), &backups.Backup{
-		Organization: orgID, WebsiteID: websiteID, InstanceID: instanceID, BotID: botID,
+		Organization: orgID, WebsiteID: websiteID,
 		Type: req.Type, Status: backups.StatusPending, TriggerType: "manual",
 		Encrypted: req.Encrypt, Verification: backups.VerifyPending,
 		Databases: []string{},
@@ -395,7 +335,7 @@ func (h *phase11Handler) createBackup(w http.ResponseWriter, r *http.Request) {
 
 	payload := backups.BackupRunPayload{
 		BackupID: b.ID.String(), Type: req.Type,
-		WebsiteID: req.WebsiteID, InstanceID: req.InstanceID, BotID: req.BotID,
+		WebsiteID: req.WebsiteID,
 		Target: sinkWire(targetCfg), Encrypt: req.Encrypt, KeyEnc: keyEnc, Verify: req.Verify,
 	}
 	if _, err := h.srv.Jobs.Enqueue(r.Context(), serverID, websiteID, jobs.Type("backup_run"), payload); err != nil {
@@ -436,10 +376,8 @@ func (h *phase11Handler) restoreBackup(w http.ResponseWriter, r *http.Request) {
 	keyEnc, _ := h.srv.Backups.KeyEncFor(r.Context(), backupID)
 	payload := backups.BackupRestorePayload{
 		BackupID: b.ID.String(), Type: b.Type,
-		WebsiteID:  idStr(b.WebsiteID),
-		InstanceID: idStr(b.InstanceID),
-		BotID:      idStr(b.BotID),
-		Target:     sinkWire(targetCfg), KeyEnc: keyEnc, RefOverride: refOverrideOf(b),
+		WebsiteID: idStr(b.WebsiteID),
+		Target:    sinkWire(targetCfg), KeyEnc: keyEnc, RefOverride: refOverrideOf(b),
 	}
 	if _, err := h.srv.Jobs.Enqueue(r.Context(), serverID, websiteID, jobs.Type("backup_restore"), payload); err != nil {
 		httpapi.RespondError(w, httpapi.ErrInternal(err))
@@ -497,7 +435,6 @@ func (h *phase11Handler) listSchedules(w http.ResponseWriter, r *http.Request) {
 type createScheduleReq struct {
 	Type      string `json:"type"`
 	WebsiteID string `json:"website_id,omitempty"`
-	BotID     string `json:"bot_id,omitempty"`
 	Cron      string `json:"cron"`
 }
 
@@ -525,16 +462,8 @@ func (h *phase11Handler) createSchedule(w http.ResponseWriter, r *http.Request) 
 		}
 		sc.WebsiteID = &id
 	}
-	if req.BotID != "" {
-		id, err := uuid.Parse(req.BotID)
-		if err != nil {
-			httpapi.RespondError(w, httpapi.ErrValidation("invalid bot_id"))
-			return
-		}
-		sc.BotID = &id
-	}
-	if sc.WebsiteID == nil && sc.BotID == nil {
-		httpapi.RespondError(w, httpapi.ErrValidation("website_id or bot_id required"))
+	if sc.WebsiteID == nil {
+		httpapi.RespondError(w, httpapi.ErrValidation("website_id required"))
 		return
 	}
 	out, err := h.srv.Backups.CreateSchedule(r.Context(), sc)

@@ -22,7 +22,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/epicbyte/epicpanel/backend/internal/backups/sink"
-	"github.com/epicbyte/epicpanel/backend/internal/minecraft"
 )
 
 // BackupOps2 is the Phase 11 registry the coordinator merges into the agent
@@ -42,11 +41,9 @@ var BackupOps2 = map[string]func(context.Context, *Executor, *Client, Config, js
 // BackupRunPayload is the backup_run job payload (control-plane → agent).
 type BackupRunPayload struct {
 	BackupID string `json:"backup_id"`
-	Type     string `json:"type"` // account | database | website | minecraft_world | discord_bot | full_instance | website_files
+	Type     string `json:"type"` // account | database | website | full_instance | website_files
 	// Workload identifiers (exactly one primary):
-	WebsiteID  string `json:"website_id,omitempty"`
-	InstanceID string `json:"instance_id,omitempty"`
-	BotID      string `json:"bot_id,omitempty"`
+	WebsiteID string `json:"website_id,omitempty"`
 	// Databases to dump (account/website bundles).
 	Databases []DBClone `json:"databases,omitempty"`
 	// Database dump-only backups name the single engine+db.
@@ -83,8 +80,6 @@ type BackupRestorePayload struct {
 	Type        string `json:"type"`
 	RefOverride string `json:"ref_override,omitempty"`
 	WebsiteID   string `json:"website_id,omitempty"`
-	InstanceID  string `json:"instance_id,omitempty"`
-	BotID       string `json:"bot_id,omitempty"`
 	// Databases to restore (bundle restores).
 	Databases []DBClone `json:"databases,omitempty"`
 	// Target to fetch the artifact from + wrapped key to decrypt it.
@@ -116,12 +111,10 @@ type BackupPrunePayload struct {
 // TerminateBackupPayload is the Phase 10 pre-terminate hook: a final
 // backup of the workload before irreversible teardown.
 type TerminateBackupPayload struct {
-	Type       string       `json:"type"` // minecraft_world | discord_bot | full_instance | website
-	WebsiteID  string       `json:"website_id,omitempty"`
-	InstanceID string       `json:"instance_id,omitempty"`
-	BotID      string       `json:"bot_id,omitempty"`
-	Target     *sink.Config `json:"target,omitempty"`
-	Encrypt    bool         `json:"encrypt,omitempty"`
+	Type      string       `json:"type"` // full_instance | website
+	WebsiteID string       `json:"website_id,omitempty"`
+	Target    *sink.Config `json:"target,omitempty"`
+	Encrypt   bool         `json:"encrypt,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -137,7 +130,7 @@ func HandleBackupRun(ctx context.Context, e *Executor, c *Client, cfg Config, pa
 	}
 	out, err := runBackup(ctx, e, c, cfg, backupJob{
 		BackupID: p.BackupID, Type: p.Type,
-		WebsiteID: p.WebsiteID, InstanceID: p.InstanceID, BotID: p.BotID,
+		WebsiteID: p.WebsiteID,
 		Databases: p.Databases, SingleDB: p.Database,
 		Target: p.Target, KeyEnc: p.KeyEnc, Encrypt: p.Encrypt, Verify: p.Verify,
 	})
@@ -156,8 +149,8 @@ func HandleTerminateBackup(ctx context.Context, e *Executor, c *Client, cfg Conf
 	out, err := runBackup(ctx, e, c, cfg, backupJob{
 		BackupID:  uuid.NewString(),
 		Type:      p.Type,
-		WebsiteID: p.WebsiteID, InstanceID: p.InstanceID, BotID: p.BotID,
-		Target: p.Target, Encrypt: p.Encrypt, Verify: true,
+		WebsiteID: p.WebsiteID,
+		Target:    p.Target, Encrypt: p.Encrypt, Verify: true,
 		Terminate: true,
 	})
 	if err != nil {
@@ -171,8 +164,6 @@ type backupJob struct {
 	BackupID   string
 	Type       string
 	WebsiteID  string
-	InstanceID string
-	BotID      string
 	Databases  []DBClone
 	SingleDB   *DBClone
 	Target     *sink.Config
@@ -223,38 +214,9 @@ func runBackup(ctx context.Context, e *Executor, c *Client, cfg Config, job back
 			return nil, err
 		}
 		dbs = append(dbs, name)
-	case sinkTypeWorld:
-		// Phase 7 seam: quiesced world snapshot (save-off→flush→tar→save-on)
-		// via the existing MC op, staged into our bundle.
-		if job.InstanceID == "" {
-			return nil, fmt.Errorf("instance_id required")
-		}
-		name := "world-" + job.BackupID
-		mcPayload, _ := json.Marshal(mcBackupPayload{InstanceID: job.InstanceID, BackupName: name})
-		if _, err := HandleMCBackupWorld(ctx, e, c, cfg, mcPayload); err != nil {
-			return nil, err
-		}
-		worldTar := filepath.Join(MCRoot(job.InstanceID), "backups", name+".tar.gz")
-		defer os.Remove(worldTar)
-		if err := copyFile(worldTar, filepath.Join(stageDir, "world.tar.gz")); err != nil {
-			return nil, err
-		}
-	case sinkTypeBot:
-		if job.BotID == "" {
-			return nil, fmt.Errorf("bot_id required")
-		}
-		botRoot := botRootFor(job.BotID)
-		if _, err := os.Stat(botRoot); err != nil {
-			return nil, fmt.Errorf("bot tree missing: %w", err)
-		}
-		// Secrets excluded: EnvironmentFile is never staged (encrypted env
-		// lives outside the bot tree; values ride the control plane).
-		if err := tarDirExclude(ctx, e, botRoot, filepath.Join(stageDir, "bot.tar.gz"), []string{".env", "*.env", "environment"}); err != nil {
-			return nil, err
-		}
 	case sinkTypeFull:
 		// Full instance: tar the unit root (workload files + configs).
-		root := instanceRootFor(job.InstanceID, job.BotID, job.WebsiteID)
+		root := instanceRootFor(job.WebsiteID)
 		if _, err := os.Stat(root); err != nil {
 			return nil, fmt.Errorf("instance root missing: %w", err)
 		}
@@ -346,8 +308,6 @@ const (
 	sinkTypeWebsite  = "website"
 	sinkTypeAccount  = "account"
 	sinkTypeDatabase = "database"
-	sinkTypeWorld    = "minecraft_world"
-	sinkTypeBot      = "discord_bot"
 	sinkTypeFull     = "full_instance"
 )
 
@@ -405,19 +365,6 @@ func dumpDatabase(ctx context.Context, e *Executor, stageDir string, db DBClone)
 func tarDir(ctx context.Context, e *Executor, srcDir, outPath string) error {
 	return e.run(ctx, "tar", "-czf", outPath, "-C", srcDir, ".")
 }
-
-// tarDirExclude tars srcDir skipping excluded basenames (secret hygiene).
-func tarDirExclude(ctx context.Context, e *Executor, srcDir, outPath string, exclude []string) error {
-	args := []string{"tar", "-czf", outPath, "-C", srcDir}
-	for _, x := range exclude {
-		args = append(args, "--exclude="+x)
-	}
-	args = append(args, ".")
-	return e.run(ctx, args[0], args[1:]...)
-}
-
-// worldSnapshotDir is retired: the Phase 7 HandleMCBackupWorld seam is used
-// directly in runBackup (quiesce → tar → save-on).
 
 // HandleBackupRestore fetches + decrypts an artifact and restores it.
 func HandleBackupRestore(ctx context.Context, e *Executor, c *Client, cfg Config, payload json.RawMessage) (json.RawMessage, error) {
@@ -497,38 +444,6 @@ func HandleBackupRestore(ctx context.Context, e *Executor, c *Client, cfg Config
 		}
 		if err := restoreDatabase(ctx, e, bundle, DBClone{Engine: engine, SourceName: name, TargetName: name}); err != nil {
 			return nil, err
-		}
-	case sinkTypeWorld:
-		worldTar := filepath.Join(bundle, "world.tar.gz")
-		if _, err := os.Stat(worldTar); err != nil {
-			return nil, fmt.Errorf("world archive missing: %w", err)
-		}
-		// Stage into the instance's backups dir and call the Phase 7
-		// restore seam (stop → swap → start, rollback on failure).
-		name := "restore-" + p.BackupID
-		dst := filepath.Join(MCRoot(p.InstanceID), "backups", name+".tar.gz")
-		if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
-			return nil, err
-		}
-		if err := copyFile(worldTar, dst); err != nil {
-			return nil, err
-		}
-		defer os.Remove(dst)
-		mcPayload, _ := json.Marshal(minecraft.MCRestorePayload{InstanceID: p.InstanceID, BackupName: name})
-		if _, err := HandleMCRestoreWorld(ctx, e, c, cfg, mcPayload); err != nil {
-			return nil, err
-		}
-	case sinkTypeBot:
-		botTar := filepath.Join(bundle, "bot.tar.gz")
-		if _, err := os.Stat(botTar); err != nil {
-			return nil, fmt.Errorf("bot archive missing: %w", err)
-		}
-		botRoot := botRootFor(p.BotID)
-		if err := os.MkdirAll(botRoot, 0o750); err != nil {
-			return nil, err
-		}
-		if err := e.run(ctx, "tar", "-xzf", botTar, "-C", botRoot); err != nil {
-			return nil, fmt.Errorf("untar bot: %w", err)
 		}
 	default:
 		return nil, fmt.Errorf("unsupported restore type %q", p.Type)
@@ -634,48 +549,8 @@ func engineGuess(p BackupRestorePayload) string {
 	return "postgresql"
 }
 
-// copyFile copies src → dst (mode preserved best-effort).
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	info, err := in.Stat()
-	if err != nil {
-		return err
-	}
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode().Perm())
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	if _, err := io.Copy(out, in); err != nil {
-		return err
-	}
-	return out.Sync()
-}
-
-func botRootFor(botID string) string {
-	return filepath.Join("/srv/epicpanel/bots", botRootSafe(botID))
-}
-
-func botRootSafe(botID string) string {
-	if !uuidCheck(botID) {
-		return "invalid"
-	}
-	return botID
-}
-
-func instanceRootFor(instanceID, botID, websiteID string) string {
-	switch {
-	case instanceID != "":
-		return filepath.Join("/srv/epicpanel/minecraft", instanceID)
-	case botID != "":
-		return botRootFor(botID)
-	default:
-		return filepath.Join("/srv/epicpanel/websites", websiteID)
-	}
+func instanceRootFor(websiteID string) string {
+	return filepath.Join("/srv/epicpanel/websites", websiteID)
 }
 
 // sinkRefPath extracts the artifact path from the control-plane hint. The

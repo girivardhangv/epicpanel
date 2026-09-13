@@ -39,11 +39,13 @@ const testDBURLDefault = "postgres://epicpanel:epicpanel_dev@localhost:5432/epic
 // billing-owned tables are included so the migration chain is proven
 // re-runnable every run.
 var dropList = []string{
+	"schedule_tasks", "server_variables", "mount_servers", "mount_eggs", "egg_variables",
+	"eggs", "nests", "mounts", "subusers", "server_databases", "server_activities",
 	"hosting_packages", "billing_payments", "billing_orders", "workload_resource_usage",
 	"events", "resources", "invoices", "subscriptions", "services", "products", "customers",
 	"recovery_codes", "mfa_challenges", "service_accounts", "api_tokens",
 	"applications", "ssh_keys", "system_settings", "cron_jobs", "http_checks", "alerts", "backups",
-	"deployments", "domains", "dns_records", "dns_zones", "domain_redirects", "ftp_accounts", "databases",
+	"deployments", "domains", "dns_records", "dns_zones", "domain_redirects", "ftp_accounts", "databases", "allocations",
 	"minecraft_world_backups", "minecraft_schedules", "minecraft_instances",
 	"bot_schedules", "bot_instances", "runtimes", "jobs", "websites",
 	"server_metrics", "server_agent_tokens", "server_registration_tokens", "servers",
@@ -110,13 +112,13 @@ func (e *fixedError) Error() string { return e.s }
 
 // serviceHarness wires a Service over the test DB with controllable engines.
 type serviceHarness struct {
-	Store      *Store
-	Svc        *Service
-	Provision  *fakeProvisioner
-	Suspended  []uuid.UUID
-	Resumed    []uuid.UUID
-	Terminated []uuid.UUID
-	SuspendOK  bool
+	Store       *Store
+	Svc         *Service
+	Provision   *fakeProvisioner
+	Suspended   []uuid.UUID
+	Resumed     []uuid.UUID
+	Terminated  []uuid.UUID
+	SuspendOK   bool
 	TerminateOK bool
 }
 
@@ -516,7 +518,7 @@ func TestGraceWalkSuspendTerminate(t *testing.T) {
 	// Grace = 3 days default; inject 1 day + terminate window 1 day.
 	ctx := context.Background()
 	for k, v := range map[string]string{
-		"billing.grace_days":            "1",
+		"billing.grace_days":             "1",
 		"billing.suspend_terminate_days": "1",
 	} {
 		if _, err := h.Store.Pool.Exec(ctx, `
@@ -640,7 +642,7 @@ func TestGraceWalkSuspendTerminate(t *testing.T) {
 		t.Fatalf("second suspended = %s", sub.ProvisionState)
 	}
 	now = sub.StateChangedAt.Add(25 * time.Hour) // terminate window = 1 day
-	h.Svc.RunRenewals(ctx)                        // -> TERMINATING
+	h.Svc.RunRenewals(ctx)                       // -> TERMINATING
 	sub = h.subscriptionState(t, sub.ID)
 	if sub.ProvisionState != StateTerminating {
 		t.Fatalf("state after terminate window = %s, want TERMINATING", sub.ProvisionState)

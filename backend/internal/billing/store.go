@@ -61,107 +61,107 @@ const (
 // Product is a purchasable item; plan_id links it to a Phase 9 plan
 // (plans <-> products).
 type Product struct {
-	ID          uuid.UUID `json:"id"`
-	Name        string    `json:"name"`
-	Type        string    `json:"type"` // hosting | minecraft | discord | service
-	Description string    `json:"description"`
-	PlanID      *uuid.UUID `json:"plan_id,omitempty"`
-	PlanName    string    `json:"plan_name,omitempty"`
-	PlanKind    string    `json:"plan_kind,omitempty"`
-	PriceMinor  int64     `json:"price_minor"`
-	Currency    string    `json:"currency"`
-	Active      bool      `json:"active"`
+	ID          uuid.UUID       `json:"id"`
+	Name        string          `json:"name"`
+	Type        string          `json:"type"` // hosting | minecraft | discord | service
+	Description string          `json:"description"`
+	PlanID      *uuid.UUID      `json:"plan_id,omitempty"`
+	PlanName    string          `json:"plan_name,omitempty"`
+	PlanKind    string          `json:"plan_kind,omitempty"`
+	PriceMinor  int64           `json:"price_minor"`
+	Currency    string          `json:"currency"`
+	Active      bool            `json:"active"`
 	Config      json.RawMessage `json:"config,omitempty"`
 }
 
 // Order is one purchase attempt (Order -> Payment -> ...).
 type Order struct {
-	ID             uuid.UUID `json:"id"`
-	OrgID          uuid.UUID `json:"organization_id"`
-	SubscriptionID *uuid.UUID `json:"subscription_id,omitempty"`
-	ProductID      uuid.UUID `json:"product_id"`
-	PlanID         *uuid.UUID `json:"plan_id,omitempty"`
-	Status         string    `json:"status"`
-	BillingPeriod  string    `json:"billing_period"`
-	AmountMinor    int64     `json:"amount_minor"`
-	Currency       string    `json:"currency"`
-	Provider       string    `json:"provider"`
-	ProviderRef    string    `json:"provider_ref,omitempty"`
-	PaidAt         *time.Time `json:"paid_at,omitempty"`
+	ID             uuid.UUID       `json:"id"`
+	OrgID          uuid.UUID       `json:"organization_id"`
+	SubscriptionID *uuid.UUID      `json:"subscription_id,omitempty"`
+	ProductID      uuid.UUID       `json:"product_id"`
+	PlanID         *uuid.UUID      `json:"plan_id,omitempty"`
+	Status         string          `json:"status"`
+	BillingPeriod  string          `json:"billing_period"`
+	AmountMinor    int64           `json:"amount_minor"`
+	Currency       string          `json:"currency"`
+	Provider       string          `json:"provider"`
+	ProviderRef    string          `json:"provider_ref,omitempty"`
+	PaidAt         *time.Time      `json:"paid_at,omitempty"`
 	Metadata       json.RawMessage `json:"metadata,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
-	ProductName    string    `json:"product_name,omitempty"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
+	ProductName    string          `json:"product_name,omitempty"`
 }
 
 // Payment is one gateway interaction (capture or recorded failure).
 type Payment struct {
-	ID             uuid.UUID `json:"id"`
-	OrgID          uuid.UUID `json:"organization_id"`
-	OrderID        *uuid.UUID `json:"order_id,omitempty"`
-	InvoiceID      *uuid.UUID `json:"invoice_id,omitempty"`
-	SubscriptionID *uuid.UUID `json:"subscription_id,omitempty"`
-	Provider       string    `json:"provider"`
-	ProviderRef    string    `json:"provider_ref,omitempty"`
-	ProviderEventID string   `json:"provider_event_id,omitempty"`
-	Kind           string    `json:"kind"`
-	Status         string    `json:"status"`
-	AmountMinor    int64     `json:"amount_minor"`
-	Currency       string    `json:"currency"`
-	FailureReason  string    `json:"failure_reason,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
+	ID              uuid.UUID  `json:"id"`
+	OrgID           uuid.UUID  `json:"organization_id"`
+	OrderID         *uuid.UUID `json:"order_id,omitempty"`
+	InvoiceID       *uuid.UUID `json:"invoice_id,omitempty"`
+	SubscriptionID  *uuid.UUID `json:"subscription_id,omitempty"`
+	Provider        string     `json:"provider"`
+	ProviderRef     string     `json:"provider_ref,omitempty"`
+	ProviderEventID string     `json:"provider_event_id,omitempty"`
+	Kind            string     `json:"kind"`
+	Status          string     `json:"status"`
+	AmountMinor     int64      `json:"amount_minor"`
+	Currency        string     `json:"currency"`
+	FailureReason   string     `json:"failure_reason,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
 }
 
 // Invoice is the Phase 2 invoice row + Phase 10 links.
 type Invoice struct {
-	ID             uuid.UUID `json:"id"`
-	CustomerID     uuid.UUID `json:"customer_id"`
-	OrgID          uuid.UUID `json:"organization_id"`
-	Number         string    `json:"number"`
-	Status         string    `json:"status"`
-	Currency       string    `json:"currency"`
-	SubtotalMinor  int64     `json:"subtotal_minor"`
-	TaxMinor       int64     `json:"tax_minor"`
-	TotalMinor     int64     `json:"total_minor"`
+	ID             uuid.UUID       `json:"id"`
+	CustomerID     uuid.UUID       `json:"customer_id"`
+	OrgID          uuid.UUID       `json:"organization_id"`
+	Number         string          `json:"number"`
+	Status         string          `json:"status"`
+	Currency       string          `json:"currency"`
+	SubtotalMinor  int64           `json:"subtotal_minor"`
+	TaxMinor       int64           `json:"tax_minor"`
+	TotalMinor     int64           `json:"total_minor"`
 	LineItems      json.RawMessage `json:"line_items"`
-	Kind           string    `json:"kind"`
-	SubscriptionID *uuid.UUID `json:"subscription_id,omitempty"`
-	IssuedAt       *time.Time `json:"issued_at,omitempty"`
-	DueAt          *time.Time `json:"due_at,omitempty"`
-	PaidAt         *time.Time `json:"paid_at,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
+	Kind           string          `json:"kind"`
+	SubscriptionID *uuid.UUID      `json:"subscription_id,omitempty"`
+	IssuedAt       *time.Time      `json:"issued_at,omitempty"`
+	DueAt          *time.Time      `json:"due_at,omitempty"`
+	PaidAt         *time.Time      `json:"paid_at,omitempty"`
+	CreatedAt      time.Time       `json:"created_at"`
 }
 
 // Subscription is the provisioned service with its verbatim state.
 type Subscription struct {
-	ID                uuid.UUID `json:"id"`
-	CustomerID        uuid.UUID `json:"customer_id"`
-	OrgID             uuid.UUID `json:"organization_id"`
+	ID                uuid.UUID  `json:"id"`
+	CustomerID        uuid.UUID  `json:"customer_id"`
+	OrgID             uuid.UUID  `json:"organization_id"`
 	PlanID            *uuid.UUID `json:"plan_id,omitempty"`
 	ProductID         *uuid.UUID `json:"product_id,omitempty"`
-	Status            string    `json:"status"` // legacy Phase 2 projection
-	ProvisionState    State     `json:"provision_state"`
-	BillingPeriod     string    `json:"billing_period"`
-	PeriodStart       time.Time `json:"period_start"`
-	PeriodEnd         time.Time `json:"period_end"`
-	CancelAtPeriodEnd bool      `json:"cancel_at_period_end"`
-	StateChangedAt    time.Time `json:"state_changed_at"`
-	WorkloadKind      string    `json:"workload_kind"`
+	Status            string     `json:"status"` // legacy Phase 2 projection
+	ProvisionState    State      `json:"provision_state"`
+	BillingPeriod     string     `json:"billing_period"`
+	PeriodStart       time.Time  `json:"period_start"`
+	PeriodEnd         time.Time  `json:"period_end"`
+	CancelAtPeriodEnd bool       `json:"cancel_at_period_end"`
+	StateChangedAt    time.Time  `json:"state_changed_at"`
+	WorkloadKind      string     `json:"workload_kind"`
 	WebsiteID         *uuid.UUID `json:"website_id,omitempty"`
 	BotID             *uuid.UUID `json:"bot_id,omitempty"`
 	InstanceID        *uuid.UUID `json:"instance_id,omitempty"`
 	GraceUntil        *time.Time `json:"grace_until,omitempty"`
 	// RenewalAnchor is the period_end whose renewal was last attempted
 	// (internal idempotency anchor; not part of the API surface).
-	RenewalAnchor  *time.Time `json:"-"`
+	RenewalAnchor     *time.Time `json:"-"`
 	LastInvoiceID     *uuid.UUID `json:"last_invoice_id,omitempty"`
 	LastJobID         *uuid.UUID `json:"last_job_id,omitempty"`
-	LastError         string    `json:"last_error,omitempty"`
-	ProvisionAttempts int       `json:"provision_attempts"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
-	ProductName       string    `json:"product_name,omitempty"`
-	PlanName          string    `json:"plan_name,omitempty"`
+	LastError         string     `json:"last_error,omitempty"`
+	ProvisionAttempts int        `json:"provision_attempts"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
+	ProductName       string     `json:"product_name,omitempty"`
+	PlanName          string     `json:"plan_name,omitempty"`
 }
 
 // Customer is the billing profile of an organization (Phase 2 table).
@@ -252,16 +252,16 @@ func (s *Store) PaymentMethodRaw(ctx context.Context, orgID uuid.UUID) (*Payment
 
 // OrderInput is a new order.
 type OrderInput struct {
-	OrgID         uuid.UUID
-	ProductID     uuid.UUID
-	PlanID        *uuid.UUID
-	Period        string
-	AmountMinor   int64
-	Currency      string
-	Provider      string
-	Metadata      map[string]any
+	OrgID             uuid.UUID
+	ProductID         uuid.UUID
+	PlanID            *uuid.UUID
+	Period            string
+	AmountMinor       int64
+	Currency          string
+	Provider          string
+	Metadata          map[string]any
 	SubscriptionState State // initial machine state (PENDING)
-	WorkloadKind  string
+	WorkloadKind      string
 	// PeriodStart is injected by the service clock (tests inject a fake now).
 	PeriodStart time.Time
 }
@@ -450,17 +450,17 @@ func (s *Store) CancelOrder(ctx context.Context, orgID, orderID uuid.UUID) error
 
 // PaymentInput is one payment row to record.
 type PaymentInput struct {
-	OrgID          uuid.UUID
-	OrderID        *uuid.UUID
-	InvoiceID      *uuid.UUID
-	SubscriptionID *uuid.UUID
-	Provider       string
-	ProviderRef    string
+	OrgID           uuid.UUID
+	OrderID         *uuid.UUID
+	InvoiceID       *uuid.UUID
+	SubscriptionID  *uuid.UUID
+	Provider        string
+	ProviderRef     string
 	ProviderEventID string
-	Kind           string
-	Status         string
-	Amount         Money
-	FailureReason  string
+	Kind            string
+	Status          string
+	Amount          Money
+	FailureReason   string
 }
 
 // RecordPayment inserts a payment row. The (provider, provider_event_id)
@@ -1184,20 +1184,20 @@ func orEmptyMap(m map[string]any) map[string]any {
 // PlanRow is the hosting_packages projection billing needs (Phase 9 matrix
 // summary for the WHM plans view).
 type PlanRow struct {
-	ID                uuid.UUID `json:"id"`
-	Name              string    `json:"name"`
-	Kind              string    `json:"kind"`
-	PriceMinor        int64     `json:"price_minor"`
-	MaxWebsites       int       `json:"max_websites"`
-	MaxDatabases      int       `json:"max_databases"`
-	MaxDiskMB         int64     `json:"max_disk_mb"`
-	MemoryLimitMB     int64     `json:"memory_limit_mb"`
-	CPUCores          float64   `json:"cpu_cores"`
-	MaxBandwidthMB    int64     `json:"max_bandwidth_mb"`
-	MaxPorts          int       `json:"max_ports"`
-	MaxBackups        int       `json:"max_backups"`
-	Default           bool      `json:"is_default"`
-	ProductCount      int       `json:"product_count"`
+	ID             uuid.UUID `json:"id"`
+	Name           string    `json:"name"`
+	Kind           string    `json:"kind"`
+	PriceMinor     int64     `json:"price_minor"`
+	MaxWebsites    int       `json:"max_websites"`
+	MaxDatabases   int       `json:"max_databases"`
+	MaxDiskMB      int64     `json:"max_disk_mb"`
+	MemoryLimitMB  int64     `json:"memory_limit_mb"`
+	CPUCores       float64   `json:"cpu_cores"`
+	MaxBandwidthMB int64     `json:"max_bandwidth_mb"`
+	MaxPorts       int       `json:"max_ports"`
+	MaxBackups     int       `json:"max_backups"`
+	Default        bool      `json:"is_default"`
+	ProductCount   int       `json:"product_count"`
 }
 
 // ListPlans returns the plan matrix + how many products link to each plan.

@@ -14,8 +14,6 @@ package api
 //
 // The provision dispatch maps product type -> workload engine:
 //   hosting   -> web account   (websites.Store + provision_website job)
-//   minecraft -> MC instance   (minecraft.Store + mc_install job)
-//   discord   -> Discord bot   (discord.Store + bot_install job)
 // Each engine applies the Phase 9 plan limits at creation (count gates +
 // the engine numbers that ride the job payloads).
 // ============================================================================
@@ -37,10 +35,8 @@ import (
 	agentpkg "github.com/epicbyte/epicpanel/backend/internal/agent"
 	"github.com/epicbyte/epicpanel/backend/internal/audit"
 	"github.com/epicbyte/epicpanel/backend/internal/billing"
-	"github.com/epicbyte/epicpanel/backend/internal/discord"
 	"github.com/epicbyte/epicpanel/backend/internal/httpapi"
 	"github.com/epicbyte/epicpanel/backend/internal/jobs"
-	"github.com/epicbyte/epicpanel/backend/internal/minecraft"
 	"github.com/epicbyte/epicpanel/backend/internal/organizations"
 	"github.com/epicbyte/epicpanel/backend/internal/packages"
 	"github.com/epicbyte/epicpanel/backend/internal/resources"
@@ -188,10 +184,6 @@ func (s *Server) billingProvision(ctx context.Context, svc *billing.Service, sub
 	switch sub.WorkloadKind {
 	case string(billing.KindWeb):
 		return s.provisionWebAccount(ctx, svc, sub, product)
-	case string(billing.KindMinecraft):
-		return s.provisionMinecraft(ctx, svc, sub, product)
-	case string(billing.KindDiscord):
-		return s.provisionDiscordBot(ctx, svc, sub, product)
 	case string(billing.KindService):
 		// Services have no node workload: the order is fulfilled by an
 		// operator. The subscription stays PROVISIONING until an admin
@@ -236,21 +228,21 @@ func (s *Server) provisionWebAccount(ctx context.Context, svc *billing.Service, 
 		return err
 	}
 	wsStore := &websites.Store{Pool: s.Pool}
-	createdBy := uuid.Nil
+	createdBy := s.provisionActor(ctx, orgID)
 	ws, unixUser, err := wsStore.Create(ctx, orgID, serverID, createdBy, name, primaryDomain, runtime, runtimeVersion, "")
 	if err != nil {
 		return err
 	}
 	payload := websites.DesiredPayload{
-		WebsiteID:     ws.ID,
-		Organization:  orgID.String(),
-		Name:          ws.Name,
-		UnixUser:      unixUser,
-		Runtime:       string(ws.Runtime),
+		WebsiteID:      ws.ID,
+		Organization:   orgID.String(),
+		Name:           ws.Name,
+		UnixUser:       unixUser,
+		Runtime:        string(ws.Runtime),
 		RuntimeVersion: ws.RuntimeVersion,
-		WebServer:     ws.WebServer,
-		DocumentRoot:  websites.DocumentRootFor(ws.ID),
-		PrimaryDomain: ws.PrimaryDomain,
+		WebServer:      ws.WebServer,
+		DocumentRoot:   websites.DocumentRootFor(ws.ID),
+		PrimaryDomain:  ws.PrimaryDomain,
 	}
 	// FPM pool sizing from the SAME Phase 9 engine the usage bars display.
 	if limits, err := s.ResourceLimits.LimitsForOrg(ctx, orgID); err == nil {
@@ -291,232 +283,27 @@ func (s *Server) pickProvisionServer(ctx context.Context, serverIDParam, runtime
 	return s.Servers.AutoPickServer(ctx, rtFilter, version)
 }
 
-// --- minecraft engine --------------------------------------------------------
-
-func (s *Server) provisionMinecraft(ctx context.Context, svc *billing.Service, sub *billing.Subscription, product *billing.Product) error {
-	// Phase 9 gates: the org plan must be a Minecraft plan and the port
-	// count must fit (fail closed).
-	if s.ResourceLimits == nil {
-		return errors.New("plan limits unavailable; minecraft provisioning blocked")
-	}
-	plan, err := s.ResourceLimits.PlanForOrg(ctx, sub.OrgID)
-	if err != nil {
-		return errors.New("plan limits unavailable; minecraft provisioning blocked")
-	}
-	if plan.Kind != string(resources.KindMinecraft) {
-		return errors.New("the purchased plan is not a Minecraft plan")
-	}
-	limits, err := s.ResourceLimits.LimitsForOrg(ctx, sub.OrgID)
-	if err != nil {
-		return errors.New("plan limits unavailable; minecraft provisioning blocked")
-	}
-	mcStore := &minecraft.Store{Pool: s.Pool}
-	count, err := mcStore.CountForOrg(ctx, sub.OrgID)
-	if err != nil {
-		return err
-	}
-	if err := resources.CheckCount(limits, resources.ResPorts, count); err != nil {
-		return err
-	}
-
-	provider := cfgString(product, "provider", "vanilla")
-	version := cfgString(product, "version", "")
-	if version == "" {
-		for _, o := range minecraft.ProviderOffers() {
-			if o.Provider == provider && o.Default != "" {
-				version = o.Default
-				break
-			}
-		}
-	}
-	javaMajor, verr := minecraft.ValidateProviderVersion(provider, version)
-	if verr != nil {
-		return verr
-	}
-	name := cfgString(product, "instance_prefix", "mc-"+sub.ID.String()[:8])
-	serverID, err := s.pickProvisionServer(ctx, cfgString(product, "server_id", ""), "minecraft", "")
-	if err != nil {
-		return err
-	}
-	gamePort, rconPort, err := s.allocateMCPorts(ctx, serverID)
-	if err != nil {
-		return err
-	}
-	rconPass, err := minecraft.GenerateRCONPassword()
-	if err != nil {
-		return err
-	}
-	rconEnc, err := minecraft.EncryptRCONPassword(rconPass)
-	if err != nil {
-		return err
-	}
-	inst, err := mcStore.Create(ctx, sub.OrgID, serverID, uuid.Nil, name, provider, version,
-		javaMajor, gamePort, rconPort, minecraft.XmxForPlan(plan.MemoryLimitMB),
-		"on-failure", 5, []byte("{}"), rconEnc)
-	if err != nil {
-		return err
-	}
-	payload := minecraft.MCInstallPayload{
-		InstanceID: inst.ID.String(), Provider: inst.Provider, Version: inst.Version,
-		JavaMajor: inst.JavaMajor, Port: inst.Port, RCONPort: inst.RCONPort,
-		RCONPassEnc: rconEnc, XmxMB: inst.XmxMB, EULA: true,
-	}
-	job, err := mcEnqueueIdempotent(ctx, s.Jobs, serverID, inst.ID, jobs.Type(minecraft.JobMCInstall), payload,
-		"billingprovision-"+sub.ID.String())
-	if err != nil {
-		return err
-	}
-	instID := inst.ID
-	jobID := job.ID
-	return svc.Store.SetSubscriptionWorkload(ctx, sub.ID, sub.WorkloadKind, nil, nil, &instID, &jobID, sub.ProvisionAttempts+1)
-}
-
-// allocateMCPorts mirrors the Phase 7 API port allocation (DB-driven used set).
-func (s *Server) allocateMCPorts(ctx context.Context, serverID uuid.UUID) (int, int, error) {
-	rows, err := s.Pool.Query(ctx, `
-		SELECT port, rcon_port FROM minecraft_instances
-		WHERE server_id = $1 AND status <> 'deleted'`, serverID)
-	if err != nil {
-		return 0, 0, err
-	}
-	defer rows.Close()
-	used := map[int]bool{}
-	for rows.Next() {
-		var g, rc int
-		if err := rows.Scan(&g, &rc); err == nil {
-			used[g] = true
-			used[rc] = true
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return 0, 0, err
-	}
-	gamePort, ok := minecraft.AllocPort(used)
-	if !ok {
-		return 0, 0, errors.New("no free Minecraft ports left on this server")
-	}
-	used[gamePort] = true
-	rconPort, ok := minecraft.AllocRCONPort(used)
-	if !ok {
-		return 0, 0, errors.New("no free RCON ports left on this server")
-	}
-	return gamePort, rconPort, nil
-}
-
-// --- discord bot engine -------------------------------------------------------
-
-func (s *Server) provisionDiscordBot(ctx context.Context, svc *billing.Service, sub *billing.Subscription, product *billing.Product) error {
-	// Phase 9 gates (same as the Phase 8 API create path).
-	if s.ResourceLimits == nil {
-		return errors.New("plan limits unavailable; bot provisioning blocked")
-	}
-	plan, err := s.ResourceLimits.PlanForOrg(ctx, sub.OrgID)
-	if err != nil {
-		return errors.New("plan limits unavailable; bot provisioning blocked")
-	}
-	if plan.Kind != string(resources.KindDiscord) {
-		return errors.New("the purchased plan is not a Discord bot plan")
-	}
-	botStore := &discord.Store{Pool: s.Pool}
-	count, err := botStore.CountForOrg(ctx, sub.OrgID)
-	if err != nil {
-		return err
-	}
-	if plan.MaxWebsites > 0 && count >= plan.MaxWebsites {
-		return errors.New("plan limit reached: " + plan.Name + " allows " + strconv.Itoa(plan.MaxWebsites) + " bot(s)")
-	}
-
-	runtime := cfgString(product, "runtime", "node")
-	version := cfgString(product, "runtime_version", "")
-	if version == "" {
-		// Resolve the runtime's default so auto-placement can filter on it.
-		if rt, rerr := discord.RuntimeFor(runtime); rerr == nil {
-			version = rt.DefaultVersion()
-		}
-	}
-	serverID, err := s.pickProvisionServer(ctx, cfgString(product, "server_id", ""), runtime, version)
-	if err != nil {
-		return err
-	}
-	startupFile := cfgString(product, "startup_file", "index.js")
-	name := cfgString(product, "bot_prefix", "bot-"+sub.ID.String()[:8])
-	// Env vars are NOT provisioned from the order: secrets enter through
-	// the Phase 8 write-only env endpoint, never through billing records.
-	bot, err := discord.CreateBot(ctx, botStore, sub.OrgID, serverID, uuid.Nil, discord.CreateInput{
-		Name: name, Runtime: runtime, RuntimeVersion: version, StartupFile: startupFile,
-	})
-	if err != nil {
-		if discord.IsValidationError(err) {
-			return err
-		}
-		return err
-	}
-	payload := discord.BotInstallPayload{BotID: bot.ID.String(), Runtime: bot.Runtime, RuntimeVersion: bot.RuntimeVer}
-	job, err := billingBotEnqueue(ctx, s.Jobs, serverID, bot.ID, jobs.Type(discord.JobBotInstall), payload,
-		"billingprovision-"+sub.ID.String())
-	if err != nil {
-		return err
-	}
-	botID := bot.ID
-	jobID := job.ID
-	return svc.Store.SetSubscriptionWorkload(ctx, sub.ID, sub.WorkloadKind, nil, &botID, nil, &jobID, sub.ProvisionAttempts+1)
-}
-
-// billingBotEnqueue inserts a bot job with an idempotency key (the billing
-// replay anchor). Mirrors the Phase 8 enqueue seam.
-func billingBotEnqueue(ctx context.Context, js *jobs.Store, serverID, botID uuid.UUID, jobType jobs.Type, payload any, key string) (*jobs.Job, error) {
-	payloadJSON, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-	row := js.Pool.QueryRow(ctx, `
-		INSERT INTO jobs (server_id, bot_id, type, payload, idempotency_key)
-		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL AND status IN ('pending', 'running')
-		DO UPDATE SET updated_at = now()
-		RETURNING id, server_id, website_id, bot_id, type, status, payload, result, error,
-			progress, progress_step, attempts, max_attempts, idempotency_key, claimed_at,
-			lease_expires_at, finished_at, created_at
-	`, serverID, botID, jobType, payloadJSON, key)
-	var j jobs.Job
-	var wsID, jobBotID *uuid.UUID
-	if err := row.Scan(&j.ID, &j.ServerID, &wsID, &jobBotID, &j.Type, &j.Status, &j.Payload, &j.Result,
-		&j.Error, &j.Progress, &j.ProgressStep, &j.Attempts, &j.MaxAttempts, &j.IdempotencyKey,
-		&j.ClaimedAt, &j.LeaseExpiresAt, &j.FinishedAt, &j.CreatedAt); err != nil {
-		return nil, err
-	}
-	return &j, nil
-}
-
-// billingMCEnqueue inserts a minecraft job with an idempotency key.
-func billingMCEnqueue(ctx context.Context, js *jobs.Store, serverID, instanceID uuid.UUID, jobType jobs.Type, payload any, key string) (*jobs.Job, error) {
-	payloadJSON, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-	row := js.Pool.QueryRow(ctx, `
-		INSERT INTO jobs (server_id, minecraft_id, type, payload, idempotency_key)
-		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL AND status IN ('pending', 'running')
-		DO UPDATE SET updated_at = now()
-		RETURNING id
-	`, serverID, instanceID, jobType, payloadJSON, key)
-	var jobID uuid.UUID
-	if err := row.Scan(&jobID); err != nil {
-		return nil, err
-	}
-	return &jobs.Job{ID: jobID}, nil
+// provisionActor resolves the user credited as the creator of a
+// system-provisioned workload: the organization owner. Billing runs without a
+// user session, but every workload's created_by is a NOT NULL FK to users, so
+// a real actor must be recorded.
+func (s *Server) provisionActor(ctx context.Context, orgID uuid.UUID) uuid.UUID {
+	var id uuid.UUID
+	_ = s.Pool.QueryRow(ctx, `
+		SELECT user_id FROM organization_members
+		WHERE organization_id = $1
+		ORDER BY CASE WHEN role = 'owner' THEN 0 ELSE 1 END
+		LIMIT 1`, orgID).Scan(&id)
+	return id
 }
 
 // --- suspend / resume / terminate engines -------------------------------------
 // Suspend semantics per workload (verbatim from the phase contract):
-// web = site offline (suspend_website), minecraft = stop (mc_stop),
-// discord = stop (bot_stop). Existing lifecycle jobs only — no new side
-// channels — and every step is reversible until TERMINATED.
+// web = site offline (suspend_website). Existing lifecycle jobs only — no new
+// side channels — and every step is reversible until TERMINATED.
 
 func (s *Server) billingSuspend(ctx context.Context, sub *billing.Subscription) error {
-	switch {
-	case sub.WebsiteID != nil:
+	if sub.WebsiteID != nil {
 		ws, err := (&websites.Store{Pool: s.Pool}).GetByIDAny(ctx, *sub.WebsiteID)
 		if err != nil {
 			return err
@@ -527,35 +314,12 @@ func (s *Server) billingSuspend(ctx context.Context, sub *billing.Subscription) 
 		_, err = s.Jobs.EnqueueIdempotent(ctx, ws.ServerID, &ws.ID, jobs.TypeSuspendWebsite,
 			websites.SuspendPayload{WebsiteID: ws.ID.String()}, "suspend_"+ws.ID.String())
 		return err
-	case sub.BotID != nil:
-		bots := &discord.Store{Pool: s.Pool}
-		bot, err := bots.GetByIDAny(ctx, *sub.BotID)
-		if err != nil {
-			return err
-		}
-		_ = bots.SetDesiredState(ctx, bot.ID, discord.DesiredStopped)
-		_ = bots.MarkStopping(ctx, bot.ID)
-		_, err = billingBotEnqueue(ctx, s.Jobs, bot.ServerID, bot.ID, jobs.Type(discord.JobBotStop),
-			discord.BotIDPayload{BotID: bot.ID.String()}, "billingsuspend-"+sub.ID.String())
-		return err
-	case sub.InstanceID != nil:
-		mcs := &minecraft.Store{Pool: s.Pool}
-		inst, err := mcs.GetByIDAny(ctx, *sub.InstanceID)
-		if err != nil {
-			return err
-		}
-		_ = mcs.SetDesiredState(ctx, inst.ID, "stopped")
-		_ = mcs.MarkStopping(ctx, inst.ID)
-		_, err = billingMCEnqueue(ctx, s.Jobs, inst.ServerID, inst.ID, jobs.Type(minecraft.JobMCStop),
-			minecraft.MCIDPayload{InstanceID: inst.ID.String()}, "billingsuspend-"+sub.ID.String())
-		return err
 	}
 	return errors.New("subscription has no workload to suspend")
 }
 
 func (s *Server) billingResume(ctx context.Context, sub *billing.Subscription) error {
-	switch {
-	case sub.WebsiteID != nil:
+	if sub.WebsiteID != nil {
 		ws, err := (&websites.Store{Pool: s.Pool}).GetByIDAny(ctx, *sub.WebsiteID)
 		if err != nil {
 			return err
@@ -566,30 +330,6 @@ func (s *Server) billingResume(ctx context.Context, sub *billing.Subscription) e
 		_, err = s.Jobs.EnqueueIdempotent(ctx, ws.ServerID, &ws.ID, jobs.TypeResumeWebsite,
 			websites.ResumePayload{WebsiteID: ws.ID.String()}, "resume_"+ws.ID.String())
 		return err
-	case sub.BotID != nil:
-		bots := &discord.Store{Pool: s.Pool}
-		row, err := bots.GetBotRowAny(ctx, *sub.BotID)
-		if err != nil {
-			return err
-		}
-		_ = bots.SetDesiredState(ctx, row.Bot.ID, discord.DesiredRunning)
-		payload := s.botStartPayloadFor(ctx, bots, &row.Bot)
-		if payload == nil {
-			return errors.New("bot row unreadable for resume")
-		}
-		_, err = billingBotEnqueue(ctx, s.Jobs, row.Bot.ServerID, row.Bot.ID, jobs.Type(discord.JobBotStart),
-			*payload, "billingresume-"+sub.ID.String())
-		return err
-	case sub.InstanceID != nil:
-		mcs := &minecraft.Store{Pool: s.Pool}
-		row, err := mcs.GetRowAny(ctx, *sub.InstanceID)
-		if err != nil {
-			return err
-		}
-		_ = mcs.SetDesiredState(ctx, row.ID, "running")
-		_, err = billingMCEnqueue(ctx, s.Jobs, row.ServerID, row.ID, jobs.Type(minecraft.JobMCStart),
-			s.mcLifecyclePayload(row), "billingresume-"+sub.ID.String())
-		return err
 	}
 	return errors.New("subscription has no workload to resume")
 }
@@ -599,8 +339,7 @@ func (s *Server) billingResume(ctx context.Context, sub *billing.Subscription) e
 // so the backup runs first. Phase 11's dedicated terminate_backup hook job
 // will replace the website create_backup call when it lands.
 func (s *Server) billingTerminate(ctx context.Context, sub *billing.Subscription) error {
-	switch {
-	case sub.WebsiteID != nil:
+	if sub.WebsiteID != nil {
 		ws, err := (&websites.Store{Pool: s.Pool}).GetByIDAny(ctx, *sub.WebsiteID)
 		if err != nil {
 			return err
@@ -616,47 +355,17 @@ func (s *Server) billingTerminate(ctx context.Context, sub *billing.Subscription
 			}
 		}
 		payload := websites.DesiredPayload{
-			WebsiteID:     ws.ID,
-			Organization:  ws.Organization.String(),
-			Name:          ws.Name,
-			UnixUser:      ws.UnixUser,
-			Runtime:       string(ws.Runtime),
+			WebsiteID:      ws.ID,
+			Organization:   ws.Organization.String(),
+			Name:           ws.Name,
+			UnixUser:       ws.UnixUser,
+			Runtime:        string(ws.Runtime),
 			RuntimeVersion: ws.RuntimeVersion,
-			WebServer:     ws.WebServer,
-			PrimaryDomain: ws.PrimaryDomain,
+			WebServer:      ws.WebServer,
+			PrimaryDomain:  ws.PrimaryDomain,
 		}
 		if _, derr := s.Jobs.EnqueueIdempotent(ctx, ws.ServerID, &ws.ID, jobs.TypeDeleteWebsite, payload,
 			"billingdelete-"+sub.ID.String()); derr != nil {
-			return derr
-		}
-		return nil
-	case sub.BotID != nil:
-		bots := &discord.Store{Pool: s.Pool}
-		bot, err := bots.GetByIDAny(ctx, *sub.BotID)
-		if err != nil {
-			return err
-		}
-		_ = bots.MarkDeleting(ctx, bot.ID)
-		if _, derr := billingBotEnqueue(ctx, s.Jobs, bot.ServerID, bot.ID, jobs.Type(discord.JobBotDelete),
-			discord.BotIDPayload{BotID: bot.ID.String()}, "billingdelete-"+sub.ID.String()); derr != nil {
-			return derr
-		}
-		return nil
-	case sub.InstanceID != nil:
-		mcs := &minecraft.Store{Pool: s.Pool}
-		inst, err := mcs.GetByIDAny(ctx, *sub.InstanceID)
-		if err != nil {
-			return err
-		}
-		// Backup-first: world snapshot before the irreversible delete.
-		if _, berr := billingMCEnqueue(ctx, s.Jobs, inst.ServerID, inst.ID, jobs.Type(minecraft.JobMCBackupWorld),
-			minecraft.MCBackupPayload{InstanceID: inst.ID.String(), BackupName: "pre-terminate"},
-			"billingtermbackup-"+sub.ID.String()); berr != nil {
-			slog.Warn("billing: pre-terminate world backup enqueue failed", "instance", inst.ID, "err", berr)
-		}
-		_ = mcs.MarkDeleting(ctx, inst.ID)
-		if _, derr := billingMCEnqueue(ctx, s.Jobs, inst.ServerID, inst.ID, jobs.Type(minecraft.JobMCDelete),
-			minecraft.MCIDPayload{InstanceID: inst.ID.String()}, "billingdelete-"+sub.ID.String()); derr != nil {
 			return derr
 		}
 		return nil
@@ -783,12 +492,6 @@ func subView(sub *billing.Subscription) map[string]any {
 	if sub.WebsiteID != nil {
 		out["website_id"] = *sub.WebsiteID
 	}
-	if sub.BotID != nil {
-		out["bot_id"] = *sub.BotID
-	}
-	if sub.InstanceID != nil {
-		out["instance_id"] = *sub.InstanceID
-	}
 	return out
 }
 
@@ -828,11 +531,11 @@ func (h *billingHandler) overview(w http.ResponseWriter, r *http.Request) {
 		masked = map[string]any{"provider": pm.Provider, "brand": pm.Brand, "last4": pm.Last4, "configured": pm.TokenEnc != ""}
 	}
 	httpapi.WriteJSON(w, http.StatusOK, map[string]any{
-		"subscriptions":   out,
-		"payment_method":  masked,
-		"providers":       billing.ProviderNames(),
-		"grace_days":      h.svc.SettingInt(r.Context(), "billing.grace_days", billing.DefaultGraceDays),
-		"suspend_days":    h.svc.SettingInt(r.Context(), "billing.suspend_terminate_days", billing.DefaultSuspendThenDays),
+		"subscriptions":  out,
+		"payment_method": masked,
+		"providers":      billing.ProviderNames(),
+		"grace_days":     h.svc.SettingInt(r.Context(), "billing.grace_days", billing.DefaultGraceDays),
+		"suspend_days":   h.svc.SettingInt(r.Context(), "billing.suspend_terminate_days", billing.DefaultSuspendThenDays),
 	})
 }
 
@@ -1213,9 +916,9 @@ func (h *billingHandler) adminCreateProduct(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	switch req.Type {
-	case "hosting", "minecraft", "discord", "service":
+	case "hosting", "service":
 	default:
-		httpapi.RespondError(w, httpapi.ErrValidation("type must be hosting, minecraft, discord or service"))
+		httpapi.RespondError(w, httpapi.ErrValidation("type must be hosting or service"))
 		return
 	}
 	if req.Name == "" {

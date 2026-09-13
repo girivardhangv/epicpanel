@@ -151,6 +151,7 @@ func (s *Server) Handler() http.Handler {
 		Websites:       s.Websites,
 		Jobs:           s.Jobs,
 		Configs:        &websites.ConfigStore{Pool: s.Pool},
+		PHPSettings:    &websites.PHPSettingsStore{Pool: s.Pool},
 		Orgs:           s.Orgs,
 		Servers:        s.Servers,
 		Audit:          s.Audit,
@@ -476,10 +477,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /readyz", s.readyz)
 	mux.HandleFunc("GET /v1/openapi.json", s.openAPI)
 
-	// Wave phases 6/7/8/10/11/13 (self-contained registrations; wave contract).
+	// Wave phases 6/10/11/13 (self-contained registrations; wave contract).
 	registerPhase6(s, mux)
-	registerPhase7(s, mux)
-	registerPhase8(s, mux)
 	registerPhase10(s, mux)
 	registerPhase11(s, mux)
 	registerPhase13(s, mux)
@@ -796,12 +795,11 @@ func (g packageGate) CheckSiteAllowed(ctx context.Context, orgID uuid.UUID, runt
 	if !isSub && p.MaxAddonDomains > 0 && u.AddonDomains >= p.MaxAddonDomains {
 		return errors.New("package limit reached: " + p.Name + " allows " + itoa(p.MaxAddonDomains) + " addon domains")
 	}
-	for _, r := range p.AllowedRuntimes {
-		if r == runtime {
-			return nil
-		}
-	}
-	return errors.New("runtime '" + runtime + "' is not allowed on the " + p.Name + " package")
+	// Packages specify RESOURCES, not software. The runtime is a property of
+	// the website the customer creates, not a plan gate (cPanel-style): the
+	// allowed_runtimes list is advisory/UI-only and never blocks creation.
+	_ = runtime
+	return nil
 }
 
 // dbGate adapts packages.Store to databases.DBLimits.

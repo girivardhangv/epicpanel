@@ -21,6 +21,7 @@ var (
 type Package struct {
 	ID              uuid.UUID `json:"id"`
 	Name            string    `json:"name"`
+	Kind            string    `json:"kind"`
 	MaxWebsites     int       `json:"max_websites"`
 	MaxDatabases    int       `json:"max_databases"`
 	MaxDiskMB       int       `json:"max_disk_mb"`
@@ -29,6 +30,11 @@ type Package struct {
 	MaxAddonDomains int       `json:"max_addon_domains"`
 	MaxSubdomains   int       `json:"max_subdomains"`
 	AllowedRuntimes []string  `json:"allowed_runtimes"`
+	MaxBandwidthMB  int64     `json:"max_bandwidth_mb"`
+	IOWeight        int       `json:"io_weight"`
+	MaxProcesses    int       `json:"max_processes"`
+	MaxPorts        int       `json:"max_ports"`
+	MaxBackups      int       `json:"max_backups"`
 	PriceMonthly    int       `json:"price_monthly_cents"`
 	IsDefault       bool      `json:"is_default"`
 	CreatedAt       time.Time `json:"created_at"`
@@ -47,12 +53,16 @@ type Store struct {
 	Pool *pgxpool.Pool
 }
 
-const cols = `id, name, max_websites, max_databases, max_disk_mb, memory_limit_mb, cpu_cores, max_addon_domains, max_subdomains, allowed_runtimes, price_monthly_cents, is_default, created_at`
+const cols = `id, name, kind, max_websites, max_databases, max_disk_mb, memory_limit_mb, cpu_cores,
+	max_addon_domains, max_subdomains, allowed_runtimes, max_bandwidth_mb, io_weight, max_processes,
+	max_ports, max_backups, price_monthly_cents, is_default, created_at`
 
 func scanRow(row pgx.Row) (*Package, error) {
 	var p Package
-	err := row.Scan(&p.ID, &p.Name, &p.MaxWebsites, &p.MaxDatabases, &p.MaxDiskMB, &p.MemoryLimitMB,
-		&p.CPUCores, &p.MaxAddonDomains, &p.MaxSubdomains, &p.AllowedRuntimes, &p.PriceMonthly, &p.IsDefault, &p.CreatedAt)
+	err := row.Scan(&p.ID, &p.Name, &p.Kind, &p.MaxWebsites, &p.MaxDatabases, &p.MaxDiskMB, &p.MemoryLimitMB,
+		&p.CPUCores, &p.MaxAddonDomains, &p.MaxSubdomains, &p.AllowedRuntimes,
+		&p.MaxBandwidthMB, &p.IOWeight, &p.MaxProcesses, &p.MaxPorts, &p.MaxBackups,
+		&p.PriceMonthly, &p.IsDefault, &p.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -97,6 +107,7 @@ func (s *Store) DefaultPackage(ctx context.Context) (*Package, error) {
 
 type CreateInput struct {
 	Name            string
+	Kind            string
 	MaxWebsites     int
 	MaxDatabases    int
 	MaxDiskMB       int
@@ -105,16 +116,34 @@ type CreateInput struct {
 	MaxAddonDomains int
 	MaxSubdomains   int
 	AllowedRuntimes []string
+	MaxBandwidthMB  int64
+	IOWeight        int
+	MaxProcesses    int
+	MaxPorts        int
+	MaxBackups      int
 	PriceMonthly    int
+}
+
+func normKind(k string) string {
+	switch k {
+	case "minecraft", "discord":
+		return k
+	default:
+		return "web"
+	}
 }
 
 func (s *Store) Create(ctx context.Context, in CreateInput) (*Package, error) {
 	row := s.Pool.QueryRow(ctx, `
 		INSERT INTO hosting_packages
-			(name, max_websites, max_databases, max_disk_mb, memory_limit_mb, cpu_cores, max_addon_domains, max_subdomains, allowed_runtimes, price_monthly_cents)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			(name, kind, max_websites, max_databases, max_disk_mb, memory_limit_mb, cpu_cores,
+			 max_addon_domains, max_subdomains, allowed_runtimes, max_bandwidth_mb, io_weight,
+			 max_processes, max_ports, max_backups, price_monthly_cents)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
 		RETURNING `+cols,
-		in.Name, in.MaxWebsites, in.MaxDatabases, in.MaxDiskMB, in.MemoryLimitMB, in.CPUCores, in.MaxAddonDomains, in.MaxSubdomains, in.AllowedRuntimes, in.PriceMonthly,
+		in.Name, normKind(in.Kind), in.MaxWebsites, in.MaxDatabases, in.MaxDiskMB, in.MemoryLimitMB, in.CPUCores,
+		in.MaxAddonDomains, in.MaxSubdomains, in.AllowedRuntimes, in.MaxBandwidthMB, in.IOWeight,
+		in.MaxProcesses, in.MaxPorts, in.MaxBackups, in.PriceMonthly,
 	)
 	p, err := scanRow(row)
 	if err != nil {
@@ -128,11 +157,15 @@ func (s *Store) Create(ctx context.Context, in CreateInput) (*Package, error) {
 
 func (s *Store) Update(ctx context.Context, id uuid.UUID, in CreateInput) (*Package, error) {
 	row := s.Pool.QueryRow(ctx, `
-		UPDATE hosting_packages SET name = $2, max_websites = $3, max_databases = $4, max_disk_mb = $5,
-		       memory_limit_mb = $6, cpu_cores = $7, max_addon_domains = $8, max_subdomains = $9, allowed_runtimes = $10, price_monthly_cents = $11, updated_at = now()
+		UPDATE hosting_packages SET name = $2, kind = $3, max_websites = $4, max_databases = $5, max_disk_mb = $6,
+		       memory_limit_mb = $7, cpu_cores = $8, max_addon_domains = $9, max_subdomains = $10,
+		       allowed_runtimes = $11, max_bandwidth_mb = $12, io_weight = $13, max_processes = $14,
+		       max_ports = $15, max_backups = $16, price_monthly_cents = $17, updated_at = now()
 		WHERE id = $1
 		RETURNING `+cols,
-		id, in.Name, in.MaxWebsites, in.MaxDatabases, in.MaxDiskMB, in.MemoryLimitMB, in.CPUCores, in.MaxAddonDomains, in.MaxSubdomains, in.AllowedRuntimes, in.PriceMonthly,
+		id, in.Name, normKind(in.Kind), in.MaxWebsites, in.MaxDatabases, in.MaxDiskMB, in.MemoryLimitMB, in.CPUCores,
+		in.MaxAddonDomains, in.MaxSubdomains, in.AllowedRuntimes, in.MaxBandwidthMB, in.IOWeight,
+		in.MaxProcesses, in.MaxPorts, in.MaxBackups, in.PriceMonthly,
 	)
 	p, err := scanRow(row)
 	if errors.Is(err, pgx.ErrNoRows) {

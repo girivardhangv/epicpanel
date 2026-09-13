@@ -97,13 +97,6 @@ type NodeSamplePoint struct {
 	DiskPct  float64
 	Offline  bool
 	Services map[string]bool // service -> up
-	// Workload metrics (Phase 3 AppSample kind=minecraft/discord).
-	MCTPS     float64
-	MCMSPT    float64
-	MCPlayers int
-	BotCPU    float64
-	BotRAM    float64
-	BotUptime int64
 }
 
 // EvaluateNode feeds one node sample through every enabled rule.
@@ -125,18 +118,6 @@ func (e *Engine) EvaluateNode(ctx context.Context, r Rule, p NodeSamplePoint) {
 		for svc, up := range p.Services {
 			e.EvaluateState(ctx, r, subject+"|service:"+svc, !up, "service down: "+svc)
 		}
-	case "mc_tps":
-		e.EvaluateThreshold(ctx, r, subject, p.MCTPS)
-	case "mc_mspt":
-		e.EvaluateThreshold(ctx, r, subject, p.MCMSPT)
-	case "mc_players":
-		e.EvaluateThreshold(ctx, r, subject, float64(p.MCPlayers))
-	case "discord_cpu":
-		e.EvaluateThreshold(ctx, r, subject, p.BotCPU)
-	case "discord_ram":
-		e.EvaluateThreshold(ctx, r, subject, p.BotRAM)
-	case "discord_uptime":
-		e.EvaluateThreshold(ctx, r, subject, float64(p.BotUptime))
 	}
 }
 

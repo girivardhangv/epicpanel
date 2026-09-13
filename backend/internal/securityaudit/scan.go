@@ -1,8 +1,8 @@
 package securityaudit
 
 // Phase 12 — automated secret-leak scanner (exported so any module's tests
-// can extend it: Phase 8's bot-secret test builds on this). Greps API
-// responses + captured log lines for secret material patterns.
+// can extend it). Greps API responses + captured log lines for secret
+// material patterns.
 
 import (
 	"regexp"
@@ -35,7 +35,7 @@ var defaultPatterns = []Pattern{
 
 // ScanOptions configures one scan run.
 type ScanOptions struct {
-	// Extra patterns from the calling module (e.g. bot env secret markers).
+	// Extra patterns from the calling module (e.g. per-module secret markers).
 	Extra []Pattern
 	// PlantedSecrets: exact values that must never appear anywhere
 	// (responses or logs). Strongest assertion — the test plants a

@@ -1,6 +1,6 @@
 // Package resources is the unified resource & limit engine (Phase 9).
 //
-// ONE engine for every workload kind (web, minecraft, discord): the same
+// ONE engine for every workload kind (web hosting): the same
 // Resource model, the same Plan→limits mapping (pure data) and the same
 // three-call API — GetLimits / GetUsage / Enforce. Adding a new plan is a
 // data change (a hosting_packages row), never a code change.
@@ -52,9 +52,7 @@ const (
 type WorkloadKind string
 
 const (
-	KindWeb       WorkloadKind = "web"
-	KindMinecraft WorkloadKind = "minecraft"
-	KindDiscord   WorkloadKind = "discord"
+	KindWeb WorkloadKind = "web"
 )
 
 // Resource is the unified resource model (name, quantity, unit, usage).

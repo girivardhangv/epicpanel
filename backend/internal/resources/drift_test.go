@@ -23,13 +23,13 @@ import (
 //     move together (a stale second source would fail this).
 // ============================================================================
 
-// driftWorkload is the shared synthetic workload: an org on Minecraft 4GB
+// driftWorkload is the shared synthetic workload: an org on a 4096 MB plan
 // whose site slice reports live cgroup usage.
 var driftWorkload = Workload{
-	Kind:      KindMinecraft,
+	Kind:      KindWeb,
 	WebsiteID: mustUUIDT("22222222-2222-2222-2222-222222222222"),
 	Plan: PlanInput{
-		Name: "Minecraft 4GB", Kind: KindMinecraft,
+		Name: "Scale", Kind: KindWeb,
 		MemoryLimitMB: 4096, CPUCores: 2.0, MaxDiskMB: 20 * 1024,
 		MaxBandwidthMB: 2 * 1024 * 1024, MaxProcesses: 256,
 		MaxPorts: 1, MaxBackups: 3,
@@ -95,7 +95,7 @@ func TestDriftDisplayMatchesEnforcement(t *testing.T) {
 func TestDriftPlanChangeMovesBoth(t *testing.T) {
 	e := NewEngine()
 	upgraded := driftWorkload
-	upgraded.Plan.MemoryLimitMB = 2048 // downgrade to Minecraft 2GB matrix
+	upgraded.Plan.MemoryLimitMB = 2048 // downgrade the plan matrix
 
 	displayed := e.GetLimits(upgraded)
 	enforced := e.EnforcePlan(upgraded)

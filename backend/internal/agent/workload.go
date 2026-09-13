@@ -168,9 +168,8 @@ const siteDiskTTL = 60 * time.Second
 
 // CollectApps samples managed app units (epicpanel-app-<websiteID>.service
 // — the transient units app_ops provisions). One systemctl show invocation
-// per pass, cached for appPropsTTL; Minecraft/Discord are distinguished by
-// the app kind recorded in the unit description (best effort until Phase
-// 7/8 register kinds explicitly).
+// per pass, cached for appPropsTTL; the app kind is recorded in the unit
+// description where the provisioning path sets one.
 func (w *workloadCollector) CollectApps() []agentproto.AppSample {
 	var out []agentproto.AppSample
 	now := time.Now()
@@ -203,7 +202,7 @@ func (w *workloadCollector) CollectApps() []agentproto.AppSample {
 		out = append(out, s)
 	}
 
-	// Docker workloads (Minecraft/Discord when the daemon is present): the
+	// Docker workloads (containerized apps when the daemon is present): the
 	// reconciler's truth source MUST include containers or a containerized
 	// workload never converges (stuck starting/stopping forever).
 	for _, s := range collectDockerApps(now) {
@@ -215,7 +214,7 @@ func (w *workloadCollector) CollectApps() []agentproto.AppSample {
 }
 
 // collectDockerApps samples containers labelled epicpanel.workload=1 and maps
-// them onto the AppSample envelope (same WebsiteID = the instance/bot id).
+// them onto the AppSample envelope (WebsiteID = the app instance id).
 func collectDockerApps(now time.Time) []agentproto.AppSample {
 	out, err := execCommand("docker", "ps", "-a",
 		"--filter", "label=epicpanel.workload=1",
@@ -273,20 +272,9 @@ func collectDockerApps(now time.Time) []agentproto.AppSample {
 				s.NetRxBPS, s.NetTxBPS = processNetRates(pid)
 			}
 		}
-		// Disk: the workload tree on the host (/srv/epicpanel/...).
-		for _, base := range []string{"/srv/epicpanel/minecraft", "/srv/epicpanel/bots"} {
-			tree := filepath.Join(base, id)
-			if st, serr := os.Stat(tree); serr == nil && st.IsDir() {
-				s.DiskUsedMB = dirSizeMB(tree)
-				break
-			}
-		}
-		// Minecraft players/TPS/MSPT from the RCON poller cache.
-		if kind == "minecraft" {
-			snap := MCMetricsSnapshot(id)
-			s.Players = snap.Players
-			s.TPS = snap.TPS
-			s.MSPT = snap.MSPT
+		// Disk: the workload tree on the host (/srv/epicpanel/websites/<id>).
+		if st, serr := os.Stat(filepath.Join("/srv/epicpanel/websites", id)); serr == nil && st.IsDir() {
+			s.DiskUsedMB = dirSizeMB(filepath.Join("/srv/epicpanel/websites", id))
 		}
 		_ = now
 		apps = append(apps, s)
@@ -359,27 +347,11 @@ func (w *workloadCollector) appProperties(units []string) map[string]appProp {
 // systemdUnitPrefix is how `systemctl show` starts each unit block.
 const systemdUnitPrefix = "Unit "
 
-// appKindFor infers the workload kind from the unit name/description. Phase
-// 7/8 will record the kind explicitly; until then everything is "app" unless
-// the command line betrays the runtime (jar = minecraft, node discord bots).
+// appKindFor reports the workload kind for a managed app unit. Provisioned
+// apps run as generic transient services; the kind is "app" unless a label or
+// description recorded one at create time.
 func appKindFor(unit string, p appProp) string {
-	if p.pid <= 0 {
-		return "app"
-	}
-	b, err := os.ReadFile("/proc/" + strconv.Itoa(p.pid) + "/cmdline")
-	if err != nil {
-		return "app"
-	}
-	cmdline := strings.ReplaceAll(string(b), "\x00", " ")
-	switch {
-	case strings.Contains(cmdline, "paper") || strings.Contains(cmdline, "spigot") ||
-		strings.Contains(cmdline, "minecraft") || strings.HasSuffix(cmdline, ".jar"):
-		return "minecraft"
-	case strings.Contains(strings.ToLower(cmdline), "discord"):
-		return "discord"
-	default:
-		return "app"
-	}
+	return "app"
 }
 
 // --- per-process helpers (main PID based; cheap single-file reads) ---

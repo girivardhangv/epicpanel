@@ -63,7 +63,7 @@ const (
 type Product struct {
 	ID          uuid.UUID       `json:"id"`
 	Name        string          `json:"name"`
-	Type        string          `json:"type"` // hosting | minecraft | discord | service
+	Type        string          `json:"type"` // hosting | service
 	Description string          `json:"description"`
 	PlanID      *uuid.UUID      `json:"plan_id,omitempty"`
 	PlanName    string          `json:"plan_name,omitempty"`
@@ -148,8 +148,6 @@ type Subscription struct {
 	StateChangedAt    time.Time  `json:"state_changed_at"`
 	WorkloadKind      string     `json:"workload_kind"`
 	WebsiteID         *uuid.UUID `json:"website_id,omitempty"`
-	BotID             *uuid.UUID `json:"bot_id,omitempty"`
-	InstanceID        *uuid.UUID `json:"instance_id,omitempty"`
 	GraceUntil        *time.Time `json:"grace_until,omitempty"`
 	// RenewalAnchor is the period_end whose renewal was last attempted
 	// (internal idempotency anchor; not part of the API surface).
@@ -343,7 +341,7 @@ func createSubscription(ctx context.Context, tx pgx.Tx, in OrderInput) (*Subscri
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,now(),$9)
 		RETURNING id, customer_id, plan_id, product_id, status, provision_state,
 			billing_period, period_start, period_end, cancel_at_period_end,
-			state_changed_at, workload_kind, website_id, bot_id, instance_id,
+			state_changed_at, workload_kind, website_id,
 			grace_until, last_renewal_period_end, last_invoice_id, last_job_id,
 			last_error, provision_attempts, created_at, updated_at
 	`,
@@ -354,7 +352,7 @@ func createSubscription(ctx context.Context, tx pgx.Tx, in OrderInput) (*Subscri
 	var sub Subscription
 	if err := row.Scan(&sub.ID, &sub.CustomerID, &sub.PlanID, &sub.ProductID, &sub.Status,
 		&sub.ProvisionState, &sub.BillingPeriod, &sub.PeriodStart, &sub.PeriodEnd, &sub.CancelAtPeriodEnd,
-		&sub.StateChangedAt, &sub.WorkloadKind, &sub.WebsiteID, &sub.BotID, &sub.InstanceID,
+		&sub.StateChangedAt, &sub.WorkloadKind, &sub.WebsiteID,
 		&sub.GraceUntil, &sub.RenewalAnchor, &sub.LastInvoiceID, &sub.LastJobID, &sub.LastError,
 		&sub.ProvisionAttempts, &sub.CreatedAt, &sub.UpdatedAt); err != nil {
 		return nil, err
@@ -764,11 +762,11 @@ func indexOf(haystack, needle string) int {
 
 // subRawCols is the RETURNING list for INSERT/UPDATE (no join aliases;
 // names are resolved by a follow-up scoped read).
-const subRawCols = "id, customer_id, plan_id, product_id, status, provision_state, billing_period, period_start, period_end, cancel_at_period_end, state_changed_at, workload_kind, website_id, bot_id, instance_id, grace_until, last_renewal_period_end, last_invoice_id, last_job_id, last_error, provision_attempts, created_at, updated_at"
+const subRawCols = "id, customer_id, plan_id, product_id, status, provision_state, billing_period, period_start, period_end, cancel_at_period_end, state_changed_at, workload_kind, website_id, grace_until, last_renewal_period_end, last_invoice_id, last_job_id, last_error, provision_attempts, created_at, updated_at"
 
 const subCols = `s.id, s.customer_id, c.organization_id, s.plan_id, s.product_id, s.status,
 	s.provision_state, s.billing_period, s.period_start, s.period_end, s.cancel_at_period_end,
-	s.state_changed_at, s.workload_kind, s.website_id, s.bot_id, s.instance_id,
+	s.state_changed_at, s.workload_kind, s.website_id,
 	s.grace_until, s.last_renewal_period_end, s.last_invoice_id, s.last_job_id, s.last_error,
 	s.provision_attempts, s.created_at, s.updated_at, COALESCE(p.name,''), COALESCE(hp.name,'')`
 
@@ -781,7 +779,7 @@ func scanSubscription(row pgx.Row) (*Subscription, error) {
 	var sub Subscription
 	err := row.Scan(&sub.ID, &sub.CustomerID, &sub.OrgID, &sub.PlanID, &sub.ProductID, &sub.Status,
 		&sub.ProvisionState, &sub.BillingPeriod, &sub.PeriodStart, &sub.PeriodEnd, &sub.CancelAtPeriodEnd,
-		&sub.StateChangedAt, &sub.WorkloadKind, &sub.WebsiteID, &sub.BotID, &sub.InstanceID,
+		&sub.StateChangedAt, &sub.WorkloadKind, &sub.WebsiteID,
 		&sub.GraceUntil, &sub.RenewalAnchor, &sub.LastInvoiceID, &sub.LastJobID, &sub.LastError,
 		&sub.ProvisionAttempts, &sub.CreatedAt, &sub.UpdatedAt, &sub.ProductName, &sub.PlanName)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -798,7 +796,7 @@ func scanSubscriptionRaw(row pgx.Row) (*Subscription, error) {
 	var sub Subscription
 	err := row.Scan(&sub.ID, &sub.CustomerID, &sub.PlanID, &sub.ProductID, &sub.Status,
 		&sub.ProvisionState, &sub.BillingPeriod, &sub.PeriodStart, &sub.PeriodEnd, &sub.CancelAtPeriodEnd,
-		&sub.StateChangedAt, &sub.WorkloadKind, &sub.WebsiteID, &sub.BotID, &sub.InstanceID,
+		&sub.StateChangedAt, &sub.WorkloadKind, &sub.WebsiteID,
 		&sub.GraceUntil, &sub.RenewalAnchor, &sub.LastInvoiceID, &sub.LastJobID, &sub.LastError,
 		&sub.ProvisionAttempts, &sub.CreatedAt, &sub.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -918,14 +916,14 @@ func (s *Store) UpdateSubscriptionState(ctx context.Context, subID uuid.UUID, fr
 	return full, nil
 }
 
-// SetSubscriptionWorkload records the provisioned workload refs + the job
+// SetSubscriptionWorkload records the provisioned workload ref + the job
 // that carries the state-changing work (convergence reads last_job_id).
-func (s *Store) SetSubscriptionWorkload(ctx context.Context, subID uuid.UUID, kind string, websiteID, botID, instanceID, jobID *uuid.UUID, attempts int) error {
+func (s *Store) SetSubscriptionWorkload(ctx context.Context, subID uuid.UUID, kind string, websiteID, jobID *uuid.UUID, attempts int) error {
 	tag, err := s.Pool.Exec(ctx, `
-		UPDATE subscriptions SET workload_kind = $2, website_id = $3, bot_id = $4,
-			instance_id = $5, last_job_id = $6, provision_attempts = $7, updated_at = now()
+		UPDATE subscriptions SET workload_kind = $2, website_id = $3,
+			last_job_id = $4, provision_attempts = $5, updated_at = now()
 		WHERE id = $1
-	`, subID, kind, websiteID, botID, instanceID, jobID, attempts)
+	`, subID, kind, websiteID, jobID, attempts)
 	if err != nil {
 		return err
 	}
@@ -964,11 +962,11 @@ func (s *Store) ExtendPeriod(ctx context.Context, subID uuid.UUID) (*Subscriptio
 		WHERE id = $1
 		RETURNING customer_id, plan_id, product_id, status, provision_state,
 			billing_period, period_start, period_end, cancel_at_period_end,
-			state_changed_at, workload_kind, website_id, bot_id, instance_id,
+			state_changed_at, workload_kind, website_id,
 			grace_until, last_renewal_period_end, last_invoice_id, last_job_id,
 			last_error, provision_attempts, created_at, updated_at`, subID).Scan(&sub.CustomerID, &sub.PlanID, &sub.ProductID, &sub.Status,
 		&sub.ProvisionState, &sub.BillingPeriod, &sub.PeriodStart, &sub.PeriodEnd, &sub.CancelAtPeriodEnd,
-		&sub.StateChangedAt, &sub.WorkloadKind, &sub.WebsiteID, &sub.BotID, &sub.InstanceID,
+		&sub.StateChangedAt, &sub.WorkloadKind, &sub.WebsiteID,
 		&sub.GraceUntil, &sub.RenewalAnchor, &sub.LastInvoiceID, &sub.LastJobID, &sub.LastError,
 		&sub.ProvisionAttempts, &sub.CreatedAt, &sub.UpdatedAt)
 	if err != nil {

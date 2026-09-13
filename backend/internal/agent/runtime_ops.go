@@ -665,7 +665,7 @@ func (e *Executor) RemoveRuntime(ctx context.Context, runtimeID, rtType, version
 		}
 		return nil
 	case "java":
-		return e.RemoveJava(ctx, versionMajorDot(version))
+		return e.RemoveJava(ctx, version)
 	default:
 		return fmt.Errorf("removal for %s not implemented", rtType)
 	}

@@ -40,17 +40,12 @@ var phase12Routes = []string{
 	"DELETE /v1/organizations/{org_id}/api-tokens/{token_id}",
 	"DELETE /v1/organizations/{org_id}/backup-schedules/{schedule_id}",
 	"DELETE /v1/organizations/{org_id}/backup-targets/{target_id}",
-	"DELETE /v1/organizations/{org_id}/bots/{bot_id}",
-	"DELETE /v1/organizations/{org_id}/bots/{bot_id}/env/{key}",
-	"DELETE /v1/organizations/{org_id}/bots/{bot_id}/schedules/{schedule_id}",
 	"DELETE /v1/organizations/{org_id}/crons/{cron_id}",
 	"DELETE /v1/organizations/{org_id}/databases/{db_id}",
 	"DELETE /v1/organizations/{org_id}/dns-records/{record_id}",
 	"DELETE /v1/organizations/{org_id}/dns-zones/{zone_id}",
 	"DELETE /v1/organizations/{org_id}/ftp-accounts/{account_id}",
 	"DELETE /v1/organizations/{org_id}/members/{user_id}",
-	"DELETE /v1/organizations/{org_id}/minecraft/{instance_id}",
-	"DELETE /v1/organizations/{org_id}/minecraft/{instance_id}/schedules/{schedule_id}",
 	"DELETE /v1/organizations/{org_id}/redirects/{redirect_id}",
 	"DELETE /v1/organizations/{org_id}/servers/{server_id}",
 	"DELETE /v1/organizations/{org_id}/servers/{server_id}/runtimes/{runtime_id}",
@@ -109,34 +104,12 @@ var phase12Routes = []string{
 	"GET /v1/organizations/{org_id}/billing/products",
 	"GET /v1/organizations/{org_id}/billing/subscriptions",
 	"GET /v1/organizations/{org_id}/billing/subscriptions/{subscription_id}",
-	"GET /v1/organizations/{org_id}/bots",
-	"GET /v1/organizations/{org_id}/bots/runtime-offers",
-	"GET /v1/organizations/{org_id}/bots/{bot_id}",
-	"GET /v1/organizations/{org_id}/bots/{bot_id}/console",
-	"GET /v1/organizations/{org_id}/bots/{bot_id}/console/ws",
-	"GET /v1/organizations/{org_id}/bots/{bot_id}/env",
-	"GET /v1/organizations/{org_id}/bots/{bot_id}/files",
-	"GET /v1/organizations/{org_id}/bots/{bot_id}/jobs",
-	"GET /v1/organizations/{org_id}/bots/{bot_id}/logs",
-	"GET /v1/organizations/{org_id}/bots/{bot_id}/metrics",
-	"GET /v1/organizations/{org_id}/bots/{bot_id}/schedules",
 	"GET /v1/organizations/{org_id}/databases",
 	"GET /v1/organizations/{org_id}/databases/{db_id}",
 	"GET /v1/organizations/{org_id}/databases/{db_id}/credentials",
 	"GET /v1/organizations/{org_id}/databases/{db_id}/pma-sso",
 	"GET /v1/organizations/{org_id}/domains",
 	"GET /v1/organizations/{org_id}/members",
-	"GET /v1/organizations/{org_id}/minecraft",
-	"GET /v1/organizations/{org_id}/minecraft/provider-offers",
-	"GET /v1/organizations/{org_id}/minecraft/{instance_id}",
-	"GET /v1/organizations/{org_id}/minecraft/{instance_id}/backups",
-	"GET /v1/organizations/{org_id}/minecraft/{instance_id}/console",
-	"GET /v1/organizations/{org_id}/minecraft/{instance_id}/console/ws",
-	"GET /v1/organizations/{org_id}/minecraft/{instance_id}/files",
-	"GET /v1/organizations/{org_id}/minecraft/{instance_id}/jobs",
-	"GET /v1/organizations/{org_id}/minecraft/{instance_id}/metrics",
-	"GET /v1/organizations/{org_id}/minecraft/{instance_id}/properties",
-	"GET /v1/organizations/{org_id}/minecraft/{instance_id}/schedules",
 	"GET /v1/organizations/{org_id}/package",
 	"GET /v1/organizations/{org_id}/servers",
 	"GET /v1/organizations/{org_id}/servers/capacity",
@@ -180,12 +153,10 @@ var phase12Routes = []string{
 	"PATCH /v1/admin/billing/settings",
 	"PATCH /v1/admin/packages/{pkg_id}",
 	"PATCH /v1/organizations/{org_id}",
-	"PATCH /v1/organizations/{org_id}/bots/{bot_id}",
 	"PATCH /v1/organizations/{org_id}/crons/{cron_id}",
 	"PATCH /v1/organizations/{org_id}/dns-records/{record_id}",
 	"PATCH /v1/organizations/{org_id}/domains/{domain_id}",
 	"PATCH /v1/organizations/{org_id}/members/{user_id}",
-	"PATCH /v1/organizations/{org_id}/minecraft/{instance_id}",
 	"PATCH /v1/organizations/{org_id}/redirects/{redirect_id}",
 	"PATCH /v1/organizations/{org_id}/servers/{server_id}/maintenance",
 	"PATCH /v1/organizations/{org_id}/websites/{website_id}",
@@ -234,14 +205,6 @@ var phase12Routes = []string{
 	"POST /v1/organizations/{org_id}/billing/orders",
 	"POST /v1/organizations/{org_id}/billing/orders/{order_id}/pay",
 	"POST /v1/organizations/{org_id}/billing/subscriptions/{subscription_id}/cancel",
-	"POST /v1/organizations/{org_id}/bots",
-	"POST /v1/organizations/{org_id}/bots/{bot_id}/deploy-git",
-	"POST /v1/organizations/{org_id}/bots/{bot_id}/files/upload",
-	"POST /v1/organizations/{org_id}/bots/{bot_id}/kill",
-	"POST /v1/organizations/{org_id}/bots/{bot_id}/restart",
-	"POST /v1/organizations/{org_id}/bots/{bot_id}/schedules",
-	"POST /v1/organizations/{org_id}/bots/{bot_id}/start",
-	"POST /v1/organizations/{org_id}/bots/{bot_id}/stop",
 	"POST /v1/organizations/{org_id}/databases",
 	"POST /v1/organizations/{org_id}/dns-zones/{zone_id}/publish",
 	"POST /v1/organizations/{org_id}/dns-zones/{zone_id}/records",
@@ -250,16 +213,6 @@ var phase12Routes = []string{
 	"POST /v1/organizations/{org_id}/ftp-accounts/{account_id}/password",
 	"POST /v1/organizations/{org_id}/ftp-accounts/{account_id}/reveal",
 	"POST /v1/organizations/{org_id}/members",
-	"POST /v1/organizations/{org_id}/minecraft",
-	"POST /v1/organizations/{org_id}/minecraft/{instance_id}/backups",
-	"POST /v1/organizations/{org_id}/minecraft/{instance_id}/backups/{backup_id}/restore",
-	"POST /v1/organizations/{org_id}/minecraft/{instance_id}/console/command",
-	"POST /v1/organizations/{org_id}/minecraft/{instance_id}/files/upload",
-	"POST /v1/organizations/{org_id}/minecraft/{instance_id}/kill",
-	"POST /v1/organizations/{org_id}/minecraft/{instance_id}/restart",
-	"POST /v1/organizations/{org_id}/minecraft/{instance_id}/schedules",
-	"POST /v1/organizations/{org_id}/minecraft/{instance_id}/start",
-	"POST /v1/organizations/{org_id}/minecraft/{instance_id}/stop",
 	"POST /v1/organizations/{org_id}/servers",
 	"POST /v1/organizations/{org_id}/servers/{server_id}/database-tools",
 	"POST /v1/organizations/{org_id}/servers/{server_id}/detect-software",
@@ -292,8 +245,6 @@ var phase12Routes = []string{
 	"POST /v1/setup/software",
 	"POST /v1/setup/verify-hostname",
 	"PUT /v1/organizations/{org_id}/billing/payment-method",
-	"PUT /v1/organizations/{org_id}/bots/{bot_id}/env",
-	"PUT /v1/organizations/{org_id}/minecraft/{instance_id}/properties",
 	"PUT /v1/organizations/{org_id}/websites/{website_id}/config/rewrite",
 	"PUT /v1/organizations/{org_id}/websites/{website_id}/files/content",
 }
@@ -479,8 +430,6 @@ func TestPhase12AuthzMatrix(t *testing.T) {
 			{"GET", "/v1/organizations/" + orgA + "/package"},
 			{"GET", "/v1/organizations/" + orgA + "/backups2"},
 			{"POST", "/v1/organizations/" + orgA + "/backups2"},
-			{"GET", "/v1/organizations/" + orgA + "/minecraft"},
-			{"GET", "/v1/organizations/" + orgA + "/bots"},
 			{"GET", "/v1/organizations/" + orgA + "/billing/subscriptions"},
 			{"GET", "/v1/organizations/" + orgA + "/api-tokens"},
 			{"GET", "/v1/organizations/" + orgA + "/members"},
@@ -505,8 +454,6 @@ func TestPhase12AuthzMatrix(t *testing.T) {
 			"/v1/organizations/" + orgB + "/domains",
 			"/v1/organizations/" + orgB + "/package",
 			"/v1/organizations/" + orgB + "/backups2",
-			"/v1/organizations/" + orgB + "/minecraft",
-			"/v1/organizations/" + orgB + "/bots",
 			"/v1/organizations/" + orgB + "/billing/subscriptions",
 		} {
 			resp := userB.do("GET", p, nil)
@@ -543,13 +490,11 @@ func TestPhase12AuthzMatrix(t *testing.T) {
 		}
 		cases := []probe{
 			{"GET", "/v1/organizations/" + orgA + "/websites", http.StatusOK},
-			{"POST", "/v1/organizations/" + orgA + "/websites", http.StatusForbidden},  // developer+
-			{"GET", "/v1/organizations/" + orgA + "/minecraft", http.StatusOK},         // billing+
-			{"POST", "/v1/organizations/" + orgA + "/minecraft", http.StatusForbidden}, // developer+
-			{"GET", "/v1/organizations/" + orgA + "/backups2", http.StatusOK},          // billing+
-			{"POST", "/v1/organizations/" + orgA + "/backups2", http.StatusForbidden},  // org admin+
-			{"POST", "/v1/organizations/" + orgA + "/members", http.StatusForbidden},   // org admin+
-			{"PATCH", "/v1/organizations/" + orgA, http.StatusForbidden},               // org admin+
+			{"POST", "/v1/organizations/" + orgA + "/websites", http.StatusForbidden}, // developer+
+			{"GET", "/v1/organizations/" + orgA + "/backups2", http.StatusOK},         // billing+
+			{"POST", "/v1/organizations/" + orgA + "/backups2", http.StatusForbidden}, // org admin+
+			{"POST", "/v1/organizations/" + orgA + "/members", http.StatusForbidden},  // org admin+
+			{"PATCH", "/v1/organizations/" + orgA, http.StatusForbidden},              // org admin+
 		}
 		for _, c := range cases {
 			resp := userB.do(c.method, c.path, nil)

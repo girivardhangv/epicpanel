@@ -105,9 +105,6 @@ func serve(cfg agent.Config, log *slog.Logger) error {
 	exec := agent.NewExecutor()
 	streamer := agent.NewStreamer(cfg.ControlPlaneURL, cfg.AgentToken, agent.AgentVersion, 0)
 
-	// Realtime console + state events ride the same persistent stream.
-	agent.WireRealtime(streamer)
-
 	log.Info("epicpanel agent starting", "control_plane", cfg.ControlPlaneURL,
 		"poll_interval", cfg.PollInterval, "metrics_interval", agent.MetricsIntervalForLog())
 

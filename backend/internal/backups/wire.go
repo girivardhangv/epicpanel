@@ -7,11 +7,9 @@ package backups
 // BackupRunPayload is the backup_run job payload (control plane → agent).
 type BackupRunPayload struct {
 	BackupID string `json:"backup_id"`
-	Type     string `json:"type"` // account | database | website | minecraft_world | discord_bot | full_instance | website_files
+	Type     string `json:"type"` // account | database | website | full_instance | website_files
 	// Workload identifiers (exactly one primary).
-	WebsiteID  string `json:"website_id,omitempty"`
-	InstanceID string `json:"instance_id,omitempty"`
-	BotID      string `json:"bot_id,omitempty"`
+	WebsiteID string `json:"website_id,omitempty"`
 	// Databases to dump (account/website bundles).
 	Databases []DBClonePayload `json:"databases,omitempty"`
 	// Target: sink config + sealed creds (nil = agent-local default).
@@ -32,8 +30,6 @@ type BackupRestorePayload struct {
 	// RefOverride is the canonical artifact ref JSON (from the row).
 	RefOverride string `json:"ref_override,omitempty"`
 	WebsiteID   string `json:"website_id,omitempty"`
-	InstanceID  string `json:"instance_id,omitempty"`
-	BotID       string `json:"bot_id,omitempty"`
 	// Databases to restore (bundle restores).
 	Databases []DBClonePayload `json:"databases,omitempty"`
 	// Target to fetch the artifact from + wrapped key to decrypt it.
@@ -65,12 +61,10 @@ type PruneRef struct {
 // TerminateBackupPayload is the Phase 10 pre-terminate hook: a final backup
 // of the workload before irreversible teardown.
 type TerminateBackupPayload struct {
-	Type       string          `json:"type"`
-	WebsiteID  string          `json:"website_id,omitempty"`
-	InstanceID string          `json:"instance_id,omitempty"`
-	BotID      string          `json:"bot_id,omitempty"`
-	Target     *SinkConfigWire `json:"target,omitempty"`
-	Encrypt    bool            `json:"encrypt,omitempty"`
+	Type      string          `json:"type"`
+	WebsiteID string          `json:"website_id,omitempty"`
+	Target    *SinkConfigWire `json:"target,omitempty"`
+	Encrypt   bool            `json:"encrypt,omitempty"`
 }
 
 // BackupOutcome2 is the job result for the unified ops.

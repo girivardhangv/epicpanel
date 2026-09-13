@@ -23,10 +23,7 @@ func gb(mib int64) float64 { return float64(mib) * 1024 }
 func tb(gib int64) float64 { return float64(gib) * 1024 * 1024 }
 
 // ============================================================================
-// Seed data — the 7 verbatim plans. Mirrored 1:1 by migration 0027.
-// Minecraft 4GB is verbatim from the master doc:
-//   RAM: 4096 MB · CPU: 200% · Disk: 20 GB · Bandwidth: 2 TB · Ports: 1 ·
-//   Backups: 3
+// Seed data — the built-in web plans. Mirrored 1:1 by migration 0027.
 // ============================================================================
 
 // AllPlans returns the built-in plan registry (seed data). The runtime
@@ -58,34 +55,6 @@ func AllPlans() []PlanSpec {
 				ResEmail: 200, ResBackups: 7,
 			},
 		},
-		{
-			Name: "Minecraft 2GB", Kind: KindMinecraft,
-			Limits: map[string]float64{
-				ResCPU: 200, ResRAM: mb(2048), ResDisk: gb(20), ResBandwidth: tb(2),
-				ResProcesses: 128, ResPorts: 1, ResBackups: 3,
-			},
-		},
-		{
-			Name: "Minecraft 4GB", Kind: KindMinecraft,
-			Limits: map[string]float64{
-				ResCPU: 200, ResRAM: mb(4096), ResDisk: gb(20), ResBandwidth: tb(2),
-				ResProcesses: 256, ResPorts: 1, ResBackups: 3,
-			},
-		},
-		{
-			Name: "Discord Basic", Kind: KindDiscord,
-			Limits: map[string]float64{
-				ResCPU: 50, ResRAM: mb(512), ResDisk: gb(2), ResBandwidth: gb(512),
-				ResProcesses: 16, ResBackups: 0,
-			},
-		},
-		{
-			Name: "Discord Pro", Kind: KindDiscord,
-			Limits: map[string]float64{
-				ResCPU: 100, ResRAM: mb(1024), ResDisk: gb(5), ResBandwidth: gb(1024),
-				ResProcesses: 32, ResPorts: 1, ResBackups: 1,
-			},
-		},
 	}
 }
 
@@ -111,28 +80,10 @@ func WebResourceSet() []string {
 		ResDatabases, ResDomains, ResEmail, ResBandwidth}
 }
 
-// MinecraftResourceSet — the master-doc Resource model restricted to what a
-// Minecraft workload consumes: CPU · RAM · Disk · Bandwidth · Processes ·
-// Ports · Backups.
-func MinecraftResourceSet() []string {
-	return []string{ResCPU, ResRAM, ResDisk, ResBandwidth, ResProcesses, ResPorts, ResBackups}
-}
-
-// DiscordResourceSet — CPU · RAM · Disk · Bandwidth · Processes · Backups.
-func DiscordResourceSet() []string {
-	return []string{ResCPU, ResRAM, ResDisk, ResBandwidth, ResProcesses, ResBackups}
-}
-
-// ResourceSetFor returns the ordered resource list for a workload kind.
+// ResourceSetFor returns the ordered resource list for a workload kind. The
+// panel governs one kind today: web hosting.
 func ResourceSetFor(kind WorkloadKind) []string {
-	switch kind {
-	case KindMinecraft:
-		return MinecraftResourceSet()
-	case KindDiscord:
-		return DiscordResourceSet()
-	default:
-		return WebResourceSet()
-	}
+	return WebResourceSet()
 }
 
 // UnitFor is the single-unit rule: cpu percent-of-one-core; MB for

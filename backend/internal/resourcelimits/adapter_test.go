@@ -66,9 +66,9 @@ func TestCountGateCore(t *testing.T) {
 	if !errors.As(err, &reach) || reach.Limit != 2 {
 		t.Fatalf("err = %v", err)
 	}
-	// Over-limit zero-cap resource (Discord Basic backups=0) → denied.
-	disc := PlanRef{Name: "Discord Basic", Kind: "discord", MaxBackups: 0}
-	dl := e.GetLimits(resources.Workload{Kind: resources.KindDiscord, Plan: disc.ToPlanInput()})
+	// Over-limit zero-cap resource (a plan with backups=0) → denied.
+	nb := PlanRef{Name: "NoBackup", Kind: "web", MaxBackups: 0}
+	dl := e.GetLimits(resources.Workload{Kind: resources.KindWeb, Plan: nb.ToPlanInput()})
 	if err := resources.CheckCount(dl, resources.ResBackups, 0); err == nil {
 		t.Fatal("zero-cap resource must deny creation")
 	}
@@ -109,26 +109,27 @@ func TestPlanFromPackageColumns(t *testing.T) {
 	}
 }
 
-// TestEnforcePayloadForKindRouting — a minecraft row drives the minecraft
-// resource set (no web-only resources leak into the payload).
-func TestEnforcePayloadForKindRouting(t *testing.T) {
+// TestEnforcePayloadWebRouting — a web row drives the web resource set: the
+// FPM bound (php_workers) and count caps map through PlanFromInput, and the
+// payload carries no spurious values for resources the plan leaves unset.
+func TestEnforcePayloadWebRouting(t *testing.T) {
 	e := resources.NewEngine()
-	mc := PlanRef{Name: "Minecraft 4GB", Kind: "minecraft", MemoryLimitMB: 4096,
+	web := PlanRef{Name: "Scale", Kind: "web", MemoryLimitMB: 4096,
 		CPUCores: 2.0, MaxDiskMB: 20 * 1024, MaxBandwidthMB: 2 * 1024 * 1024,
-		MaxProcesses: 256, MaxPorts: 1, MaxBackups: 3}
-	limits := e.GetLimits(resources.Workload{Kind: resources.KindMinecraft, Plan: mc.ToPlanInput()})
-	if _, ok := limits.Get(resources.ResPHPWorkers); ok {
-		t.Fatal("minecraft must not expose php_workers")
+		MaxProcesses: 256, MaxPorts: 1, MaxBackups: 3, IOWeight: 200}
+	limits := e.GetLimits(resources.Workload{Kind: resources.KindWeb, Plan: web.ToPlanInput()})
+	if _, ok := limits.Get(resources.ResRAM); !ok {
+		t.Fatal("web plan must expose ram")
 	}
 	if r, ok := limits.Get(resources.ResPorts); !ok || r.Limit != 1 {
-		t.Fatalf("ports = %+v (verbatim: Ports 1)", r)
+		t.Fatalf("ports = %+v (want 1)", r)
 	}
-	payload := e.EnforcePlan(resources.Workload{Kind: resources.KindMinecraft, Plan: mc.ToPlanInput()})
-	if payload.FpmMaxChildren != 0 {
-		t.Fatalf("minecraft payload must carry no FPM bound: %+v", payload)
-	}
+	payload := e.EnforcePlan(resources.Workload{Kind: resources.KindWeb, Plan: web.ToPlanInput()})
 	if payload.PidsMax != 256 {
 		t.Fatalf("pids = %d", payload.PidsMax)
+	}
+	if payload.CountLimits[resources.ResPorts] != 1 || payload.CountLimits[resources.ResBackups] != 3 {
+		t.Fatalf("count limits = %+v", payload.CountLimits)
 	}
 	// context unused by the pure engine — keep the signature stable for api wiring.
 	_ = context.Background

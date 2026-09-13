@@ -136,15 +136,12 @@ func ValidState(s string) bool {
 }
 
 // WorkloadKind selects the provisioning engine for a subscription. It maps
-// 1:1 from the Phase 2 product types (hosting->web, minecraft, discord,
-// service).
+// 1:1 from the Phase 2 product types (hosting->web, service).
 type WorkloadKind string
 
 const (
-	KindWeb       WorkloadKind = "web"
-	KindMinecraft WorkloadKind = "minecraft"
-	KindDiscord   WorkloadKind = "discord"
-	KindService   WorkloadKind = "service" // no node workload; admin fulfils manually
+	KindWeb     WorkloadKind = "web"
+	KindService WorkloadKind = "service" // no node workload; admin fulfils manually
 )
 
 // WorkloadKindForProductType maps a Phase 2 product type to the workload
@@ -153,10 +150,6 @@ func WorkloadKindForProductType(productType string) WorkloadKind {
 	switch productType {
 	case "hosting":
 		return KindWeb
-	case "minecraft":
-		return KindMinecraft
-	case "discord":
-		return KindDiscord
 	default:
 		return KindService
 	}

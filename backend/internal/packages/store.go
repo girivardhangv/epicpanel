@@ -126,7 +126,7 @@ type CreateInput struct {
 
 func normKind(k string) string {
 	switch k {
-	case "minecraft", "discord":
+	case "web":
 		return k
 	default:
 		return "web"

@@ -1,7 +1,6 @@
 package servers
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -9,7 +8,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/epicbyte/epicpanel/backend/internal/agentproto"
 	"github.com/epicbyte/epicpanel/backend/internal/audit"
 	"github.com/epicbyte/epicpanel/backend/internal/httpapi"
 	"github.com/epicbyte/epicpanel/backend/internal/jobs"
@@ -30,9 +28,6 @@ type Handler struct {
 	// OnStreamEvent fans agent connection transitions out to the WS hub.
 	// Optional; set by the api wiring.
 	OnStreamEvent func(serverID uuid.UUID, online bool)
-	// OnAgentFrame handles realtime frames forwarded over the agent stream
-	// (console.output, server.state, console.history, sync.*). Optional.
-	OnAgentFrame func(serverID uuid.UUID, frame agentproto.Frame) bool
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
@@ -54,38 +49,6 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/agent/enroll", h.AgentEnroll)
 	mux.HandleFunc("POST /v1/agent/heartbeat", h.requireAgent(h.AgentHeartbeat))
 	mux.HandleFunc("GET /v1/agent/stream", h.requireAgent(h.AgentStream))
-}
-
-// RequestConsole asks a connected agent to backfill a workload's console from
-// afterSeq. Non-blocking; a disconnected agent simply yields no backfill (the
-// ring already holds whatever streamed live).
-func RequestConsole(serverID uuid.UUID, workloadID string, afterSeq int64, lines int) bool {
-	if !AgentConnected(serverID) {
-		return false
-	}
-	data, err := json.Marshal(agentproto.ConsoleRequest{ServerID: workloadID, AfterSeq: afterSeq, Lines: lines})
-	if err != nil {
-		return false
-	}
-	return SendToAgent(serverID, agentproto.Frame{
-		Type: agentproto.TypeConsoleRequest, Ts: time.Now().UTC(), Data: data,
-	})
-}
-
-// SendConsoleCommand pushes a validated console command to a connected agent
-// over the persistent stream. Returns false when the agent is offline (the
-// caller falls back to the job queue).
-func SendConsoleCommand(serverID uuid.UUID, workloadID, command, requestID string) bool {
-	if !AgentConnected(serverID) {
-		return false
-	}
-	data, err := json.Marshal(agentproto.ServerCommand{ServerID: workloadID, Command: command, RequestID: requestID})
-	if err != nil {
-		return false
-	}
-	return SendToAgent(serverID, agentproto.Frame{
-		Type: agentproto.TypeServerCommand, Ts: time.Now().UTC(), RequestID: requestID, Data: data,
-	})
 }
 
 // requirePlatformAdmin enforces a platform-admin SESSION (API tokens never

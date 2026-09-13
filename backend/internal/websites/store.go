@@ -148,6 +148,9 @@ func DocumentRootFor(websiteID uuid.UUID) string {
 }
 
 func (s *Store) Create(ctx context.Context, orgID, serverID, createdBy uuid.UUID, name, primaryDomain string, runtime Runtime, runtimeVersion, webServer string) (*Website, string, error) {
+	if webServer == "" {
+		webServer = "nginx" // default serving path (mirrors the API handler)
+	}
 	unixUser := unixUserFor(orgID, name)
 	row := s.Pool.QueryRow(ctx, `
 		INSERT INTO websites (organization_id, server_id, name, primary_domain, runtime, runtime_version, web_server, unix_user, created_by)

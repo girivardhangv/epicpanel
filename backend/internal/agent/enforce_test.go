@@ -126,7 +126,7 @@ func findMechanism(out *EnforceOutcome, resource string) *MechanismOutcome {
 func TestEnforceCgroupV2ApplyAndReadback(t *testing.T) {
 	fx := newEnforceFixture(t)
 	out, err := fx.exec.EnforceLimits(context.Background(), EnforceJobPayload{
-		WebsiteID: enforceTestWebsite, Plan: "Minecraft 4GB",
+		WebsiteID: enforceTestWebsite, Plan: "Business plan",
 		CPUPercent: 200, MemoryMB: 4096, PidsMax: 256, IOWeight: 200,
 	})
 	if err != nil {
@@ -178,7 +178,7 @@ func TestEnforceDegradesHonestlyWithoutCgroups(t *testing.T) {
 	os.Remove(filepath.Join(fx.cgroupDir, "cgroup.controllers"))
 
 	out, err := fx.exec.EnforceLimits(context.Background(), EnforceJobPayload{
-		WebsiteID: enforceTestWebsite, Plan: "Minecraft 4GB",
+		WebsiteID: enforceTestWebsite, Plan: "Business plan",
 		CPUPercent: 200, MemoryMB: 4096, DiskMB: 20480,
 		BandwidthMB: 2 * 1024 * 1024, PidsMax: 256,
 	})
@@ -372,7 +372,7 @@ func TestBreachEvaluationSuspendHook(t *testing.T) {
 // TestEnforceOutcomeJSON — the outcome round-trips (jobs transport).
 func TestEnforceOutcomeJSON(t *testing.T) {
 	out := EnforceOutcome{
-		WebsiteID: "w", Plan: "Minecraft 4GB",
+		WebsiteID: "w", Plan: "Business plan",
 		Mechanisms: []MechanismOutcome{{Resource: "ram", Mode: "enforced", Mechanism: "cgroup-v2"}},
 		Usage:      map[string]float64{"ram": 1024},
 		Breaches:   []BreachReport{{Resource: "bandwidth", Action: "suspend"}},
@@ -385,7 +385,7 @@ func TestEnforceOutcomeJSON(t *testing.T) {
 	if err := json.Unmarshal(b, &back); err != nil {
 		t.Fatal(err)
 	}
-	if back.Plan != "Minecraft 4GB" || len(back.Mechanisms) != 1 || len(back.Breaches) != 1 {
+	if back.Plan != "Business plan" || len(back.Mechanisms) != 1 || len(back.Breaches) != 1 {
 		t.Fatalf("round trip lost data: %+v", back)
 	}
 }
@@ -398,10 +398,10 @@ func TestEnforceOutcomeJSON(t *testing.T) {
 func TestDriftDisplaySourceEqualsEnforcementSource(t *testing.T) {
 	fx := newEnforceFixture(t)
 
-	// 1. ENFORCEMENT: apply the Minecraft 4GB matrix node-side (pass one
+	// 1. ENFORCEMENT: apply the Business plan matrix node-side (pass one
 	// creates the slice; the op is idempotent).
 	payload := EnforceJobPayload{
-		WebsiteID: enforceTestWebsite, Plan: "Minecraft 4GB",
+		WebsiteID: enforceTestWebsite, Plan: "Business plan",
 		CPUPercent: 200, MemoryMB: 4096, PidsMax: 256, IOWeight: 200,
 	}
 	if _, err := fx.exec.EnforceLimits(context.Background(), payload); err != nil {

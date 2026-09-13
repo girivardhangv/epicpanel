@@ -97,7 +97,7 @@ func (e ErrLimitReached) Error() string {
 // CheckCount validates that current usage allows one more unit of the
 // counted resource under the plan's limits. Ungoverned resources (not in
 // the plan matrix) pass; a governed count of 0 genuinely forbids the
-// resource (Discord Basic backups = 0, Minecraft plans databases = 0).
+// resource (e.g. a plan with backups = 0).
 func CheckCount(l Limits, name string, current int) error {
 	r, ok := l.Resources[name]
 	if !ok {

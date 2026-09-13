@@ -74,19 +74,14 @@ func newBillingTestEnv(t *testing.T) *billingTestEnv {
 	// + workload rows so tests start isolated (mirrors the phase-8 env).
 	ctx := context.Background()
 	for _, table := range []string{
-		"schedule_tasks", "server_variables", "server_databases", "server_activities",
-		"subusers", "mount_servers", "mount_eggs", "mounts",
-		"egg_variables", "eggs", "nests",
-		"billing_payments", "billing_orders", "bot_schedules", "bot_instances",
-		"minecraft_world_backups", "minecraft_schedules", "minecraft_instances",
-		"jobs",
+		"billing_payments", "billing_orders", "jobs",
 	} {
 		if _, err := srv.Pool.Exec(ctx, "DELETE FROM "+table); err != nil {
 			t.Fatalf("clear %s: %v", table, err)
 		}
 	}
 	if _, err := srv.Pool.Exec(ctx,
-		`UPDATE subscriptions SET last_job_id = NULL, website_id = NULL, bot_id = NULL, instance_id = NULL`); err != nil {
+		`UPDATE subscriptions SET last_job_id = NULL, website_id = NULL`); err != nil {
 		t.Fatal(err)
 	}
 	for _, table := range []string{"invoices", "subscriptions", "customers", "websites"} {
@@ -98,7 +93,7 @@ func newBillingTestEnv(t *testing.T) *billingTestEnv {
 	blClient := &testClient{t: t, base: ts.URL, http: client.http}
 	env := &billingTestEnv{srv: srv, app: client, bl: blClient}
 
-	// Bootstrap: admin user + org + a Discord-plan product.
+	// Bootstrap: admin user + org + a web-plan product.
 	client.do("POST", "/v1/auth/register", map[string]string{
 		"email": "bladmin@example.test", "password": "supersecret123", "name": "BL Admin",
 	})
@@ -109,7 +104,7 @@ func newBillingTestEnv(t *testing.T) *billingTestEnv {
 	}
 
 	// An online server so auto-placement can provision (billing uses the
-	// same AutoPickServer path as the workload APIs). Direct SQL: the
+	// same AutoPickServer path as the website APIs). Direct SQL: the
 	// scoped billing router does not mount the server-create route.
 	var serverID uuid.UUID
 	if err := srv.Pool.QueryRow(ctx, `
@@ -118,23 +113,16 @@ func newBillingTestEnv(t *testing.T) *billingTestEnv {
 		RETURNING id`, blUUID(t, env.orgID)).Scan(&serverID); err != nil {
 		t.Fatalf("seed server: %v", err)
 	}
-	// The bot provisioner auto-picks by runtime; enroll node 22.
-	if _, err := srv.Pool.Exec(ctx, `
-		INSERT INTO runtimes (server_id, type, version, status, created_by)
-		VALUES ($1, 'node', '22', 'available', (SELECT id FROM users WHERE email = 'bladmin@example.test'))`,
-		serverID); err != nil {
-		t.Fatalf("seed runtime: %v", err)
-	}
-	// Link the product to a Discord plan: the purchase grants the plan to
+	// Link the product to a web plan: the purchase grants the plan to
 	// the org at provisioning time (plans <-> products).
-	var discordPlanID string
+	var planID string
 	if err := srv.Pool.QueryRow(context.Background(),
-		`SELECT id FROM hosting_packages WHERE name = 'Discord Pro'`).Scan(&discordPlanID); err != nil {
-		t.Fatalf("discord plan: %v", err)
+		`SELECT id FROM hosting_packages WHERE name = 'Pro'`).Scan(&planID); err != nil {
+		t.Fatalf("web plan: %v", err)
 	}
 	created := blClient.do("POST", "/v1/admin/billing/products", map[string]any{
-		"name": "Discord Starter", "type": "discord", "price_minor": 300,
-		"description": "one bot", "plan_id": discordPlanID,
+		"name": "Starter Site", "type": "hosting", "price_minor": 300,
+		"description": "one website", "plan_id": planID,
 	})
 	env.prodID, _ = created.body["id"].(string)
 	if env.prodID == "" {

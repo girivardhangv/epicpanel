@@ -44,10 +44,9 @@ type Streamer struct {
 
 	connected bool
 
-	// outCh carries asynchronous frames (console.output, server.state,
-	// installation.output) produced by other subsystems. It is the seam that
-	// keeps the read path (docker/journald) and the state machine decoupled
-	// from the network goroutine (spec §37).
+	// outCh carries asynchronous event frames produced by other subsystems.
+	// It is the seam that keeps the producer side decoupled from the network
+	// goroutine (spec §37).
 	outCh chan agentproto.Frame
 }
 
@@ -72,9 +71,9 @@ func NewStreamer(controlPlaneURL, token, agentVersion string, interval time.Dura
 }
 
 // Send enqueues an asynchronous frame for delivery on the persistent stream.
-// Non-blocking: when the queue is full the frame is dropped (console frames
-// are re-derivable from the ring via console.request; blocking here would
-// stall the game process — spec §13, §52).
+// Non-blocking: when the queue is full the frame is dropped (event frames are
+// best-effort; a producer that cannot keep up must never stall the sampling
+// loop — spec §13, §52).
 func (s *Streamer) Send(f agentproto.Frame) {
 	select {
 	case s.outCh <- f:
@@ -223,10 +222,6 @@ func (s *Streamer) streamOnce(ctx context.Context) error {
 	// Replay buffered frames the control plane has not acked (resume only).
 	s.replay(conn)
 
-	// Reconnect resynchronization: announce current workload states + console
-	// sequence counters so the panel never renders stale state (spec §36).
-	SendSyncSnapshot(s, s.agentVersion)
-
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
 
@@ -285,10 +280,6 @@ func (s *Streamer) readLoop(conn *websocket.Conn) error {
 			s.mu.Unlock()
 		case agentproto.TypePing:
 			s.send(conn, agentproto.Frame{Type: agentproto.TypePong, SessionID: s.sessionID, Seq: s.seq, Ts: time.Now().UTC()})
-		case agentproto.TypeServerCommand:
-			go handleServerCommand(frame)
-		case agentproto.TypeConsoleRequest:
-			go handleConsoleRequest(s, frame)
 		}
 	}
 }

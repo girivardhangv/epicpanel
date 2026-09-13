@@ -35,8 +35,6 @@ type Backup struct {
 	ID             uuid.UUID  `json:"id"`
 	Organization   uuid.UUID  `json:"organization_id"`
 	WebsiteID      *uuid.UUID `json:"website_id,omitempty"`
-	InstanceID     *uuid.UUID `json:"instance_id,omitempty"`
-	BotID          *uuid.UUID `json:"bot_id,omitempty"`
 	TargetID       *uuid.UUID `json:"target_id,omitempty"`
 	Type           string     `json:"type"`
 	Status         Status     `json:"status"`
@@ -59,7 +57,7 @@ type Backup struct {
 }
 
 // Cols is the shared SELECT projection.
-const cols = `id, organization_id, website_id, instance_id, bot_id, target_id, type, status,
+const cols = `id, organization_id, website_id, target_id, type, status,
 	trigger_type, size_bytes, sha256, encrypted, verification, sink_kind, sink_ref,
 	stored_bytes, target_server_id, databases, error, created_by, started_at,
 	finished_at, verified_at, created_at`
@@ -68,8 +66,8 @@ func scanRow(row pgx.Row) (*Backup, error) {
 	var b Backup
 	var dbs, sinkRef []byte
 	var createdBy []byte
-	var websiteID, instanceID, botID, targetID, targetServer []byte
-	err := row.Scan(&b.ID, &b.Organization, &websiteID, &instanceID, &botID, &targetID,
+	var websiteID, targetID, targetServer []byte
+	err := row.Scan(&b.ID, &b.Organization, &websiteID, &targetID,
 		&b.Type, &b.Status, &b.TriggerType, &b.SizeBytes, &b.SHA256, &b.Encrypted,
 		&b.Verification, &b.SinkKind, &sinkRef, &b.StoredBytes, &targetServer,
 		&dbs, &b.Error, &createdBy, &b.StartedAt, &b.FinishedAt, &b.VerifiedAt, &b.CreatedAt)
@@ -77,8 +75,6 @@ func scanRow(row pgx.Row) (*Backup, error) {
 		return nil, err
 	}
 	b.WebsiteID = nullUUID(websiteID)
-	b.InstanceID = nullUUID(instanceID)
-	b.BotID = nullUUID(botID)
 	b.TargetID = nullUUID(targetID)
 	b.TargetServerID = nullUUID(targetServer)
 	if createdBy != nil {
@@ -120,8 +116,8 @@ type Target struct {
 	Config json.RawMessage `json:"config"`
 	// CredsEnc is the sealed credentials blob — NEVER returned by the API
 	// (write-only). It stays in the struct for the agent payload builder.
-	CredsEnc string `json:"-"`
-	IsDefault bool   `json:"is_default"`
+	CredsEnc  string    `json:"-"`
+	IsDefault bool      `json:"is_default"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -151,7 +147,6 @@ type Schedule struct {
 	ID        uuid.UUID  `json:"id"`
 	OrgID     uuid.UUID  `json:"organization_id"`
 	WebsiteID *uuid.UUID `json:"website_id,omitempty"`
-	BotID     *uuid.UUID `json:"bot_id,omitempty"`
 	Type      string     `json:"type"`
 	Cron      string     `json:"cron"`
 	Enabled   bool       `json:"enabled"`
@@ -160,18 +155,17 @@ type Schedule struct {
 	CreatedAt time.Time  `json:"created_at"`
 }
 
-const scheduleCols = `id, organization_id, website_id, bot_id, type, cron, enabled, last_run_at, next_run_at, created_at`
+const scheduleCols = `id, organization_id, website_id, type, cron, enabled, last_run_at, next_run_at, created_at`
 
 func scanSchedule(row pgx.Row) (*Schedule, error) {
 	var sc Schedule
-	var websiteID, botID []byte
-	err := row.Scan(&sc.ID, &sc.OrgID, &websiteID, &botID, &sc.Type, &sc.Cron,
+	var websiteID []byte
+	err := row.Scan(&sc.ID, &sc.OrgID, &websiteID, &sc.Type, &sc.Cron,
 		&sc.Enabled, &sc.LastRunAt, &sc.NextRunAt, &sc.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
 	sc.WebsiteID = nullUUID(websiteID)
-	sc.BotID = nullUUID(botID)
 	return &sc, nil
 }
 
@@ -195,12 +189,12 @@ func (s *Store) Create(ctx context.Context, b *Backup) (*Backup, error) {
 		sinkRef = "{}" // JSONB-safe default (agent overwrites via outcome)
 	}
 	row := s.Pool.QueryRow(ctx, `
-		INSERT INTO backups (organization_id, website_id, instance_id, bot_id, target_id,
+		INSERT INTO backups (organization_id, website_id, target_id,
 			type, status, trigger_type, size_bytes, sha256, encrypted, verification,
 			sink_kind, sink_ref, stored_bytes, target_server_id, databases, error, created_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
 		RETURNING `+cols,
-		b.Organization, b.WebsiteID, b.InstanceID, b.BotID, b.TargetID,
+		b.Organization, b.WebsiteID, b.TargetID,
 		b.Type, b.Status, b.TriggerType, b.SizeBytes, b.SHA256, b.Encrypted,
 		b.Verification, b.SinkKind, []byte(sinkRef), b.StoredBytes, b.TargetServerID,
 		dbs, b.Error, b.CreatedBy,
@@ -331,23 +325,6 @@ func (s *Store) ListForOrg(ctx context.Context, orgID uuid.UUID, limit int) ([]B
 	return scanBackups(rows, err)
 }
 
-// ListForInstance / ListForBot scope per workload.
-func (s *Store) ListForInstance(ctx context.Context, instanceID uuid.UUID, limit int) ([]Backup, error) {
-	if limit <= 0 || limit > 200 {
-		limit = 50
-	}
-	rows, err := s.Pool.Query(ctx, `SELECT `+cols+` FROM backups WHERE instance_id = $1 ORDER BY created_at DESC LIMIT $2`, instanceID, limit)
-	return scanBackups(rows, err)
-}
-
-func (s *Store) ListForBot(ctx context.Context, botID uuid.UUID, limit int) ([]Backup, error) {
-	if limit <= 0 || limit > 200 {
-		limit = 50
-	}
-	rows, err := s.Pool.Query(ctx, `SELECT `+cols+` FROM backups WHERE bot_id = $1 ORDER BY created_at DESC LIMIT $2`, botID, limit)
-	return scanBackups(rows, err)
-}
-
 func scanBackups(rows pgx.Rows, err error) ([]Backup, error) {
 	if err != nil {
 		return nil, err
@@ -370,11 +347,11 @@ func scanBackups(rows pgx.Rows, err error) ([]Backup, error) {
 
 // Pruned is one removed backup (used for the prune event + sink delete).
 type Pruned struct {
-	ID        uuid.UUID `json:"id"`
-	SinkKind  string    `json:"sink_kind"`
-	SinkRef   string    `json:"sink_ref"`
-	KeyEnc    string    `json:"key_enc"`
-	Type      string    `json:"type"`
+	ID       uuid.UUID `json:"id"`
+	SinkKind string    `json:"sink_kind"`
+	SinkRef  string    `json:"sink_ref"`
+	KeyEnc   string    `json:"key_enc"`
+	Type     string    `json:"type"`
 }
 
 // scanPrunedRows is the raw scan with internal columns (incl. key_enc).
@@ -608,10 +585,10 @@ func (s *Store) DefaultTarget(ctx context.Context, orgID uuid.UUID) (*targetRow,
 
 func (s *Store) CreateSchedule(ctx context.Context, sc *Schedule) (*Schedule, error) {
 	row := s.Pool.QueryRow(ctx, `
-		INSERT INTO backup_schedules (organization_id, website_id, bot_id, type, cron, enabled, next_run_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7)
+		INSERT INTO backup_schedules (organization_id, website_id, type, cron, enabled, next_run_at)
+		VALUES ($1,$2,$3,$4,$5,$6)
 		RETURNING `+scheduleCols,
-		sc.OrgID, sc.WebsiteID, sc.BotID, sc.Type, sc.Cron, sc.Enabled, sc.NextRunAt,
+		sc.OrgID, sc.WebsiteID, sc.Type, sc.Cron, sc.Enabled, sc.NextRunAt,
 	)
 	return scanSchedule(row)
 }
@@ -676,7 +653,7 @@ func (s *Store) DueForSchedule(ctx context.Context, limit int) ([]DueForSchedule
 	}
 	var out []DueForScheduleRow
 	for _, d := range due {
-		if d.Schedule.WebsiteID == nil || d.Schedule.BotID != nil {
+		if d.Schedule.WebsiteID == nil {
 			continue
 		}
 		out = append(out, DueForScheduleRow{
@@ -702,14 +679,13 @@ func (s *Store) CreateSystem(ctx context.Context, orgID, websiteID, serverID uui
 
 func (s *Store) DueSchedules(ctx context.Context, limit int) ([]DueSchedule, error) {
 	rows, err := s.Pool.Query(ctx, `
-		SELECT bsc.id, bsc.organization_id, bsc.website_id, bsc.bot_id, bsc.type, bsc.cron,
+		SELECT bsc.id, bsc.organization_id, bsc.website_id, bsc.type, bsc.cron,
 		       bsc.enabled, bsc.last_run_at, bsc.next_run_at, bsc.created_at,
-		       COALESCE(w.server_id, b.server_id) AS server_id
+		       w.server_id AS server_id
 		FROM backup_schedules bsc
-		LEFT JOIN websites w ON w.id = bsc.website_id
-		LEFT JOIN bot_instances b ON b.id = bsc.bot_id
+		JOIN websites w ON w.id = bsc.website_id
 		WHERE bsc.enabled AND bsc.next_run_at <= now()
-		  AND (w.server_id IS NOT NULL OR b.server_id IS NOT NULL)
+		  AND w.server_id IS NOT NULL
 		LIMIT $1
 	`, limit)
 	if err != nil {
@@ -719,8 +695,8 @@ func (s *Store) DueSchedules(ctx context.Context, limit int) ([]DueSchedule, err
 	var out []DueSchedule
 	for rows.Next() {
 		var d DueSchedule
-		var websiteID, botID []byte
-		err := rows.Scan(&d.Schedule.ID, &d.Schedule.OrgID, &websiteID, &botID,
+		var websiteID []byte
+		err := rows.Scan(&d.Schedule.ID, &d.Schedule.OrgID, &websiteID,
 			&d.Schedule.Type, &d.Schedule.Cron, &d.Schedule.Enabled,
 			&d.Schedule.LastRunAt, &d.Schedule.NextRunAt, &d.Schedule.CreatedAt,
 			&d.ServerID)
@@ -728,7 +704,6 @@ func (s *Store) DueSchedules(ctx context.Context, limit int) ([]DueSchedule, err
 			return nil, err
 		}
 		d.Schedule.WebsiteID = nullUUID(websiteID)
-		d.Schedule.BotID = nullUUID(botID)
 		out = append(out, d)
 	}
 	return out, rows.Err()

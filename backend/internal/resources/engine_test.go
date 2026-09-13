@@ -7,14 +7,11 @@ import (
 	"github.com/google/uuid"
 )
 
-// TestSeedPlansAreVerbatim — the 7 verbatim plan names from the master doc
-// must exist, and Minecraft 4GB must carry the verbatim matrix:
-// RAM 4096 MB · CPU 200% · Disk 20 GB · Bandwidth 2 TB · Ports 1 · Backups 3.
+// TestSeedPlansAreVerbatim — the built-in web plans must exist, and Business
+// must carry the verbatim matrix: RAM 2048 MB · CPU 400% · Disk 100 GB ·
+// Bandwidth 5 TB · Processes 256 · Databases 100 · Email 200.
 func TestSeedPlansAreVerbatim(t *testing.T) {
-	want := []string{
-		"Starter", "Pro", "Business", "Minecraft 2GB", "Minecraft 4GB",
-		"Discord Basic", "Discord Pro",
-	}
+	want := []string{"Starter", "Pro", "Business"}
 	got := map[string]bool{}
 	for _, p := range AllPlans() {
 		got[p.Name] = true
@@ -28,27 +25,25 @@ func TestSeedPlansAreVerbatim(t *testing.T) {
 		t.Fatalf("seed plan count = %d, want %d (names must be exactly the verbatim set)", len(got), len(want))
 	}
 
-	mc4, ok := PlanByName("Minecraft 4GB")
+	biz, ok := PlanByName("Business")
 	if !ok {
-		t.Fatal("Minecraft 4GB missing")
+		t.Fatal("Business missing")
 	}
-	if mc4.Kind != KindMinecraft {
-		t.Fatalf("Minecraft 4GB kind = %q, want minecraft", mc4.Kind)
+	if biz.Kind != KindWeb {
+		t.Fatalf("Business kind = %q, want web", biz.Kind)
 	}
 	for name, wantQty := range map[string]float64{
-		ResRAM:       4096,
-		ResCPU:       200,
-		ResDisk:      20 * 1024,
-		ResBandwidth: 2 * 1024 * 1024,
-		ResPorts:     1,
-		ResBackups:   3,
+		ResRAM:       2048,
+		ResCPU:       400,
+		ResDisk:      100 * 1024,
+		ResBandwidth: 5 * 1024 * 1024,
+		ResProcesses: 256,
+		ResDatabases: 100,
+		ResEmail:     200,
 	} {
-		if q := mc4.Limits[name]; q != wantQty {
-			t.Errorf("Minecraft 4GB %s = %v, want %v (verbatim)", name, q, wantQty)
+		if q := biz.Limits[name]; q != wantQty {
+			t.Errorf("Business %s = %v, want %v (verbatim)", name, q, wantQty)
 		}
-	}
-	if _, ok := mc4.Limits[ResDatabases]; ok {
-		t.Errorf("Minecraft 4GB must not govern %s (not in the verbatim example)", ResDatabases)
 	}
 }
 
@@ -67,17 +62,17 @@ func TestWebResourceSetVerbatim(t *testing.T) {
 	}
 }
 
-// TestGetLimitsShape — GetLimits renders the unified Resource model with
+// TestEngineGetLimitsShape — GetLimits renders the unified Resource model with
 // correct units and honest enforced flags.
 func TestEngineGetLimitsShape(t *testing.T) {
 	e := NewEngine()
-	w := Workload{Kind: KindMinecraft, Plan: PlanInput{
-		Name: "Minecraft 4GB", Kind: KindMinecraft, MemoryLimitMB: 4096,
+	w := Workload{Kind: KindWeb, Plan: PlanInput{
+		Name: "Scale", Kind: KindWeb, MemoryLimitMB: 4096,
 		CPUCores: 2.0, MaxDiskMB: 20 * 1024, MaxBandwidthMB: 2 * 1024 * 1024,
 		MaxProcesses: 256, MaxPorts: 1, MaxBackups: 3,
 	}}
 	limits := e.GetLimits(w)
-	if limits.Plan != "Minecraft 4GB" || limits.Kind != KindMinecraft {
+	if limits.Plan != "Scale" || limits.Kind != KindWeb {
 		t.Fatalf("limits identity = %s/%s", limits.Plan, limits.Kind)
 	}
 	if r, ok := limits.Get(ResCPU); !ok || r.Unit != UnitPercent || r.Limit != 200 || !r.Enforced {
@@ -90,7 +85,7 @@ func TestEngineGetLimitsShape(t *testing.T) {
 		t.Fatalf("bandwidth must be accounted (not kernel-enforced): %+v", r)
 	}
 	if r, ok := limits.Get(ResDatabases); !ok || r.Limit != 0 || r.LimitUnlimited {
-		t.Fatalf("minecraft plan must govern %s at 0 (no databases): %+v", ResDatabases, r)
+		t.Fatalf("plan must govern %s at 0 (no databases): %+v", ResDatabases, r)
 	}
 }
 
@@ -121,10 +116,10 @@ func TestEngineGetUsageMerge(t *testing.T) {
 func TestEnforceClamping(t *testing.T) {
 	e := NewEngine()
 	w := Workload{
-		Kind:      KindMinecraft,
+		Kind:      KindWeb,
 		WebsiteID: mustUUID(t, "11111111-1111-1111-1111-111111111111"),
 		Plan: PlanInput{
-			Name: "Minecraft 4GB", Kind: KindMinecraft, MemoryLimitMB: 4096, CPUCores: 2.0,
+			Name: "Scale", Kind: KindWeb, MemoryLimitMB: 4096, CPUCores: 2.0,
 			MaxDiskMB: 20 * 1024, MaxBandwidthMB: 2 * 1024 * 1024, MaxProcesses: 256,
 			IOWeight: 99999, // clamp to 10000
 			MaxPorts: 1, MaxBackups: 3,
@@ -135,7 +130,7 @@ func TestEnforceClamping(t *testing.T) {
 		t.Fatalf("cpu percent = %v, want 200", p.CPUPercent)
 	}
 	if p.MemoryMB != 4096 {
-		t.Fatalf("memory MB = %v, want 4096 (verbatim)", p.MemoryMB)
+		t.Fatalf("memory MB = %v, want 4096", p.MemoryMB)
 	}
 	if p.DiskMB != 20*1024 {
 		t.Fatalf("disk MB = %v, want 20480 (20 GB)", p.DiskMB)
@@ -146,12 +141,8 @@ func TestEnforceClamping(t *testing.T) {
 	if p.PidsMax != 256 {
 		t.Fatalf("pids max = %v, want 256", p.PidsMax)
 	}
-	// IO weight is a web-set resource; minecraft plans don't govern it.
-	wl := e.EnforcePlan(Workload{Kind: KindWeb, WebsiteID: w.WebsiteID, Plan: PlanInput{
-		Name: "Starter", Kind: KindWeb, IOWeight: 99999, MemoryLimitMB: 512, CPUCores: 1,
-		MaxDiskMB: 2048,
-	}})
-	if got := ClampIOWeight(wl.IOWeight); got != 10000 {
+	// IO weight clamps to the kernel ceiling; 0 stays the kernel default.
+	if got := ClampIOWeight(p.IOWeight); got != 10000 {
 		t.Fatalf("io weight clamp = %v, want 10000", got)
 	}
 	if p2 := e.EnforcePlan(Workload{Kind: KindWeb, WebsiteID: w.WebsiteID, Plan: PlanInput{
@@ -243,25 +234,25 @@ func TestCountLimits(t *testing.T) {
 	}}), ResPorts, 0); err == nil {
 		t.Fatal("plan with max_ports=0 must forbid ports")
 	}
-	// Minecraft 4GB: ports 1 — a second port is rejected.
-	mc := e.GetLimits(Workload{Kind: KindMinecraft, Plan: PlanInput{
-		Name: "Minecraft 4GB", Kind: KindMinecraft, MaxPorts: 1, MaxBackups: 3,
+	// A plan allowing exactly 1 port rejects the second.
+	onePort := e.GetLimits(Workload{Kind: KindWeb, Plan: PlanInput{
+		Name: "SinglePort", Kind: KindWeb, MaxPorts: 1, MaxBackups: 3,
 	}})
-	if err := CheckCount(mc, ResPorts, 1); err == nil {
-		t.Fatal("Minecraft 4GB allows exactly 1 port")
+	if err := CheckCount(onePort, ResPorts, 1); err == nil {
+		t.Fatal("plan allowing 1 port must reject the second")
 	}
-	// Discord Basic: backups 0 — any new backup is rejected.
-	db := e.GetLimits(Workload{Kind: KindDiscord, Plan: PlanInput{
-		Name: "Discord Basic", Kind: KindDiscord, MaxBackups: 0,
+	// backups = 0 forbids any backup.
+	noBackup := e.GetLimits(Workload{Kind: KindWeb, Plan: PlanInput{
+		Name: "NoBackup", Kind: KindWeb, MaxBackups: 0,
 	}})
-	if err := CheckCount(db, ResBackups, 0); err == nil {
-		t.Fatal("Discord Basic allows 0 backups")
+	if err := CheckCount(noBackup, ResBackups, 0); err == nil {
+		t.Fatal("plan with 0 backups forbids any backup")
 	}
-	// CheckCounts walks the governed set in order.
-	if err := CheckCounts(mc, map[string]int{ResPorts: 1, ResBackups: 3}); err == nil {
-		t.Fatal("CheckCounts must catch the port breach")
+	// CheckCounts walks the governed set (databases is in the web set).
+	if err := CheckCounts(limits, map[string]int{ResDatabases: 2}); err == nil {
+		t.Fatal("CheckCounts must catch the database breach")
 	}
-	if err := CheckCounts(mc, map[string]int{ResPorts: 0, ResBackups: 2}); err != nil {
+	if err := CheckCounts(limits, map[string]int{ResDatabases: 1, ResDomains: 4}); err != nil {
 		t.Fatalf("within limits: %v", err)
 	}
 }

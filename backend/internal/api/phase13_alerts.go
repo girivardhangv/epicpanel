@@ -263,7 +263,7 @@ func validMetric(class, metric string) bool {
 	switch class {
 	case "threshold":
 		switch metric {
-		case "cpu", "ram", "disk", "mc_tps", "mc_mspt", "mc_players", "discord_cpu", "discord_ram", "discord_uptime":
+		case "cpu", "ram", "disk":
 			return true
 		}
 	case "state":
@@ -383,9 +383,6 @@ func (h *alertsHandler) obsWorkloads(w http.ResponseWriter, r *http.Request) {
 		Ref      string  `json:"ref"`
 		Kind     string  `json:"kind"`
 		State    string  `json:"state"`
-		TPS      float64 `json:"tps"`
-		MSPT     float64 `json:"mspt"`
-		Players  int     `json:"players"`
 		CPUPct   float64 `json:"cpu_percent"`
 		RAMPct   float64 `json:"ram_percent"`
 		UptimeS  int64   `json:"uptime_s"`
@@ -398,7 +395,6 @@ func (h *alertsHandler) obsWorkloads(w http.ResponseWriter, r *http.Request) {
 			for _, a := range f.Apps {
 				out = append(out, wlRow{
 					Ref: a.Kind + ":" + a.WebsiteID, Kind: a.Kind, State: state,
-					TPS: a.TPS, MSPT: a.MSPT, Players: a.Players,
 					CPUPct: a.CPUPercent, RAMPct: 0,
 					UptimeS: a.UptimeS, Restarts: a.RestartCount,
 				})

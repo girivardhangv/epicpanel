@@ -46,8 +46,7 @@ var dropList = []string{
 	"recovery_codes", "mfa_challenges", "service_accounts", "api_tokens",
 	"applications", "ssh_keys", "system_settings", "cron_jobs", "http_checks", "alerts", "backups",
 	"deployments", "domains", "dns_records", "dns_zones", "domain_redirects", "ftp_accounts", "databases", "allocations",
-	"minecraft_world_backups", "minecraft_schedules", "minecraft_instances",
-	"bot_schedules", "bot_instances", "runtimes", "jobs", "websites",
+	"runtimes", "jobs", "websites",
 	"server_metrics", "server_agent_tokens", "server_registration_tokens", "servers",
 	"audit_logs", "sessions", "organization_members", "organizations", "users", "schema_migrations",
 }
@@ -99,7 +98,7 @@ func (f *fakeProvisioner) provision(ctx context.Context, sub *Subscription, prod
 	}
 	if f.jobID != nil {
 		id := *f.jobID
-		return f.store.SetSubscriptionWorkload(ctx, sub.ID, sub.WorkloadKind, nil, nil, nil, &id, sub.ProvisionAttempts+1)
+		return f.store.SetSubscriptionWorkload(ctx, sub.ID, sub.WorkloadKind, nil, &id, sub.ProvisionAttempts+1)
 	}
 	return nil
 }
@@ -304,7 +303,7 @@ func TestPurchaseProvisionsAndActivates(t *testing.T) {
 func TestWebhookReplayIsIdempotent(t *testing.T) {
 	h := newHarness(t, nil)
 	org := h.seedOrg(t, "replayco")
-	product := h.seedProduct(t, "Bot Basic", "discord", 300, nil)
+	product := h.seedProduct(t, "Basic Site", "hosting", 300, nil)
 
 	// First webhook: full flow runs.
 	_, _, replayed, err := h.purchase(t, org, product, "monthly", "tok_ok", "evt-replay-1")
@@ -374,7 +373,7 @@ func TestDeclinedPurchaseStaysPendingForRetry(t *testing.T) {
 func TestDispatchRefusalFailsWithArtifacts(t *testing.T) {
 	h := newHarness(t, nil)
 	org := h.seedOrg(t, "refuseco")
-	product := h.seedProduct(t, "MC 4GB", "minecraft", 2000, nil)
+	product := h.seedProduct(t, "Scale Site", "hosting", 2000, nil)
 
 	h.Provision.failNext = true
 	_, sub, _, err := h.purchase(t, org, product, "monthly", "tok_ok", "evt-refuse-1")
@@ -513,7 +512,7 @@ func TestGraceWalkSuspendTerminate(t *testing.T) {
 	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	h := newHarness(t, func() time.Time { return now })
 	org := h.seedOrg(t, "graceco")
-	product := h.seedProduct(t, "Bot Pro", "discord", 700, nil)
+	product := h.seedProduct(t, "Pro Site", "hosting", 700, nil)
 
 	// Grace = 3 days default; inject 1 day + terminate window 1 day.
 	ctx := context.Background()
@@ -738,7 +737,7 @@ func TestCancelAtPeriodEndTerminates(t *testing.T) {
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	h := newHarness(t, func() time.Time { return now })
 	org := h.seedOrg(t, "cancelco")
-	product := h.seedProduct(t, "Bot Cancel", "discord", 300, nil)
+	product := h.seedProduct(t, "Cancel Site", "hosting", 300, nil)
 
 	_, sub, _, err := h.purchase(t, org, product, "monthly", "tok_ok", "evt-cancel-1")
 	if err != nil {

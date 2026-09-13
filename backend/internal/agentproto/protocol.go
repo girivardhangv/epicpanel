@@ -120,9 +120,7 @@ type Sample struct {
 	// Containers: CPU, Memory, Memory limit, Network RX/TX, Block I/O, PIDs,
 	// Uptime.
 	Containers []ContainerSample `json:"containers,omitempty"`
-	// Managed app workloads (kind: app | minecraft | discord). Minecraft
-	// carries tps/mspt/players (populated from Phase 7); Discord carries
-	// restart count.
+	// Managed app workloads (systemd transient units or containers).
 	Apps []AppSample `json:"apps,omitempty"`
 }
 
@@ -232,11 +230,11 @@ type ContainerSample struct {
 	UptimeS         int64   `json:"uptime_s"`
 }
 
-// AppSample is the managed-app workload envelope (systemd transient units).
-// Kind distinguishes generic apps, Minecraft servers and Discord bots.
+// AppSample is the managed-app workload envelope (systemd transient units or
+// containers).
 type AppSample struct {
 	WebsiteID    string  `json:"website_id"`
-	Kind         string  `json:"kind"` // app | minecraft | discord
+	Kind         string  `json:"kind"`
 	Status       string  `json:"status"`
 	CPUPercent   float64 `json:"cpu_percent"`
 	MemoryBytes  int64   `json:"memory_bytes"`
@@ -245,9 +243,4 @@ type AppSample struct {
 	DiskUsedMB   int64   `json:"disk_used_mb"`
 	UptimeS      int64   `json:"uptime_s"`
 	RestartCount int     `json:"restart_count"`
-	// Minecraft-only (populated once Phase 7 wires RCON; always present in
-	// the protocol so UIs land without protocol changes).
-	Players int     `json:"players"`
-	TPS     float64 `json:"tps"`
-	MSPT    float64 `json:"mspt"`
 }

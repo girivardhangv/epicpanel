@@ -145,7 +145,7 @@ func (h *Handler) parseAndValidate(r *http.Request) (*packageRequest, *httpapi.A
 		req.CPUCores = 1.0
 	}
 	switch req.Kind {
-	case "web", "minecraft", "discord":
+	case "web":
 	default:
 		req.Kind = "web"
 	}

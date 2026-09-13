@@ -6,8 +6,6 @@ package alerts
 //   CPU > threshold | RAM > threshold | Disk > threshold | Node offline
 //   Service down | Backup failed | Provisioning failed | SSL expiration
 //   Container crashed
-// plus workload threshold metrics (mc_tps / mc_mspt / mc_players /
-// discord_cpu / discord_ram / discord_uptime) covering the overview tree.
 
 import (
 	"context"

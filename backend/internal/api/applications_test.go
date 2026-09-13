@@ -35,7 +35,7 @@ func TestApplicationLifecycle(t *testing.T) {
 	serverID := enroll.body["server"].(map[string]any)["id"].(string)
 
 	// node runtime available
-	resp = admin.do("POST", "/v1/organizations/"+orgID+"/servers/"+serverID+"/runtimes", map[string]string{"type": "node", "version": "22.0"})
+	resp = admin.do("POST", "/v1/organizations/"+orgID+"/servers/"+serverID+"/runtimes", map[string]string{"type": "node", "version": "22"})
 	claim := agent.do("POST", "/v1/agent/jobs/claim", nil)
 	if j, _ := claim.body["job"].(map[string]any); j != nil {
 		agent.do("POST", "/v1/agent/jobs/"+j["id"].(string)+"/result", map[string]any{"success": true})
@@ -60,7 +60,7 @@ func TestApplicationLifecycle(t *testing.T) {
 
 	// node website
 	resp = admin.do("POST", "/v1/organizations/"+orgID+"/websites", map[string]any{
-		"name": "api-app", "server_id": serverID, "runtime": "node", "runtime_version": "22.0", "primary_domain": "api.example.test",
+		"name": "api-app", "server_id": serverID, "runtime": "node", "runtime_version": "22", "primary_domain": "api.example.test",
 	})
 	if resp.status != http.StatusAccepted {
 		t.Fatalf("create node site: %d %v", resp.status, resp.body)

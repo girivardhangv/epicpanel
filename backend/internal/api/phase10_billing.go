@@ -260,7 +260,7 @@ func (s *Server) provisionWebAccount(ctx context.Context, svc *billing.Service, 
 	}
 	wsID := ws.ID
 	jobID := job.ID
-	return svc.Store.SetSubscriptionWorkload(ctx, sub.ID, sub.WorkloadKind, &wsID, nil, nil, &jobID, sub.ProvisionAttempts+1)
+	return svc.Store.SetSubscriptionWorkload(ctx, sub.ID, sub.WorkloadKind, &wsID, &jobID, sub.ProvisionAttempts+1)
 }
 
 // pickProvisionServer resolves an explicit server or auto-picks one.

@@ -58,10 +58,8 @@ func (h *Handler) AgentStream(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("agent stream connected", "server", srv.ID.String())
 
-	// Writer loop: welcome + periodic acks + control-plane → agent frames.
+	// Writer loop: welcome + periodic acks + control-plane pings.
 	ackCh := make(chan int64, 8)
-	outCh := registerAgentConn(srv.ID)
-	defer unregisterAgentConn(srv.ID)
 	go func() {
 		defer func() {
 			// Close the read loop on writer failure via a write deadline miss.
@@ -90,10 +88,6 @@ func (h *Handler) AgentStream(w http.ResponseWriter, r *http.Request) {
 						Data: mustJSONRaw(agentproto.Ack{Seq: lastAcked})}) {
 						return
 					}
-				}
-			case out := <-outCh:
-				if !writeJSON(out) {
-					return
 				}
 			case <-ticker.C:
 				if !writeJSON(agentproto.Frame{Type: agentproto.TypePing, Ts: time.Now().UTC()}) {
@@ -128,12 +122,6 @@ func (h *Handler) AgentStream(w http.ResponseWriter, r *http.Request) {
 				case ackCh <- frame.Seq:
 				default:
 				}
-			}
-		case agentproto.TypeConsoleOutput, agentproto.TypeConsoleHistory, agentproto.TypeServerState,
-			agentproto.TypeServerCrashed, agentproto.TypeInstallOutput,
-			agentproto.TypeSyncStart, agentproto.TypeSyncComplete:
-			if h.OnAgentFrame != nil {
-				h.OnAgentFrame(srv.ID, frame)
 			}
 		default:
 			// Unknown frame type: tolerate (protocol forward compatibility).

@@ -274,7 +274,7 @@ func (h *phase11Handler) createBackup(w http.ResponseWriter, r *http.Request) {
 		httpapi.RespondError(w, httpapi.ErrValidation("unsupported backup type"))
 		return
 	}
-	serverID, websiteID, instanceID, botID, apiErr := h.resolveWorkload(r, orgID, req)
+	serverID, websiteID, apiErr := h.resolveWorkload(r, orgID, req)
 	if apiErr != nil {
 		httpapi.RespondError(w, apiErr)
 		return
@@ -336,7 +336,7 @@ func (h *phase11Handler) createBackup(w http.ResponseWriter, r *http.Request) {
 	payload := backups.BackupRunPayload{
 		BackupID: b.ID.String(), Type: req.Type,
 		WebsiteID: req.WebsiteID,
-		Target: sinkWire(targetCfg), Encrypt: req.Encrypt, KeyEnc: keyEnc, Verify: req.Verify,
+		Target:    sinkWire(targetCfg), Encrypt: req.Encrypt, KeyEnc: keyEnc, Verify: req.Verify,
 	}
 	if _, err := h.srv.Jobs.Enqueue(r.Context(), serverID, websiteID, jobs.Type("backup_run"), payload); err != nil {
 		_ = h.srv.Backups.MarkFailed(r.Context(), b.ID, "enqueue failed")

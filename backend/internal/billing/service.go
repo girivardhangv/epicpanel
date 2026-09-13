@@ -47,15 +47,14 @@ type Service struct {
 	Audit  *audit.Store
 
 	// Provision dispatches the workload for a paid subscription (by product
-	// type: web account / Minecraft instance / Discord bot). Implemented by
-	// the API layer (it owns the Phase 7/8 stores + limit engine); the core
+	// type: web account or a manual service). Implemented by
+	// the API layer (it owns the websites stores + limit engine); the core
 	// stays engine-agnostic. It MUST enqueue an idempotent job and record
 	// the job id via SetSubscriptionWorkload.
 	Provision func(ctx context.Context, sub *Subscription, product *Product) error
 
 	// Suspend turns the workload off using EXISTING lifecycle jobs
-	// (web: suspend_website; minecraft: mc_stop; discord: bot_stop).
-	// Reversible: Resume undoes it.
+	// (web: suspend_website). Reversible: Resume undoes it.
 	Suspend func(ctx context.Context, sub *Subscription) error
 
 	// Resume reverses a billing suspension.
@@ -902,8 +901,7 @@ func (s *Service) StartGrace(ctx context.Context, sub *Subscription, reason stri
 }
 
 // BeginSuspend moves ACTIVE -> SUSPENDING and enqueues the workload suspend
-// through the EXISTING lifecycle jobs (web: suspend_website, minecraft:
-// mc_stop, discord: bot_stop). Reversible until SUSPENDED.
+// through the EXISTING lifecycle jobs (web: suspend_website). Reversible until SUSPENDED.
 func (s *Service) BeginSuspend(ctx context.Context, sub *Subscription, reason string) error {
 	if _, err := s.Transition(ctx, sub, StateSuspending, nil, reason); err != nil {
 		return err

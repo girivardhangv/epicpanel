@@ -67,8 +67,6 @@ var probeTable = []routeProbe{
 	{"GET", "/v1/organizations/{org_id}/websites/{website_id}/crons", "customer", "developer"},
 	{"GET", "/v1/organizations/{org_id}/backups2", "customer", "any"},
 	{"POST", "/v1/organizations/{org_id}/backups2", "customer", "admin"},
-	{"GET", "/v1/organizations/{org_id}/minecraft", "customer", "any"},
-	{"GET", "/v1/organizations/{org_id}/bots", "customer", "any"},
 	{"GET", "/v1/organizations/{org_id}/billing/subscriptions", "customer", "any"},
 }
 

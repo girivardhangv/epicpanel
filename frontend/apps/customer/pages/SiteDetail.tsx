@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Spinner } from '../loading'
 import { Link, useParams } from 'react-router-dom'
 import { Globe, ArrowLeft, Folder, Clock, Network, KeyRound, History, Plus, Trash2, ShieldQuestion, RefreshCw } from 'lucide-react'
 import { api, useAuth, domainsApi, redirectsApi, fmtBytes, timeAgo } from '@epicpanel/core'
@@ -117,7 +118,7 @@ export function SiteDetailPage() {
 
       <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-center gap-3">
-          <Link to="/websites" className="icon-btn !h-[34px] !w-[34px]" title="Back"><ArrowLeft size={15} /></Link>
+          <Link to="/websites" className="icon-btn !h-[34px] !w-[34px]" title="Back" aria-label="Back"><ArrowLeft size={15} /></Link>
           <div>
             <h1 className="text-[23px] font-bold leading-[1.25] tracking-[-.025em] text-ink">{site?.primary_domain || site?.name || 'Website'}</h1>
             <p className="mt-[5px] flex flex-wrap items-center gap-2 text-[12px] text-muted">
@@ -200,9 +201,9 @@ export function SiteDetailPage() {
                   </div>
                 </div>
                 <RowActions>
-                  <button className="icon-btn" title="Verify DNS" onClick={() => void verifyDns(d)}><ShieldQuestion size={13} /></button>
+                  <button className="icon-btn" title="Verify DNS" aria-label="Verify DNS" onClick={() => void verifyDns(d)}><ShieldQuestion size={13} /></button>
                   {d.kind !== 'primary' && (
-                    <button className="icon-btn hover:!border-[#ffd0d7] hover:!bg-danger-soft hover:!text-danger" title="Remove" onClick={() => void removeAlias(d)}>
+                    <button className="icon-btn hover:!border-[#ffd0d7] hover:!bg-danger-soft hover:!text-danger" title="Remove" aria-label="Remove" onClick={() => void removeAlias(d)}>
                       <Trash2 size={13} />
                     </button>
                   )}
@@ -233,13 +234,14 @@ export function SiteDetailPage() {
                     <button
                       className="icon-btn"
                       title={r.enabled ? 'Pause redirect' : 'Resume redirect'}
+                      aria-label={r.enabled ? 'Pause redirect' : 'Resume redirect'}
                       onClick={() => org && redirectsApi.setEnabled(org.id, r.id, !r.enabled).then(load).catch((ex) => pushToast('error', ex.message))}
                     >
                       {r.enabled ? <Clock size={13} /> : <RefreshCw size={13} />}
                     </button>
                     <button
                       className="icon-btn hover:!border-[#ffd0d7] hover:!bg-danger-soft hover:!text-danger"
-                      title="Delete redirect"
+                      title="Delete redirect" aria-label="Delete redirect"
                       onClick={() => org && redirectsApi.remove(org.id, r.id).then(load).catch((ex) => pushToast('error', ex.message))}
                     >
                       <Trash2 size={13} />
@@ -261,7 +263,7 @@ export function SiteDetailPage() {
           <input className="input" value={aliasForm.docroot_suffix} onChange={(e) => setAliasForm({ ...aliasForm, docroot_suffix: e.target.value })} placeholder="shop" />
         </Field>
         <button className="btn-brand w-full justify-center" onClick={addAlias} disabled={busy || !aliasForm.domain}>
-          {busy ? 'Adding...' : 'Add Domain'}
+          {busy ? (<><Spinner size={13} /> Adding…</>) : 'Add Domain'}
         </button>
       </Modal>
 

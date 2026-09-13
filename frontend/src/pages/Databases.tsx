@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Database, Plus, Trash2, KeyRound, X, ExternalLink } from 'lucide-react'
+import { Database, Plus, Trash2, KeyRound, X, ExternalLink, Loader2 } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
 import { Card, StatusBadge, EmptyState, SkeletonRows } from '@/components/cards'
@@ -17,6 +17,7 @@ export function DatabasesPage() {
   const [creds, setCreds] = useState<{ database: string; user: string; password: string; engine: string } | null>(null)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+  const [dropping, setDropping] = useState('')
   const [query, setQuery] = useState('')
   const [form, setForm] = useState({ name: '', engine: 'mariadb', server_id: '', website_id: '' })
 
@@ -81,8 +82,13 @@ export function DatabasesPage() {
   const remove = async (db: DB) => {
     if (!org) return
     if (!(await confirmAction({ title: 'Drop Database', message: `Drop database ${db.name}? This cannot be undone.`, confirmLabel: 'Drop Database' }))) return
-    await api.del(`/v1/organizations/${org.id}/databases/${db.id}`)
-    await load()
+    setDropping(db.id)
+    try {
+      await api.del(`/v1/organizations/${org.id}/databases/${db.id}`)
+      await load()
+    } finally {
+      setDropping('')
+    }
   }
 
   const filtered = (dbs ?? []).filter((d) => d.name.includes(query.toLowerCase()))
@@ -149,16 +155,27 @@ export function DatabasesPage() {
                           {db.status === 'ready' && (
                             <>
                               {(db.engine === 'mariadb' || db.engine === 'mysql' || db.engine === 'postgres' || db.engine === 'postgresql') && (
-                                <button className="icon-btn" onClick={() => void openPma(db)} title={`Open ${db.engine === 'postgres' ? 'Adminer' : 'phpMyAdmin'} (SSO)`}>
+                                <button
+                                  className="icon-btn"
+                                  onClick={() => void openPma(db)}
+                                  title={`Open ${db.engine === 'postgres' ? 'Adminer' : 'phpMyAdmin'} (SSO)`}
+                                  aria-label={`Open ${db.name} in ${db.engine === 'postgres' ? 'Adminer' : 'phpMyAdmin'} (SSO)`}
+                                >
                                   <ExternalLink size={13} />
                                 </button>
                               )}
-                              <button className="icon-btn" onClick={() => reveal(db)} title="Reveal credentials"><KeyRound size={13} /></button>
+                              <button className="icon-btn" onClick={() => reveal(db)} title="Reveal credentials" aria-label={`Reveal credentials for ${db.name}`}><KeyRound size={13} /></button>
                             </>
                           )}
                           {user?.is_platform_admin && (
-                            <button className="icon-btn hover:!border-[#ffd0d7] hover:!bg-danger-soft hover:!text-danger" onClick={() => remove(db)} title="Drop database">
-                              <Trash2 size={13} />
+                            <button
+                              className="icon-btn hover:!border-[#ffd0d7] hover:!bg-danger-soft hover:!text-danger"
+                              onClick={() => remove(db)}
+                              disabled={dropping === db.id}
+                              title="Drop database"
+                              aria-label={`Drop database ${db.name}`}
+                            >
+                              {dropping === db.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
                             </button>
                           )}
                         </div>

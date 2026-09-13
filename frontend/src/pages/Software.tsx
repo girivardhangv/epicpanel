@@ -95,6 +95,7 @@ export function SoftwarePage() {
   const [show, setShow] = useState(false)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+  const [mutating, setMutating] = useState('')
   const [form, setForm] = useState({ server_id: '', type: 'php', version: '8.3' })
   const [extFor, setExtFor] = useState<Runtime | null>(null)
   const [exts, setExts] = useState<PhpExtension[] | null>(null)
@@ -178,23 +179,29 @@ export function SoftwarePage() {
   const retry = async (r: Runtime) => {
     if (!org) return
     setErr('')
+    setMutating(r.id)
     try {
       await api.post(`/v1/organizations/${org.id}/servers/${r.server_id}/runtimes`, { type: r.type, version: r.version })
       await load()
       await loadJobs()
     } catch (ex: any) {
       setErr(ex.message ?? 'Failed to retry installation')
+    } finally {
+      setMutating('')
     }
   }
 
   const remove = async (r: Runtime) => {
     if (!org) return
     if (!(await confirmAction({ title: 'Remove Runtime', message: `Remove ${ENGINE_LABELS[r.type]} ${r.version} from this server?`, confirmLabel: 'Remove' }))) return
+    setMutating(r.id)
     try {
       await api.del(`/v1/organizations/${org.id}/servers/${r.server_id}/runtimes/${r.id}`)
       await load()
     } catch (ex: any) {
       pushToast('error', ex.message)
+    } finally {
+      setMutating('')
     }
   }
 
@@ -293,7 +300,7 @@ export function SoftwarePage() {
                     <div className="text-[12px] font-bold text-[#243047]">{s.name}</div>
                     <div className="text-[9.5px] text-muted">{s.hostname || s.os_info}</div>
                   </div>
-                  <button className="icon-btn ml-auto" onClick={() => { void load(); void loadJobs() }} title="Refresh">
+                  <button className="icon-btn ml-auto" onClick={() => { void load(); void loadJobs() }} title="Refresh" aria-label={`Refresh software on ${s.name}`}>
                     <RefreshCw size={13} />
                   </button>
                 </div>
@@ -328,13 +335,19 @@ export function SoftwarePage() {
                               </button>
                             )}
                             {r.status === 'failed' && (
-                              <button className="btn-ghost !py-1.5" onClick={() => retry(r)}>
-                                <RefreshCw size={13} /> Retry
+                              <button className="btn-ghost !py-1.5" onClick={() => retry(r)} disabled={mutating === r.id} aria-label={`Retry installing ${ENGINE_LABELS[r.type] ?? r.type} ${r.version}`}>
+                                {mutating === r.id ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} Retry
                               </button>
                             )}
                             {r.status === 'available' && (
-                              <button className="rounded-lg p-2 text-muted transition hover:border-[#ffd0d7] hover:bg-danger-soft hover:text-danger" onClick={() => remove(r)} title="Remove">
-                                <Trash2 size={15} />
+                              <button
+                                className="rounded-lg p-2 text-muted transition hover:border-[#ffd0d7] hover:bg-danger-soft hover:text-danger"
+                                onClick={() => remove(r)}
+                                disabled={mutating === r.id}
+                                title="Remove"
+                                aria-label={`Remove ${ENGINE_LABELS[r.type] ?? r.type} ${r.version}`}
+                              >
+                                {mutating === r.id ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
                               </button>
                             )}
                           </div>

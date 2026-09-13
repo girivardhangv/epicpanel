@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Spinner } from '../loading'
 import { Link } from 'react-router-dom'
 import { Globe, Plus, Trash2, ShieldQuestion, RefreshCw, ArrowRight } from 'lucide-react'
 import { api, useAuth, domainsApi } from '@epicpanel/core'
@@ -135,10 +136,10 @@ export function DomainsPage() {
       header: '',
       render: (d) => (
         <RowActions>
-          <button className="icon-btn" title="Verify DNS" onClick={() => void verifyDns(d)}><ShieldQuestion size={13} /></button>
-          <Link to={`/websites/${d.website_id}`} className="icon-btn" title="Open website"><ArrowRight size={13} /></Link>
+          <button className="icon-btn" title="Verify DNS" aria-label="Verify DNS" onClick={() => void verifyDns(d)}><ShieldQuestion size={13} /></button>
+          <Link to={`/websites/${d.website_id}`} className="icon-btn" title="Open website" aria-label="Open website"><ArrowRight size={13} /></Link>
           {d.kind !== 'primary' && (
-            <button className="icon-btn hover:!border-[#ffd0d7] hover:!bg-danger-soft hover:!text-danger" title="Remove" onClick={() => void removeDomain(d)}>
+            <button className="icon-btn hover:!border-[#ffd0d7] hover:!bg-danger-soft hover:!text-danger" title="Remove" aria-label="Remove" onClick={() => void removeDomain(d)}>
               <Trash2 size={13} />
             </button>
           )}
@@ -203,7 +204,7 @@ export function DomainsPage() {
           <input className="input" value={form.docroot_suffix} onChange={(e) => setForm({ ...form, docroot_suffix: e.target.value })} placeholder="shop" />
         </Field>
         <button className="btn-brand w-full justify-center" onClick={addDomain} disabled={busy || !form.domain || !form.website_id}>
-          {busy ? 'Adding...' : 'Add Domain'}
+          {busy ? (<><Spinner size={13} /> Adding…</>) : 'Add Domain'}
         </button>
       </Modal>
     </div>

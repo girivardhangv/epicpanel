@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Spinner } from '../loading'
 import { useParams } from 'react-router-dom'
 import { Clock, Plus, Trash2, Play, Pause } from 'lucide-react'
 import { api, useAuth, timeAgo } from '@epicpanel/core'
@@ -164,10 +165,10 @@ export function CronJobsPage() {
                   <div className="mt-1 truncate font-mono text-[10.5px] text-muted">{c.command}</div>
                 </div>
                 <RowActions>
-                  <button className="icon-btn" onClick={() => void toggle(c)} title={c.status === 'active' ? 'Pause' : 'Resume'}>
+                  <button className="icon-btn" onClick={() => void toggle(c)} title={c.status === 'active' ? 'Pause' : 'Resume'} aria-label={c.status === 'active' ? 'Pause' : 'Resume'}>
                     {c.status === 'active' ? <Pause size={13} /> : <Play size={13} />}
                   </button>
-                  <button className="icon-btn hover:!border-[#ffd0d7] hover:!bg-danger-soft hover:!text-danger" onClick={() => remove(c)} title="Delete">
+                  <button className="icon-btn hover:!border-[#ffd0d7] hover:!bg-danger-soft hover:!text-danger" onClick={() => remove(c)} title="Delete" aria-label="Delete">
                     <Trash2 size={13} />
                   </button>
                 </RowActions>
@@ -194,7 +195,7 @@ export function CronJobsPage() {
           <input className="input font-mono" value={form.command} onChange={(e) => setForm({ ...form, command: e.target.value })} placeholder="php /home/site/cron.php" />
         </Field>
         <button className="btn-brand w-full justify-center" onClick={create} disabled={busy || !form.command}>
-          {busy ? 'Adding...' : 'Add Cron Job'}
+          {busy ? (<><Spinner size={13} /> Adding…</>) : 'Add Cron Job'}
         </button>
       </Modal>
 

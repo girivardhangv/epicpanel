@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Spinner } from '../loading'
 import { KeyRound, Plus, Trash2, RotateCcw, Eye } from 'lucide-react'
 import { api, ftpApi, useAuth, timeAgo } from '@epicpanel/core'
 import type { FtpAccount, Website } from '@epicpanel/core'
@@ -196,9 +197,9 @@ export function FtpPage() {
                   {a.error_message && <div className="mt-1 text-[10px] text-danger">{a.error_message}</div>}
                 </div>
                 <RowActions>
-                  <button className="icon-btn" title="Reveal password (one-time)" onClick={() => void reveal(a)}><Eye size={13} /></button>
-                  <button className="icon-btn" title="Rotate password" onClick={() => rotate(a)}><RotateCcw size={13} /></button>
-                  <button className="icon-btn hover:!border-[#ffd0d7] hover:!bg-danger-soft hover:!text-danger" title="Delete" onClick={() => remove(a)}><Trash2 size={13} /></button>
+                  <button className="icon-btn" title="Reveal password (one-time)" aria-label="Reveal password (one-time)" onClick={() => void reveal(a)}><Eye size={13} /></button>
+                  <button className="icon-btn" title="Rotate password" aria-label="Rotate password" onClick={() => rotate(a)}><RotateCcw size={13} /></button>
+                  <button className="icon-btn hover:!border-[#ffd0d7] hover:!bg-danger-soft hover:!text-danger" title="Delete" aria-label="Delete" onClick={() => remove(a)}><Trash2 size={13} /></button>
                 </RowActions>
               </div>
             ))}
@@ -229,7 +230,7 @@ export function FtpPage() {
           </Field>
         )}
         <button className="btn-brand w-full justify-center" onClick={create} disabled={busy || !form.label}>
-          {busy ? 'Creating...' : 'Create Account'}
+          {busy ? (<><Spinner size={13} /> Creating…</>) : 'Create Account'}
         </button>
       </Modal>
 

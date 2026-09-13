@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Spinner } from '../loading'
 import { useParams, Link } from 'react-router-dom'
 import { Network, Plus, RefreshCw, Trash2, Pencil, Check, X, UploadCloud } from 'lucide-react'
 import { api, ApiError, dnsApi, useAuth, timeAgo } from '@epicpanel/core'
@@ -233,7 +234,7 @@ export function DnsZonePage() {
           </Field>
           <div className="mt-2 flex justify-end">
             <button className="btn-brand" onClick={() => void createZone()} disabled={busy || !createForm.domain}>
-              {busy ? 'Creating...' : 'Create Zone'}
+              {busy ? (<><Spinner size={13} /> Creating…</>) : 'Create Zone'}
             </button>
           </div>
         </Card>
@@ -297,13 +298,13 @@ export function DnsZonePage() {
                           <div className="flex justify-end gap-[5px]">
                             {editId === r.id ? (
                               <>
-                                <button className="icon-btn" onClick={() => void saveEdit(r)} disabled={!editForm.value} title="Save changes"><Check size={13} /></button>
-                                <button className="icon-btn" onClick={() => setEditId('')} title="Cancel"><X size={13} /></button>
+                                <button className="icon-btn" onClick={() => void saveEdit(r)} disabled={!editForm.value} title="Save changes" aria-label="Save changes"><Check size={13} /></button>
+                                <button className="icon-btn" onClick={() => setEditId('')} title="Cancel" aria-label="Cancel"><X size={13} /></button>
                               </>
                             ) : (
                               <>
-                                <button className="icon-btn" onClick={() => { setEditId(r.id); setEditForm({ value: r.value, ttl: String(r.ttl ?? ''), priority: r.priority != null ? String(r.priority) : '' }) }} title="Edit record"><Pencil size={13} /></button>
-                                <button className="icon-btn hover:!border-[#ffd0d7] hover:!bg-danger-soft hover:!text-danger" onClick={() => void removeRecord(r)} title="Delete record"><Trash2 size={13} /></button>
+                                <button className="icon-btn" onClick={() => { setEditId(r.id); setEditForm({ value: r.value, ttl: String(r.ttl ?? ''), priority: r.priority != null ? String(r.priority) : '' }) }} title="Edit record" aria-label="Edit record"><Pencil size={13} /></button>
+                                <button className="icon-btn hover:!border-[#ffd0d7] hover:!bg-danger-soft hover:!text-danger" onClick={() => void removeRecord(r)} title="Delete record" aria-label="Delete record"><Trash2 size={13} /></button>
                               </>
                             )}
                           </div>

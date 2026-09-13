@@ -107,7 +107,7 @@ export function FileManagerPage() {
       {/* Header */}
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <Link to={`/sites/${websiteId ?? ''}`} className="icon-btn !h-[34px] !w-[34px]" title="Back">
+          <Link to={`/sites/${websiteId ?? ''}`} className="icon-btn !h-[34px] !w-[34px]" title="Back" aria-label="Back to site">
             <ArrowLeft size={15} />
           </Link>
           <div>
@@ -224,7 +224,7 @@ function FileRow({ entry: e, downloadBase, dirPath, onOpen, onEdit, onDelete, on
             if (ev.key === 'Escape') setRenaming(false)
           }} />
         <button className="btn-brand !py-1.5" onClick={() => { if (to && to !== e.name) onRename(to); setRenaming(false) }}>Save</button>
-        <button className="btn-ghost !py-1.5" onClick={() => setRenaming(false)}><X size={14} /></button>
+        <button className="btn-ghost !py-1.5" onClick={() => setRenaming(false)} aria-label="Cancel rename"><X size={14} /></button>
       </div>
     )
   }
@@ -245,7 +245,7 @@ function FileRow({ entry: e, downloadBase, dirPath, onOpen, onEdit, onDelete, on
       <span className="hidden font-mono text-xs text-muted sm:inline">{e.mode}</span>
       <div className="flex items-center gap-1 opacity-60 transition group-hover:opacity-100">
         {onEdit && (
-          <button className="rounded-lg p-2 text-sub transition hover:bg-app hover:text-ink" onClick={onEdit} title="Edit">
+          <button className="rounded-lg p-2 text-sub transition hover:bg-app hover:text-ink" onClick={onEdit} title="Edit" aria-label={`Edit ${e.name}`}>
             <Pencil size={15} />
           </button>
         )}
@@ -254,14 +254,15 @@ function FileRow({ entry: e, downloadBase, dirPath, onOpen, onEdit, onDelete, on
             className="rounded-lg p-2 text-sub transition hover:bg-app hover:text-ink"
             href={`${downloadBase}/download?path=${encodeURIComponent(joinPath(dirPath, e.name))}`}
             title="Download"
+            aria-label={`Download ${e.name}`}
           >
             <Download size={15} />
           </a>
         )}
-        <button className="rounded-lg p-2 text-sub transition hover:bg-app hover:text-ink" onClick={() => { setTo(e.name); setRenaming(true) }} title="Rename">
+        <button className="rounded-lg p-2 text-sub transition hover:bg-app hover:text-ink" onClick={() => { setTo(e.name); setRenaming(true) }} title="Rename" aria-label={`Rename ${e.name}`}>
           <Pencil size={15} />
         </button>
-        <button className="rounded-lg p-2 text-sub transition hover:border-[#ffd0d7] hover:bg-danger-soft hover:text-danger" onClick={onDelete} title="Delete">
+        <button className="rounded-lg p-2 text-sub transition hover:border-[#ffd0d7] hover:bg-danger-soft hover:text-danger" onClick={onDelete} title="Delete" aria-label={`Delete ${e.name}`}>
           <Trash2 size={15} />
         </button>
       </div>

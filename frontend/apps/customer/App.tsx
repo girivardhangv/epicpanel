@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, ReactNode } from 'react'
+import { useEffect, useMemo, useState, lazy, Suspense, ReactNode } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   LayoutGrid, Globe, FolderOpen, Database, History, Lock, UserRound,
@@ -11,23 +11,28 @@ import { useMetrics, useFreshness } from '@epicpanel/core'
 import { AppSidebar, Toaster, FreshnessBadge, CommandPalette, useCommandPaletteHotkey } from '@epicpanel/ui'
 import type { SidebarGroup, CommandResultsProvider } from '@epicpanel/ui'
 import { Field, ErrorNote } from '@epicpanel/forms'
+import { RouteFallback, ScreenFallback, Spinner } from './loading'
 import { LoginPage, RegisterPage } from './pages/Auth'
-import { DashboardPage } from './pages/Dashboard'
-import { WebsitesPage } from './pages/Websites'
-import { DomainsPage } from './pages/Domains'
-import { DnsZonePage } from './pages/DnsZone'
-import { FileManagerPage } from './pages/FileManager'
-import { FtpPage } from './pages/Ftp'
-import { DatabasesPage } from './pages/Databases'
-import { PhpPage } from './pages/Php'
-import { CronJobsPage } from './pages/CronJobs'
-import { BackupsPage } from './pages/Backups'
-import { MetricsPage } from './pages/Metrics'
-import { SslPage } from './pages/Ssl'
-import { SecurityPage } from './pages/Security'
-import { AccountPage } from './pages/Account'
 import { routes as billingRoutes } from './routes.billing'
 import { routes as backupsRoutes } from './routes.backups'
+
+// Route-level code splitting: every screen after the auth gate loads as its
+// own chunk. Guards stay eager (App/Shell/AuthProvider below), so redirects
+// never wait on a chunk download; only page bodies suspend.
+const DashboardPage = lazy(() => import('./pages/Dashboard').then((m) => ({ default: m.DashboardPage })))
+const WebsitesPage = lazy(() => import('./pages/Websites').then((m) => ({ default: m.WebsitesPage })))
+const DomainsPage = lazy(() => import('./pages/Domains').then((m) => ({ default: m.DomainsPage })))
+const DnsZonePage = lazy(() => import('./pages/DnsZone').then((m) => ({ default: m.DnsZonePage })))
+const FileManagerPage = lazy(() => import('./pages/FileManager').then((m) => ({ default: m.FileManagerPage })))
+const FtpPage = lazy(() => import('./pages/Ftp').then((m) => ({ default: m.FtpPage })))
+const DatabasesPage = lazy(() => import('./pages/Databases').then((m) => ({ default: m.DatabasesPage })))
+const PhpPage = lazy(() => import('./pages/Php').then((m) => ({ default: m.PhpPage })))
+const CronJobsPage = lazy(() => import('./pages/CronJobs').then((m) => ({ default: m.CronJobsPage })))
+const BackupsPage = lazy(() => import('./pages/Backups').then((m) => ({ default: m.BackupsPage })))
+const MetricsPage = lazy(() => import('./pages/Metrics').then((m) => ({ default: m.MetricsPage })))
+const SslPage = lazy(() => import('./pages/Ssl').then((m) => ({ default: m.SslPage })))
+const SecurityPage = lazy(() => import('./pages/Security').then((m) => ({ default: m.SecurityPage })))
+const AccountPage = lazy(() => import('./pages/Account').then((m) => ({ default: m.AccountPage })))
 
 /**
  * Customer cPanel navigation. Raw Terminal & SSH keys are intentionally
@@ -262,42 +267,38 @@ function CustomerHeader({ alerts, fresh, onMenu }: { alerts: Alert[]; fresh: { s
 
 function Guarded() {
   const { user, org, orgs, loading, createOrg, setOrg } = useAuth()
-  if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-app">
-        <div className="h-8 w-8 animate-spin rounded-full border-[3px] border-brand border-t-transparent" />
-      </div>
-    )
-  }
+  if (loading) return <ScreenFallback />
   if (!user) return <Navigate to="/login" replace />
   if (!org) {
     return <CreateOrganizationScreen hasOrgs={orgs.length > 0} onCreate={createOrg} onPick={setOrg} orgs={orgs} />
   }
   return (
     <Shell>
-      <Routes>
-        <Route path="/" element={<DashboardPage />} />
-        <Route path="/websites" element={<WebsitesPage />} />
-        <Route path="/domains" element={<DomainsPage />} />
-        <Route path="/dns" element={<DnsZonePage />} />
-        <Route path="/dns/:website_id" element={<DnsZonePage />} />
-        <Route path="/files" element={<Navigate to="/websites" replace />} />
-        <Route path="/files/:website_id" element={<FileManagerPage />} />
-        <Route path="/ftp" element={<FtpPage />} />
-        <Route path="/databases" element={<DatabasesPage />} />
-        <Route path="/php" element={<PhpPage />} />
-        <Route path="/crons" element={<CronJobsPage />} />
-        <Route path="/crons/:website_id" element={<CronJobsPage />} />
-        <Route path="/backups" element={<BackupsPage />} />
-        <Route path="/metrics" element={<MetricsPage />} />
-        <Route path="/ssl" element={<SslPage />} />
-        <Route path="/security" element={<SecurityPage />} />
-        <Route path="/account" element={<AccountPage />} />
-        {[...billingRoutes, ...backupsRoutes].map((r, i) => (
-          <Route key={i} path={r.path} element={r.element} />
-        ))}
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+      <Suspense fallback={<RouteFallback />}>
+        <Routes>
+          <Route path="/" element={<DashboardPage />} />
+          <Route path="/websites" element={<WebsitesPage />} />
+          <Route path="/domains" element={<DomainsPage />} />
+          <Route path="/dns" element={<DnsZonePage />} />
+          <Route path="/dns/:website_id" element={<DnsZonePage />} />
+          <Route path="/files" element={<Navigate to="/websites" replace />} />
+          <Route path="/files/:website_id" element={<FileManagerPage />} />
+          <Route path="/ftp" element={<FtpPage />} />
+          <Route path="/databases" element={<DatabasesPage />} />
+          <Route path="/php" element={<PhpPage />} />
+          <Route path="/crons" element={<CronJobsPage />} />
+          <Route path="/crons/:website_id" element={<CronJobsPage />} />
+          <Route path="/backups" element={<BackupsPage />} />
+          <Route path="/metrics" element={<MetricsPage />} />
+          <Route path="/ssl" element={<SslPage />} />
+          <Route path="/security" element={<SecurityPage />} />
+          <Route path="/account" element={<AccountPage />} />
+          {[...billingRoutes, ...backupsRoutes].map((r, i) => (
+            <Route key={i} path={r.path} element={r.element} />
+          ))}
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </Suspense>
     </Shell>
   )
 }
@@ -306,11 +307,13 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <Routes>
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/register" element={<RegisterPage />} />
-          <Route path="/*" element={<Guarded />} />
-        </Routes>
+        <Suspense fallback={<ScreenFallback />}>
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/register" element={<RegisterPage />} />
+            <Route path="/*" element={<Guarded />} />
+          </Routes>
+        </Suspense>
       </AuthProvider>
     </BrowserRouter>
   )
@@ -374,7 +377,7 @@ function CreateOrganizationScreen({ hasOrgs, onCreate, onPick, orgs }: {
             />
           </Field>
           <button className="btn-brand w-full justify-center" onClick={submit} disabled={busy || !name}>
-            {busy ? 'Creating...' : 'Create Organization'}
+            {busy ? (<><Spinner size={13} /> Creating…</>) : 'Create Organization'}
           </button>
           <button
             className="mt-3 w-full text-center text-[13px] text-muted transition hover:text-sub"

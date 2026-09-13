@@ -1,0 +1,1 @@
+import{MonitoringOutlet as e}from"./Monitoring-BUqLovvL.js";export{e as MonitoringPage};

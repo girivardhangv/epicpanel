@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Spinner } from '../loading'
 import { Link } from 'react-router-dom'
 import { Globe, Plus, ArrowRight, Folder, Clock, Network } from 'lucide-react'
 import { api, useAuth, timeAgo } from '@epicpanel/core'
@@ -112,10 +113,10 @@ export function WebsitesPage() {
                     <td className="border-b border-line px-4 py-[11px]"><StatusBadge status={w.status} /></td>
                     <td className="border-b border-line px-4 py-[11px]">
                       <RowActions>
-                        <Link to={`/files/${w.id}`} className="icon-btn" title="File manager"><Folder size={13} /></Link>
-                        <Link to={`/crons/${w.id}`} className="icon-btn" title="Cron jobs"><Clock size={13} /></Link>
-                        <Link to={`/dns/${w.id}`} className="icon-btn" title="DNS zone"><Network size={13} /></Link>
-                        <Link to={`/websites/${w.id}`} className="icon-btn" title="Manage"><ArrowRight size={13} /></Link>
+                        <Link to={`/files/${w.id}`} className="icon-btn" title="File manager" aria-label="File manager"><Folder size={13} /></Link>
+                        <Link to={`/crons/${w.id}`} className="icon-btn" title="Cron jobs" aria-label="Cron jobs"><Clock size={13} /></Link>
+                        <Link to={`/dns/${w.id}`} className="icon-btn" title="DNS zone" aria-label="DNS zone"><Network size={13} /></Link>
+                        <Link to={`/websites/${w.id}`} className="icon-btn" title="Manage" aria-label="Manage"><ArrowRight size={13} /></Link>
                       </RowActions>
                     </td>
                   </tr>
@@ -146,7 +147,7 @@ export function WebsitesPage() {
           />
         </Field>
         <button className="btn-brand w-full justify-center" onClick={create} disabled={busy || !form.name}>
-          {busy ? 'Creating...' : 'Create Website'}
+          {busy ? (<><Spinner size={13} /> Creating…</>) : 'Create Website'}
         </button>
       </Modal>
     </div>

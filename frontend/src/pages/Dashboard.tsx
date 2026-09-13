@@ -280,7 +280,7 @@ export function DashboardPage() {
                 {!loading && servers.length > 0 && (
                   <FreshnessBadge state={primaryFresh.state} ageMs={primaryFresh.ageMs} label="Metrics" />
                 )}
-                {user?.is_platform_admin && <Link to="/servers" className="icon-btn"><ServerIcon size={14} /></Link>}
+                {user?.is_platform_admin && <Link to="/servers" className="icon-btn" title="Manage servers" aria-label="Manage servers"><ServerIcon size={14} /></Link>}
               </div>
             }
           />
@@ -381,7 +381,7 @@ export function DashboardPage() {
                 sub={a.sub}
                 right={
                   a.to ? (
-                    <Link to={a.to} className="icon-btn"><ChevronRight size={13} /></Link>
+                    <Link to={a.to} className="icon-btn" title="View details" aria-label="View details"><ChevronRight size={13} /></Link>
                   ) : (
                     <span className="status-chip status-live">OK</span>
                   )
@@ -394,7 +394,7 @@ export function DashboardPage() {
                 icon={<DatabaseIcon size={14} strokeWidth={1.8} />}
                 title="No databases yet"
                 sub="Attach one to a site from Databases"
-                right={<Link to="/databases" className="icon-btn"><ChevronRight size={13} /></Link>}
+                right={<Link to="/databases" className="icon-btn" title="Open databases" aria-label="Open databases"><ChevronRight size={13} /></Link>}
               />
             )}
           </div>

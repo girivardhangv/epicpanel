@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, Suspense } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useRoutes } from 'react-router-dom'
 import {
   LayoutGrid, Server, ServerCog, Users, Globe2, Package, Network, Database, HardDrive,
@@ -9,6 +9,11 @@ import { AuthProvider, useAuth, useMetrics, seedFrames, normalizeBatch } from '@
 import { AppSidebar, Toaster, FreshnessBadge } from '@epicpanel/ui'
 import type { SidebarGroup } from '@epicpanel/ui'
 import { adminview } from './adminview'
+import { RouteFallback, ScreenFallback } from './loading'
+
+// Login is the cold path for every admin session — keep it eager so the
+// guard redirect paints instantly; all WHM screens behind the guard split
+// into per-route chunks (see routes.*.tsx).
 import { LoginPage } from './pages/Login'
 import { routes } from './routes.admin'
 import { routes as billingRoutes } from './routes.billing'
@@ -92,6 +97,9 @@ function Shell() {
   const [navOpen, setNavOpen] = useState(false)
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('eh.admin.collapsed') === '1')
   const { frames, connected } = useMetrics()
+  // Hook hoisted so its call order stays identical on every render path
+  // (including the non-admin early return below).
+  const routeElement = useRoutes([...monitoringRoutes, ...routes, ...billingRoutes])
 
   useEffect(() => {
     localStorage.setItem('eh.admin.collapsed', collapsed ? '1' : '0')
@@ -159,7 +167,11 @@ function Shell() {
           wsConnected={connected}
           onMenu={() => setNavOpen(true)}
         />
-        <main className="fade-up">{useRoutes([...monitoringRoutes, ...routes, ...billingRoutes])}</main>
+        <main className="fade-up">
+          <Suspense fallback={<RouteFallback />}>
+            {routeElement}
+          </Suspense>
+        </main>
         <footer className="pb-8 pt-4 text-center text-[11px] text-muted">
           EpicHost WHM — powered by EpicPanel
         </footer>
@@ -214,13 +226,7 @@ function AdminHeader({ fresh, wsConnected, onMenu }: {
 
 function Guarded() {
   const { user, loading } = useAuth()
-  if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-app">
-        <div className="h-8 w-8 animate-spin rounded-full border-[3px] border-brand border-t-transparent" />
-      </div>
-    )
-  }
+  if (loading) return <ScreenFallback />
   if (!user) return <Navigate to="/login" replace />
   return <Shell />
 }
@@ -229,10 +235,12 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <Routes>
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/*" element={<Guarded />} />
-        </Routes>
+        <Suspense fallback={<ScreenFallback />}>
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/*" element={<Guarded />} />
+          </Routes>
+        </Suspense>
       </AuthProvider>
     </BrowserRouter>
   )

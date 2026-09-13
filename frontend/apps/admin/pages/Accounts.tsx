@@ -95,7 +95,7 @@ export function AccountsPage() {
         if (!eligible) return null
         const on = selected.has(r.id)
         return (
-          <button className="icon-btn" title={on ? 'Unselect' : 'Select'} onClick={() => toggle(r.id)}>
+          <button className="icon-btn" title={on ? 'Unselect' : 'Select'} aria-label={on ? 'Unselect' : 'Select'} onClick={() => toggle(r.id)}>
             {on ? <CheckSquare size={12} /> : <Square size={12} />}
           </button>
         )
@@ -136,11 +136,11 @@ export function AccountsPage() {
       key: 'actions', header: '', render: (r) => (
         <RowActions>
           {r.status === 'ready' || r.status === 'failed' ? (
-            <button className="icon-btn" title="Suspend account" onClick={() => setConfirm({ rows: [r], suspend: true })}>
+            <button className="icon-btn" title="Suspend account" aria-label="Suspend account" onClick={() => setConfirm({ rows: [r], suspend: true })}>
               <Ban size={13} />
             </button>
           ) : r.status === 'suspended' ? (
-            <button className="icon-btn" title="Resume account" onClick={() => setConfirm({ rows: [r], suspend: false })}>
+            <button className="icon-btn" title="Resume account" aria-label="Resume account" onClick={() => setConfirm({ rows: [r], suspend: false })}>
               <PlayCircle size={13} />
             </button>
           ) : null}

@@ -1,4 +1,5 @@
 import { useState, FormEvent, ReactNode, useEffect } from 'react'
+import { Spinner } from '../loading'
 import { useNavigate } from 'react-router-dom'
 import { Globe } from 'lucide-react'
 import { useAuth } from '@epicpanel/core'
@@ -90,7 +91,7 @@ export function LoginPage() {
           </Field>
         )}
         <button className="btn-brand w-full justify-center" disabled={busy}>
-          {busy ? 'Signing in...' : mfaToken ? 'Verify & sign in' : 'Sign in'}
+          {busy ? (<><Spinner size={13} /> Signing in…</>) : mfaToken ? 'Verify & sign in' : 'Sign in'}
         </button>
       </form>
     </AuthShell>
@@ -135,7 +136,7 @@ export function RegisterPage() {
           <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" required />
         </Field>
         <button className="btn-brand w-full justify-center" disabled={busy}>
-          {busy ? 'Creating...' : 'Create Account'}
+          {busy ? (<><Spinner size={13} /> Creating…</>) : 'Create Account'}
         </button>
         <button type="button" className="mt-3 w-full text-center text-[12px] text-muted hover:text-sub" onClick={() => navigate('/login')}>
           Already have an account? Sign in

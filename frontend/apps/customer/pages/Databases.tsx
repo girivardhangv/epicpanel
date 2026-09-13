@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Spinner } from '../loading'
 import { Database, Plus, Trash2, KeyRound, ExternalLink } from 'lucide-react'
 import { api, useAuth } from '@epicpanel/core'
 import type { Database as DB, Server, Website } from '@epicpanel/core'
@@ -164,14 +165,14 @@ export function DatabasesPage() {
                           {db.status === 'ready' && (
                             <>
                               {(db.engine === 'mariadb' || db.engine === 'mysql' || db.engine === 'postgres' || db.engine === 'postgresql') && (
-                                <button className="icon-btn" onClick={() => void openPma(db)} title={`Open ${db.engine === 'postgres' ? 'Adminer' : 'phpMyAdmin'} (SSO)`}>
+                                <button className="icon-btn" onClick={() => void openPma(db)} title={`Open ${db.engine === 'postgres' ? 'Adminer' : 'phpMyAdmin'} (SSO)`} aria-label={`Open ${db.engine === 'postgres' ? 'Adminer' : 'phpMyAdmin'} (SSO)`}>
                                   <ExternalLink size={13} />
                                 </button>
                               )}
-                              <button className="icon-btn" onClick={() => void reveal(db)} title="Reveal credentials"><KeyRound size={13} /></button>
+                              <button className="icon-btn" onClick={() => void reveal(db)} title="Reveal credentials" aria-label="Reveal credentials"><KeyRound size={13} /></button>
                             </>
                           )}
-                          <button className="icon-btn hover:!border-[#ffd0d7] hover:!bg-danger-soft hover:!text-danger" onClick={() => remove(db)} title="Drop database">
+                          <button className="icon-btn hover:!border-[#ffd0d7] hover:!bg-danger-soft hover:!text-danger" onClick={() => remove(db)} title="Drop database" aria-label="Drop database">
                             <Trash2 size={13} />
                           </button>
                         </RowActions>
@@ -224,7 +225,7 @@ export function DatabasesPage() {
         <div className="mt-2 flex justify-end gap-2">
           <button className="btn-ghost" onClick={() => setShow(false)}>Cancel</button>
           <button className="btn-brand" onClick={create} disabled={busy || !form.name || !form.server_id}>
-            {busy ? 'Creating...' : 'Create Database'}
+            {busy ? (<><Spinner size={13} /> Creating…</>) : 'Create Database'}
           </button>
         </div>
       </Modal>

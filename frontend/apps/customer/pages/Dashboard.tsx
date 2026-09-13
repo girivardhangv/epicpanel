@@ -338,7 +338,7 @@ export function DashboardPage() {
                 icon={a.icon}
                 title={a.title}
                 sub={a.sub}
-                right={a.to ? <Link to={a.to} className="icon-btn"><ArrowRight size={13} /></Link> : <span className="status-chip status-live">OK</span>}
+                right={a.to ? <Link to={a.to} className="icon-btn" aria-label="Open"><ArrowRight size={13} /></Link> : <span className="status-chip status-live">OK</span>}
               />
             ))}
             <MiniItem

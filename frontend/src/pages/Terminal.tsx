@@ -72,7 +72,7 @@ export function TerminalPage() {
   return (
     <div className="mx-auto max-w-[1400px] px-4 py-6 lg:px-6">
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <Link to={`/sites/${websiteId ?? ''}`} className="icon-btn !h-[34px] !w-[34px]" title="Back">
+        <Link to={`/sites/${websiteId ?? ''}`} className="icon-btn !h-[34px] !w-[34px]" title="Back" aria-label="Back to site">
           <ArrowLeft size={15} />
         </Link>
         <div className="min-w-0 flex-1">

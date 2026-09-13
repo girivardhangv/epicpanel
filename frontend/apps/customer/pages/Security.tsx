@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Spinner } from '../loading'
 import { Link } from 'react-router-dom'
 import { KeyRound, Plus, Trash2, ShieldCheck, Lock } from 'lucide-react'
 import { api, useAuth, timeAgo } from '@epicpanel/core'
@@ -127,7 +128,7 @@ export function SecurityPage() {
                   {t.revoked_at ? (
                     <span className="status-chip">Revoked</span>
                   ) : (
-                    <button className="icon-btn hover:!border-[#ffd0d7] hover:!bg-danger-soft hover:!text-danger" onClick={() => setConfirm(t)} title="Revoke">
+                    <button className="icon-btn hover:!border-[#ffd0d7] hover:!bg-danger-soft hover:!text-danger" onClick={() => setConfirm(t)} title="Revoke" aria-label="Revoke">
                       <Trash2 size={13} />
                     </button>
                   )}
@@ -146,7 +147,7 @@ export function SecurityPage() {
         </Field>
         <Field label="Expires in days (optional)"><input className="input" type="number" value={form.expires_in_days} onChange={(e) => setForm({ ...form, expires_in_days: Number(e.target.value) })} /></Field>
         <button className="btn-brand w-full justify-center" onClick={create} disabled={busy || !form.name}>
-          {busy ? 'Creating...' : 'Create Key'}
+          {busy ? (<><Spinner size={13} /> Creating…</>) : 'Create Key'}
         </button>
       </Modal>
 

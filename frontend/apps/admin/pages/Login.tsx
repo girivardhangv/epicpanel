@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Spinner } from '../loading'
 import { Navigate, useNavigate } from 'react-router-dom'
 import { CloudCog } from 'lucide-react'
 import { useAuth } from '@epicpanel/core'
@@ -72,7 +73,7 @@ export function LoginPage() {
             onClick={submit}
             disabled={busy || Boolean(!mfaToken && (!email || !password)) || Boolean(mfaToken && !code)}
           >
-            {busy ? 'Signing in...' : mfaToken ? 'Verify' : 'Sign in'}
+            {busy ? (<><Spinner size={13} /> Signing in…</>) : mfaToken ? 'Verify' : 'Sign in'}
           </button>
         </div>
       </div>

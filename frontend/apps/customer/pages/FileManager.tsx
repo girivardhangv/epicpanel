@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Spinner } from '../loading'
 import { useParams, Link } from 'react-router-dom'
 import {
   ArrowLeft, Folder, FileText, FileCode2, Trash2, Pencil, Download, Upload,
@@ -137,7 +138,7 @@ export function FileManagerPage() {
       {/* Header */}
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <Link to="/websites" className="icon-btn !h-[34px] !w-[34px]" title="Back"><ArrowLeft size={15} /></Link>
+          <Link to="/websites" className="icon-btn !h-[34px] !w-[34px]" title="Back" aria-label="Back"><ArrowLeft size={15} /></Link>
           <div>
             <h1 className="text-[23px] font-bold leading-[1.25] tracking-[-.025em] text-ink">File Manager</h1>
             <p className="mt-[5px] text-[12px] text-muted">
@@ -228,7 +229,7 @@ export function FileManagerPage() {
             <div className="mt-4 flex justify-end gap-2">
               <button className="btn-ghost" onClick={() => setEditing(null)}><X size={14} /> Cancel</button>
               <button className="btn-brand" onClick={save} disabled={saveBusy}>
-                <Save size={14} /> {saveBusy ? 'Saving...' : 'Save'}
+                <Save size={14} /> {saveBusy ? (<><Spinner size={13} /> Saving…</>) : 'Save'}
               </button>
             </div>
           </>
@@ -317,14 +318,14 @@ function FileRow({ entry: e, dirPath, base, onOpen, onEdit, onDelete, onRename }
       <td className="border-b border-line px-4 py-[11px] font-mono text-[10.5px] text-muted">{e.mode}</td>
       <td className="border-b border-line px-4 py-[11px]">
         <div className="flex justify-end gap-[5px]">
-          {onEdit && <button className="icon-btn" title="Edit file" onClick={onEdit}><FileText size={13} /></button>}
+          {onEdit && <button className="icon-btn" title="Edit file" aria-label="Edit file" onClick={onEdit}><FileText size={13} /></button>}
           {!e.is_dir && (
-            <a className="icon-btn" title="Download" href={`${base}/download?path=${encodeURIComponent(joinPath(dirPath, e.name))}`}>
+            <a className="icon-btn" title="Download" aria-label="Download" href={`${base}/download?path=${encodeURIComponent(joinPath(dirPath, e.name))}`}>
               <Download size={13} />
             </a>
           )}
-          <button className="icon-btn" title="Rename" onClick={() => { setTo(e.name); setRenaming(true) }}><Pencil size={13} /></button>
-          <button className="icon-btn hover:!border-[#ffd0d7] hover:!bg-danger-soft hover:!text-danger" title="Delete" onClick={onDelete}><Trash2 size={13} /></button>
+          <button className="icon-btn" title="Rename" aria-label="Rename" onClick={() => { setTo(e.name); setRenaming(true) }}><Pencil size={13} /></button>
+          <button className="icon-btn hover:!border-[#ffd0d7] hover:!bg-danger-soft hover:!text-danger" title="Delete" aria-label="Delete" onClick={onDelete}><Trash2 size={13} /></button>
         </div>
       </td>
     </tr>

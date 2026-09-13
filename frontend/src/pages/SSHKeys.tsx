@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ArrowLeft, KeyRound, Plus, Trash2 } from 'lucide-react'
+import { ArrowLeft, KeyRound, Plus, Trash2, Loader2 } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
 import { Card, EmptyState, SkeletonRows } from '@/components/cards'
@@ -23,6 +23,7 @@ export function SSHKeysPage() {
   const [show, setShow] = useState(false)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+  const [removingId, setRemovingId] = useState('')
   const [form, setForm] = useState({ name: '', public_key: '' })
   const base = `/v1/organizations/${org?.id}/websites/${websiteId}/ssh-keys`
 
@@ -56,15 +57,20 @@ export function SSHKeysPage() {
 
   const remove = async (k: SSHKey) => {
     if (!(await confirmAction({ title: 'Remove SSH Key', message: `Remove key "${k.name}"? SSH access with it stops immediately.`, confirmLabel: 'Remove Key' }))) return
-    await api.del(`/v1/organizations/${org?.id}/ssh-keys/${k.id}`)
-    await load()
+    setRemovingId(k.id)
+    try {
+      await api.del(`/v1/organizations/${org?.id}/ssh-keys/${k.id}`)
+      await load()
+    } finally {
+      setRemovingId('')
+    }
   }
 
   return (
     <div className="mx-auto max-w-[1400px] px-4 py-6 lg:px-6">
       <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-center gap-3">
-          <Link to={`/sites/${websiteId}`} className="icon-btn !h-[34px] !w-[34px]" title="Back"><ArrowLeft size={15} /></Link>
+          <Link to={`/sites/${websiteId}`} className="icon-btn !h-[34px] !w-[34px]" title="Back" aria-label="Back to site"><ArrowLeft size={15} /></Link>
           <div>
             <h1 className="text-[23px] font-bold leading-[1.25] tracking-[-.025em] text-ink">SSH Keys</h1>
             <p className="mt-[5px] text-[12px] text-muted">
@@ -97,8 +103,14 @@ export function SSHKeysPage() {
                   <div className="truncate font-mono text-[10px] text-muted">{k.fingerprint}</div>
                 </div>
                 <span className="shrink-0 text-[10px] text-muted">added {timeAgo(k.added_at)}</span>
-                <button className="icon-btn hover:!border-[#ffd0d7] hover:!bg-danger-soft hover:!text-danger" onClick={() => remove(k)} title="Remove">
-                  <Trash2 size={13} />
+                <button
+                  className="icon-btn hover:!border-[#ffd0d7] hover:!bg-danger-soft hover:!text-danger"
+                  onClick={() => remove(k)}
+                  disabled={removingId === k.id}
+                  title="Remove"
+                  aria-label={`Remove key ${k.name}`}
+                >
+                  {removingId === k.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
                 </button>
               </div>
             ))}

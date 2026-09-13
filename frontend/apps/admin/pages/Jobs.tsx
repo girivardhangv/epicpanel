@@ -97,12 +97,12 @@ export function JobsPage() {
       key: 'actions', header: '', render: (r) => (
         <div className="flex justify-end gap-[5px]">
           {(r.status === 'failed' || r.status === 'success') && (
-            <button className="icon-btn" title="Retry job" onClick={() => setConfirm({ job: r, retry: true })}>
+            <button className="icon-btn" title="Retry job" aria-label="Retry job" onClick={() => setConfirm({ job: r, retry: true })}>
               <RotateCcw size={13} />
             </button>
           )}
           {r.status === 'pending' && (
-            <button className="icon-btn" title="Cancel job" onClick={() => setConfirm({ job: r, retry: false })}>
+            <button className="icon-btn" title="Cancel job" aria-label="Cancel job" onClick={() => setConfirm({ job: r, retry: false })}>
               <Ban size={13} />
             </button>
           )}

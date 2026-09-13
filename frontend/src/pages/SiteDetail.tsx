@@ -154,11 +154,14 @@ export function SiteDetailPage() {
     if (!org) return
     if (!(await confirmAction({ title: 'Delete Alias', message: `Delete alias "${d.domain}"? It stops serving immediately.`, confirmLabel: 'Delete Alias' }))) return
     setErr('')
+    setBusyDomain(d.id)
     try {
       await domainsApi.remove(org.id, websiteId, d.id)
       await load()
     } catch (ex: any) {
       setErr(ex.message)
+    } finally {
+      setBusyDomain('')
     }
   }
 
@@ -442,7 +445,7 @@ export function SiteDetailPage() {
         ]}
       />
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <Link to="/sites" className="icon-btn !h-[34px] !w-[34px]" title="Back to sites"><ArrowLeft size={15} /></Link>
+          <Link to="/sites" className="icon-btn !h-[34px] !w-[34px]" title="Back to sites" aria-label="Back to sites"><ArrowLeft size={15} /></Link>
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2.5">
             <h1 className="truncate text-[23px] font-bold tracking-[-.025em] text-ink">{site.primary_domain || site.name}</h1>
@@ -469,7 +472,7 @@ export function SiteDetailPage() {
             </button>
           )}
           {isAdmin && (
-            <button className="icon-btn !h-[36px] !w-[36px] hover:!border-[#ffd0d7] hover:!bg-danger-soft hover:!text-danger" title="Delete site" onClick={() => setShowDelete(true)}>
+            <button className="icon-btn !h-[36px] !w-[36px] hover:!border-[#ffd0d7] hover:!bg-danger-soft hover:!text-danger" title="Delete site" aria-label="Delete site" onClick={() => setShowDelete(true)}>
               <Trash2 size={15} />
             </button>
           )}
@@ -597,7 +600,9 @@ export function SiteDetailPage() {
                           <button
                             className="icon-btn hover:!border-[#ffd0d7] hover:!bg-danger-soft hover:!text-danger"
                             onClick={() => void removeAlias(d)}
+                            disabled={busyDomain === d.id}
                             title="Delete alias"
+                            aria-label={`Delete alias ${d.domain}`}
                           >
                             <Trash2 size={13} />
                           </button>
@@ -672,6 +677,7 @@ export function SiteDetailPage() {
                     className="icon-btn"
                     onClick={() => void toggleRedirect(r)}
                     title={r.enabled ? 'Pause redirect' : 'Enable redirect'}
+                    aria-label={`${r.enabled ? 'Pause' : 'Enable'} redirect ${r.from_domain}`}
                   >
                     {r.enabled ? <Pause size={13} /> : <Play size={13} />}
                   </button>
@@ -679,6 +685,7 @@ export function SiteDetailPage() {
                     className="icon-btn hover:!border-[#ffd0d7] hover:!bg-danger-soft hover:!text-danger"
                     onClick={() => void removeRedirect(r)}
                     title="Delete redirect"
+                    aria-label={`Delete redirect ${r.from_domain}`}
                   >
                     <Trash2 size={13} />
                   </button>
@@ -770,10 +777,10 @@ export function SiteDetailPage() {
                   )}
                 </div>
                 <div className="flex items-center gap-[5px]">
-                  <button className="icon-btn" onClick={() => void revealFtp(a)} disabled={ftpBusyId === a.id} title="Show password">
+                  <button className="icon-btn" onClick={() => void revealFtp(a)} disabled={ftpBusyId === a.id} title="Show password" aria-label={`Show password for ${a.label}`}>
                     <Eye size={13} />
                   </button>
-                  <button className="icon-btn" onClick={() => void rotateFtp(a)} disabled={ftpBusyId === a.id} title="Rotate password">
+                  <button className="icon-btn" onClick={() => void rotateFtp(a)} disabled={ftpBusyId === a.id} title="Rotate password" aria-label={`Rotate password for ${a.label}`}>
                     <RefreshCw size={13} />
                   </button>
                   <button
@@ -781,6 +788,7 @@ export function SiteDetailPage() {
                     onClick={() => void removeFtp(a)}
                     disabled={ftpBusyId === a.id}
                     title="Delete account"
+                    aria-label={`Delete FTP account ${a.label}`}
                   >
                     <Trash2 size={13} />
                   </button>

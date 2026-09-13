@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Spinner } from '../loading'
 import { Package, Plus, ShieldAlert } from 'lucide-react'
 import { api, fmtBytes } from '@epicpanel/core'
 import { Card, CardHeader, EmptyState, SkeletonRows, PageTitle, ProgressBar, pushToast } from '@epicpanel/ui'
@@ -194,7 +195,7 @@ export function PlansPage() {
         </FormRow>
         <div className="mt-3 flex justify-end gap-2">
           <button className="btn-ghost" onClick={() => setShow(false)}>Cancel</button>
-          <button className="btn-brand" onClick={create} disabled={busy || !form.name}>{busy ? 'Creating...' : 'Create plan'}</button>
+          <button className="btn-brand" onClick={create} disabled={busy || !form.name}>{busy ? (<><Spinner size={13} /> Creating…</>) : 'Create plan'}</button>
         </div>
       </Modal>
 
@@ -207,7 +208,7 @@ export function PlansPage() {
         </Field>
         <div className="mt-3 flex justify-end gap-2">
           <button className="btn-ghost" onClick={() => setAssign(null)}>Cancel</button>
-          <button className="btn-brand" onClick={doAssign} disabled={busy || !assignOrg}>{busy ? 'Assigning...' : 'Assign plan'}</button>
+          <button className="btn-brand" onClick={doAssign} disabled={busy || !assignOrg}>{busy ? (<><Spinner size={13} /> Assigning…</>) : 'Assign plan'}</button>
         </div>
       </Modal>
     </div>

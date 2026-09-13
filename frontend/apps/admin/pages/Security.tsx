@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Spinner } from '../loading'
 import { ShieldCheck, UserRound, KeyRound, ServerOff } from 'lucide-react'
 import { api } from '@epicpanel/core'
 import { Card, CardHeader, EmptyState, PageTitle, StatCard, SkeletonRows, StatusBadge, Initials, pushToast } from '@epicpanel/ui'
@@ -113,7 +114,7 @@ export function SecurityPage() {
         </Field>
         <div className="mt-3 flex justify-end gap-2">
           <button className="btn-ghost" onClick={() => setShow(false)}>Cancel</button>
-          <button className="btn-brand" onClick={create} disabled={busy || !form.email || !form.password}>{busy ? 'Creating...' : 'Create user'}</button>
+          <button className="btn-brand" onClick={create} disabled={busy || !form.email || !form.password}>{busy ? (<><Spinner size={13} /> Creating…</>) : 'Create user'}</button>
         </div>
       </Modal>
     </div>

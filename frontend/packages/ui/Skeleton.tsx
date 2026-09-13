@@ -91,6 +91,29 @@ export function SkeletonScreen({ label = 'Loading' }: { label?: string }) {
   )
 }
 
+/** Branded page-body skeleton for route transitions (Suspense fallback):
+ * matches the standard page container (`max-w-[1400px] px-4 py-6`) so the
+ * swap from skeleton to real content causes no layout jump. */
+export function RouteFallback({ label = 'Loading page' }: { label?: string }) {
+  return (
+    <div className="mx-auto max-w-[1400px] px-4 py-6 lg:px-6" role="status" aria-live="polite" aria-label={label}>
+      <div aria-hidden="true" className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="skeleton h-[24px] w-44" />
+          <div className="skeleton mt-2 h-[10px] w-64" />
+        </div>
+        <div className="skeleton h-[38px] w-[132px] rounded-[9px]" />
+      </div>
+      <div className="mb-4 grid grid-cols-1 gap-3.5 sm:grid-cols-2 xl:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <SkeletonCard key={i} />
+        ))}
+      </div>
+      <div className="skeleton h-[240px] rounded-card" />
+    </div>
+  )
+}
+
 /** Convenience: wrap any children as an announced loading region. */
 export function LoadingRegion({ label, children }: { label: string; children?: ReactNode }) {
   return (

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Spinner } from '../loading'
 import { Link, useParams } from 'react-router-dom'
 import {
   Server as ServerIcon, Plus, Power, Settings2, ArrowLeft, ShieldAlert, Cpu, MemoryStick,
@@ -332,7 +333,7 @@ export function ServersPage() {
         <div className="mt-2 flex justify-end gap-2">
           <button className="btn-ghost" onClick={() => setShow(false)}>Cancel</button>
           <button className="btn-brand" onClick={register} disabled={busy || !name}>
-            {busy ? 'Registering...' : 'Generate Registration Token'}
+            {busy ? (<><Spinner size={13} /> Registering…</>) : 'Generate Registration Token'}
           </button>
         </div>
       </Modal>

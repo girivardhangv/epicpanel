@@ -171,7 +171,7 @@ export function DnsZonePage() {
     <div className="mx-auto max-w-[1400px] px-4 py-6 lg:px-6">
       <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-center gap-3">
-          <Link to={`/sites/${websiteId}`} className="icon-btn !h-[34px] !w-[34px]" title="Back"><ArrowLeft size={15} /></Link>
+          <Link to={`/sites/${websiteId}`} className="icon-btn !h-[34px] !w-[34px]" title="Back" aria-label="Back to site"><ArrowLeft size={15} /></Link>
           <div>
             <h1 className="text-[23px] font-bold leading-[1.25] tracking-[-.025em] text-ink">DNS Zone</h1>
             <p className="mt-[5px] text-[12px] text-muted">

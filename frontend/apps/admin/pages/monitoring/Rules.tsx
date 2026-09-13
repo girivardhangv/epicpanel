@@ -115,10 +115,10 @@ export function RulesSection() {
       header: '',
       render: (r) => (
         <div className="flex justify-end gap-[5px]">
-          <button className="icon-btn" title="Edit rule" onClick={() => setEditing(r)}>
+          <button className="icon-btn" title="Edit rule" aria-label="Edit rule" onClick={() => setEditing(r)}>
             <Pencil size={13} />
           </button>
-          <button className="icon-btn" title="Delete rule" onClick={() => setDeleting(r)}>
+          <button className="icon-btn" title="Delete rule" aria-label="Delete rule" onClick={() => setDeleting(r)}>
             <Trash2 size={13} />
           </button>
         </div>

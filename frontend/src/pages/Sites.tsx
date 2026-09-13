@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Globe, Plus, Trash2, Folder, Clock, KeyRound, Terminal as TerminalIcon, Settings2 } from 'lucide-react'
+import { Globe, Plus, Trash2, Folder, Clock, KeyRound, Terminal as TerminalIcon, Settings2, Loader2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { BulkBar, BulkCheckbox, useBulkSelection } from '@epicpanel/ui'
 import { api } from '@/lib/api'
@@ -19,6 +19,7 @@ export function SitesPage() {
   const [show, setShow] = useState(false)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+  const [deletingId, setDeletingId] = useState('')
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [form, setForm] = useState({ name: '', primary_domain: '', runtime: 'static', runtime_version: '', server_id: '' })
@@ -61,8 +62,13 @@ export function SitesPage() {
   const remove = async (w: Website) => {
     if (!org) return
     if (!(await confirmAction({ title: 'Delete Website', message: `Delete website "${w.name}"? Its files will be removed. This cannot be undone.`, confirmLabel: 'Delete Website' }))) return
-    await api.del(`/v1/organizations/${org.id}/websites/${w.id}`)
-    await load()
+    setDeletingId(w.id)
+    try {
+      await api.del(`/v1/organizations/${org.id}/websites/${w.id}`)
+      await load()
+    } finally {
+      setDeletingId('')
+    }
   }
 
   const filtered = (sites ?? [])
@@ -137,21 +143,21 @@ export function SitesPage() {
                     <td className="border-b border-line px-4 py-[11px]"><StatusBadge status={w.status} /></td>
                     <td className="border-b border-line px-4 py-[11px]">
                       <div className="flex justify-end gap-[5px]">
-                        <Link to={`/sites/${w.id}/files`} className="icon-btn" title="File manager"><Folder size={13} /></Link>
-                        <Link to={`/sites/${w.id}/crons`} className="icon-btn" title="Cron jobs"><Clock size={13} /></Link>
+                        <Link to={`/sites/${w.id}/files`} className="icon-btn" title="File manager" aria-label={`Open file manager for ${w.primary_domain || w.name}`}><Folder size={13} /></Link>
+                        <Link to={`/sites/${w.id}/crons`} className="icon-btn" title="Cron jobs" aria-label={`Open cron jobs for ${w.primary_domain || w.name}`}><Clock size={13} /></Link>
                         {user?.is_platform_admin && (
-                          <Link to={`/sites/${w.id}/ssh-keys`} className="icon-btn" title="SSH keys"><KeyRound size={13} /></Link>
+                          <Link to={`/sites/${w.id}/ssh-keys`} className="icon-btn" title="SSH keys" aria-label={`Open SSH keys for ${w.primary_domain || w.name}`}><KeyRound size={13} /></Link>
                         )}
                         {user?.is_platform_admin && w.status === 'ready' && (
-                          <Link to={`/sites/${w.id}/terminal`} className="icon-btn" title="Web terminal"><TerminalIcon size={13} /></Link>
+                          <Link to={`/sites/${w.id}/terminal`} className="icon-btn" title="Web terminal" aria-label={`Open web terminal for ${w.primary_domain || w.name}`}><TerminalIcon size={13} /></Link>
                         )}
                         {w.runtime === 'php' && user?.is_platform_admin && w.status === 'ready' && (
-                          <button className="icon-btn" title="One-click WordPress" onClick={() => setWPTarget(w)}><Globe size={13} /></button>
+                          <button className="icon-btn" title="One-click WordPress" aria-label={`Install WordPress on ${w.primary_domain || w.name}`} onClick={() => setWPTarget(w)}><Globe size={13} /></button>
                         )}
-                        <Link to={`/sites/${w.id}`} className="icon-btn" title="Manage"><Settings2 size={13} /></Link>
+                        <Link to={`/sites/${w.id}`} className="icon-btn" title="Manage" aria-label={`Manage ${w.primary_domain || w.name}`}><Settings2 size={13} /></Link>
                         {user?.is_platform_admin && (
-                          <button className="icon-btn hover:!border-[#ffd0d7] hover:!bg-danger-soft hover:!text-danger" title="More actions" onClick={() => remove(w)}>
-                            <Trash2 size={13} />
+                          <button className="icon-btn hover:!border-[#ffd0d7] hover:!bg-danger-soft hover:!text-danger" title="Delete website" aria-label={`Delete ${w.primary_domain || w.name}`} onClick={() => remove(w)} disabled={deletingId === w.id}>
+                            {deletingId === w.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
                           </button>
                         )}
                       </div>

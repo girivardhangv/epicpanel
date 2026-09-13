@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import {
   ArrowLeft, ArrowRight, Play, Square, RotateCw, RefreshCw, Terminal as TerminalIcon,
-  Folder, Clock, KeyRound, History, Lock, Globe, GitBranch,
+  Folder, Clock, KeyRound, History, Lock, Globe, GitBranch, Loader2,
 } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
@@ -102,7 +102,7 @@ export function ApplicationDetailPage() {
       {/* Header */}
       <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-center gap-3">
-          <Link to={`/sites/${websiteId}`} className="icon-btn !h-[34px] !w-[34px]" title="Back to site">
+          <Link to={`/sites/${websiteId}`} className="icon-btn !h-[34px] !w-[34px]" title="Back to site" aria-label="Back to site">
             <ArrowLeft size={15} />
           </Link>
           <div>
@@ -121,8 +121,14 @@ export function ApplicationDetailPage() {
             <button className="btn-ghost" onClick={() => action('start')} disabled={busy}><Play size={14} /> Start</button>
             <button className="btn-ghost" onClick={() => action('stop')} disabled={busy}><Square size={14} /> Stop</button>
             <button className="btn-primary" onClick={() => action('restart')} disabled={busy}><RotateCw size={14} /> Restart</button>
-            <button className="icon-btn !h-[36px] !w-[36px] hover:!border-[#ffd0d7] hover:!bg-danger-soft hover:!text-danger" title="Remove app" onClick={removeApp}>
-              <Square size={15} />
+            <button
+              className="icon-btn !h-[36px] !w-[36px] hover:!border-[#ffd0d7] hover:!bg-danger-soft hover:!text-danger"
+              title="Remove app"
+              aria-label="Remove application"
+              onClick={removeApp}
+              disabled={busy}
+            >
+              {busy ? <Loader2 size={15} className="animate-spin" /> : <Square size={15} />}
             </button>
           </div>
         ) : (

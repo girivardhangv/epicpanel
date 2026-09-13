@@ -110,12 +110,12 @@ export function AlertFeed() {
       render: (r) => (
         <div className="flex justify-end gap-[5px]">
           {!r.resolved_at && !r.acknowledged_at && (
-            <button className="icon-btn" title="Acknowledge" disabled={busyId === r.id} onClick={() => act(r, 'ack')}>
+            <button className="icon-btn" title="Acknowledge" aria-label="Acknowledge" disabled={busyId === r.id} onClick={() => act(r, 'ack')}>
               <CheckCheck size={13} />
             </button>
           )}
           {!r.resolved_at && (
-            <button className="icon-btn" title="Resolve" disabled={busyId === r.id} onClick={() => act(r, 'resolve')}>
+            <button className="icon-btn" title="Resolve" aria-label="Resolve" disabled={busyId === r.id} onClick={() => act(r, 'resolve')}>
               <Flag size={13} />
             </button>
           )}

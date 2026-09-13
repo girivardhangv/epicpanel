@@ -14,6 +14,7 @@ export * from './FreshnessBadge'
 export * from './Skeleton'
 export * from './Timeline'
 export * from './BulkBar'
+export * from './ErrorBoundary'
 
 /* Phase 14 additions — command palette (⌘K), results-provider driven and
  * RBAC-filtered by the app. Never removed: contract is additive-only. */

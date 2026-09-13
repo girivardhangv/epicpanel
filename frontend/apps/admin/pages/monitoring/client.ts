@@ -8,7 +8,6 @@ import type {
   ObsCustomer,
   ObsNode,
   ObsService,
-  ObsWorkload,
   RuleRow,
 } from './data'
 
@@ -26,5 +25,4 @@ export const monitoring = {
   obsNodes: () => api.get<{ nodes: ObsNode[] }>('/v1/admin/observability/nodes'),
   obsServices: () => api.get<{ services: ObsService[] }>('/v1/admin/observability/services'),
   obsCustomers: () => api.get<{ customers: ObsCustomer[] }>('/v1/admin/observability/customers'),
-  obsWorkloads: () => api.get<{ workloads: ObsWorkload[] }>('/v1/admin/observability/workloads'),
 }

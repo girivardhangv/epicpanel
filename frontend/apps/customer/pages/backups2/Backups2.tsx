@@ -11,18 +11,16 @@ import {
   TYPE_TONES,
   TARGET_KIND_LABELS,
   verificationLabel,
-  scopeForType,
 } from './model'
 import type { BackupRow, BackupType, TargetRow, WorkloadOption } from './model'
 
 /** Phase 11 unified backups. The workload picker mirrors the API's
- * resolveWorkload: website-scoped types (account/database/website/
- * website_files), minecraft_world → instance, discord_bot + full_instance →
- * bot. Restore/verify are org-admin server-side; the buttons are hidden for
- * lower roles instead of inviting 403s. */
+ * resolveWorkload: every type is website-scoped (account/database/website/
+ * website_files). Restore/verify are org-admin server-side; the buttons are
+ * hidden for lower roles instead of inviting 403s. */
 
 function TypeChip({ type }: { type: string }) {
-  const tone = TYPE_TONES[type as BackupType] ?? 'bg-surface-2 text-sub'
+  const tone = TYPE_TONES[type] ?? 'bg-surface-2 text-sub'
   return (
     <span className={`inline-flex items-center gap-1 rounded-full px-2 py-[3px] text-[10px] font-bold ${tone}`}>
       {TYPE_LABELS[type as BackupType] ?? type}
@@ -30,13 +28,10 @@ function TypeChip({ type }: { type: string }) {
   )
 }
 
-function workloadLabel(type: string, b: BackupRow, sites: WorkloadOption[], instances: WorkloadOption[], bots: WorkloadOption[]): string {
-  const scope = scopeForType((type as BackupType) ?? 'website')
-  const list = scope === 'bot_id' ? bots : scope === 'instance_id' ? instances : sites
-  const id = scope === 'bot_id' ? b.bot_id : scope === 'instance_id' ? b.instance_id : b.website_id
-  const hit = list.find((w) => w.id === id)
+function workloadLabel(b: BackupRow, sites: WorkloadOption[]): string {
+  const hit = sites.find((w) => w.id === b.website_id)
   if (hit) return hit.name
-  if (id) return id.slice(0, 8)
+  if (b.website_id) return b.website_id.slice(0, 8)
   return 'Org-wide'
 }
 
@@ -53,8 +48,6 @@ export function Backups2Page() {
   const [backups, setBackups] = useState<BackupRow[] | null>(null)
   const [targets, setTargets] = useState<TargetRow[]>([])
   const [sites, setSites] = useState<WorkloadOption[]>([])
-  const [instances, setInstances] = useState<WorkloadOption[]>([])
-  const [bots, setBots] = useState<WorkloadOption[]>([])
   const [showCreate, setShowCreate] = useState(false)
   const [confirm, setConfirm] = useState<{ kind: 'restore' | 'verify'; row: BackupRow } | null>(null)
   const [confirmBusy, setConfirmBusy] = useState(false)
@@ -94,14 +87,6 @@ export function Backups2Page() {
       )
       .catch(() => setSites([]))
     api
-      .get<{ instances: { id: string; name: string; server_id: string }[] }>(`/v1/organizations/${org.id}/minecraft`)
-      .then((r) => setInstances((r.instances ?? []).map((i) => ({ id: i.id, name: i.name, sub: 'Minecraft instance', server_id: i.server_id }))))
-      .catch(() => setInstances([]))
-    api
-      .get<{ bots: { id: string; name: string; server_id: string }[] }>(`/v1/organizations/${org.id}/bots`)
-      .then((r) => setBots((r.bots ?? []).map((b) => ({ id: b.id, name: b.name, sub: 'Discord bot', server_id: b.server_id }))))
-      .catch(() => setBots([]))
-    api
       .get<{ targets: TargetRow[] }>(`/v1/organizations/${org.id}/backup-targets`)
       .then((r) => setTargets(r.targets ?? []))
       .catch(() => setTargets([]))
@@ -120,8 +105,7 @@ export function Backups2Page() {
     return urlType ? list.filter((b) => b.type === urlType) : list
   }, [backups, urlType])
 
-  const scope = scopeForType(form.type)
-  const workloadList = scope === 'bot_id' ? bots : scope === 'instance_id' ? instances : sites
+  const workloadList = sites
   const canCreate = canMutate && workloadList.length > 0
 
   const create = async () => {
@@ -134,9 +118,7 @@ export function Backups2Page() {
         encrypt: form.encrypt,
         verify: form.verify,
       }
-      if (scope === 'bot_id') body.bot_id = form.workload_id
-      else if (scope === 'instance_id') body.instance_id = form.workload_id
-      else body.website_id = form.workload_id
+      body.website_id = form.workload_id
       if (form.target_id) body.target_id = form.target_id
       await api.post(`/v1/organizations/${org.id}/backups2`, body)
       pushToast('success', `${TYPE_LABELS[form.type]} backup queued`)
@@ -174,7 +156,7 @@ export function Backups2Page() {
     <div className="fade-up">
       <PageTitle
         title="Backups"
-        subtitle="Every workload type — account, database, website, Minecraft world, Discord bot, full instance — with encrypted targets, verification and restore"
+        subtitle="Every workload type — account, database, website and website-files — with encrypted targets, verification and restore"
         actions={
           <>
             <button className="btn-ghost" onClick={load} aria-label="Refresh">
@@ -221,7 +203,7 @@ export function Backups2Page() {
           <EmptyState
             icon={<Archive size={22} strokeWidth={1.7} />}
             title="Unknown backup type"
-            subtitle="That workload type does not exist. Use the type chips above to pick one of the six verbatim types."
+            subtitle="That workload type does not exist. Use the type chips above to pick one of the supported types."
           />
         ) : backups === null ? (
           <SkeletonRows rows={2} />
@@ -263,7 +245,7 @@ export function Backups2Page() {
                   return (
                     <tr key={b.id} className="border-b border-line/60">
                       <td className="px-4 py-3">
-                        <strong className="text-[13px] text-ink">{workloadLabel(b.type, b, sites, instances, bots)}</strong>
+                        <strong className="text-[13px] text-ink">{workloadLabel(b, sites)}</strong>
                         <span className="block text-[10.5px] text-muted">
                           {b.trigger_type === 'manual' ? 'manual' : b.trigger_type}
                           {b.error ? ` · ${b.error}` : ''}
@@ -330,7 +312,7 @@ export function Backups2Page() {
               options={BACKUP_TYPES.map((t) => ({ value: t, label: TYPE_LABELS[t] }))}
             />
           </Field>
-          <Field label="Workload" hint={workloadList.length === 0 ? `no ${scope === 'bot_id' ? 'bots' : scope === 'instance_id' ? 'Minecraft instances' : 'websites'} in this organization yet` : undefined}>
+          <Field label="Workload" hint={workloadList.length === 0 ? 'no websites in this organization yet' : undefined}>
             <Select
               value={form.workload_id}
               onChange={(v) => setForm({ ...form, workload_id: v })}
@@ -378,7 +360,7 @@ export function Backups2Page() {
         danger={confirm?.kind === 'restore'}
         message={
           confirm?.kind === 'restore'
-            ? `"${workloadLabel(confirm.row.type, confirm.row, sites, instances, bots)}" will be overwritten from the ${TYPE_LABELS[confirm.row.type as BackupType] ?? confirm.row.type} backup taken ${timeAgo(confirm.row.created_at)}. Current data on the workload is replaced. This is audited.`
+            ? `"${workloadLabel(confirm.row, sites)}" will be overwritten from the ${TYPE_LABELS[confirm.row.type as BackupType] ?? confirm.row.type} backup taken ${timeAgo(confirm.row.created_at)}. Current data on the workload is replaced. This is audited.`
             : `The stored artifact will be pulled to a scratch area on the node and its SHA-256 checksum re-verified. Unverified backups are flagged so they can be re-run before you ever need them.`
         }
       />

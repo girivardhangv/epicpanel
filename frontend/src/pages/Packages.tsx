@@ -255,8 +255,6 @@ export function PackagesPage() {
             <Field label="Workload kind" hint="Plans define resources only; the workload is chosen by the customer">
               <Select value={form.kind} onChange={(v) => setForm({ ...form, kind: v })} options={[
                 { value: 'web', label: 'Web hosting' },
-                { value: 'minecraft', label: 'Minecraft' },
-                { value: 'discord', label: 'Discord bots' },
               ]} />
             </Field>
           </div>

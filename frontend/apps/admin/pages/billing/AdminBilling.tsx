@@ -42,8 +42,6 @@ export function fmtMoneyAdmin(minor: number, currency: string): string {
 
 const kindLabel: Record<string, string> = {
   web: 'Web hosting',
-  minecraft: 'Minecraft',
-  discord: 'Discord bot',
 }
 
 export function AdminBillingPage() {
@@ -222,7 +220,7 @@ export function AdminBillingPage() {
         <ErrorNote message={err} />
         <FormRow cols={2}>
           <Field label="Name">
-            <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Minecraft 4GB" autoFocus />
+            <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Business 4GB" autoFocus />
           </Field>
           <Field label="Type">
             <Select
@@ -230,8 +228,6 @@ export function AdminBillingPage() {
               onChange={(v) => setForm({ ...form, type: v })}
               options={[
                 { value: 'hosting', label: 'Web hosting' },
-                { value: 'minecraft', label: 'Minecraft' },
-                { value: 'discord', label: 'Discord bot' },
                 { value: 'service', label: 'Service (manual fulfilment)' },
               ]}
             />

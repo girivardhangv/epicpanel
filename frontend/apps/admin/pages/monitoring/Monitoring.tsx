@@ -14,7 +14,6 @@ import { OverviewTree } from './tree'
 import { NodesSection } from './Nodes'
 import { ServicesSection } from './Services'
 import { CustomersSection } from './Customers'
-import { MinecraftSection, DiscordSection } from './Workloads'
 import { RulesSection } from './Rules'
 import { AlertsSection } from './Alerts'
 import { StateChip } from './bits'
@@ -33,10 +32,6 @@ export function MonitoringOutlet() {
       return <ServicesSection />
     case 'customers':
       return <CustomersSection />
-    case 'minecraft':
-      return <MinecraftSection />
-    case 'discord':
-      return <DiscordSection />
     default:
       return <MonitoringHub />
   }

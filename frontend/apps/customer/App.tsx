@@ -3,7 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, Link, useLocation, useNavigate 
 import {
   LayoutGrid, Globe, FolderOpen, Database, History, Lock, UserRound,
   Server as ServerIcon, Network, Clock, KeyRound, Menu, Bell, ShieldCheck,
-  Gamepad2, Bot, CreditCard, Receipt,
+  CreditCard, Receipt,
 } from 'lucide-react'
 import { AuthProvider, useAuth, roleLabel, api, ROLE_RANK } from '@epicpanel/core'
 import type { Organization, Alert } from '@epicpanel/core'
@@ -26,8 +26,6 @@ import { MetricsPage } from './pages/Metrics'
 import { SslPage } from './pages/Ssl'
 import { SecurityPage } from './pages/Security'
 import { AccountPage } from './pages/Account'
-import { routes as minecraftRoutes } from './routes.minecraft'
-import { routes as botsRoutes } from './routes.bots'
 import { routes as billingRoutes } from './routes.billing'
 import { routes as backupsRoutes } from './routes.backups'
 
@@ -119,8 +117,8 @@ function Shell({ children }: { children: ReactNode }) {
 
   // Command palette (Phase 14, verbatim component list) — Cmd/Ctrl+K.
   // Results providers are RBAC-filtered: entries whose backing routes are
-  // gated server-side at RoleBilling (minecraft, bots, billing) only surface
-  // for members with that rank or above; server enforcement stays the law.
+  // gated server-side at RoleBilling (billing) only surface for members with
+  // that rank or above; server enforcement stays the law.
   const canBilling = useMemo(() => {
     if (user?.is_platform_admin) return true
     return (ROLE_RANK[myRole] ?? 0) >= ROLE_RANK.billing
@@ -154,8 +152,6 @@ function Shell({ children }: { children: ReactNode }) {
         nav('/account', 'Account', 'Tools', <UserRound size={14} strokeWidth={1.8} />),
         ...(canBilling
           ? [
-              nav('/minecraft', 'Minecraft', 'Tools', <Gamepad2 size={14} strokeWidth={1.8} />, 'server mc'),
-              nav('/bots', 'Discord Bots', 'Tools', <Bot size={14} strokeWidth={1.8} />, 'bot discord'),
               nav('/billing', 'Billing', 'Tools', <CreditCard size={14} strokeWidth={1.8} />, 'invoices subscriptions'),
               nav('/billing/invoices', 'Invoices', 'Tools', <Receipt size={14} strokeWidth={1.8} />, 'billing'),
             ]
@@ -297,7 +293,7 @@ function Guarded() {
         <Route path="/ssl" element={<SslPage />} />
         <Route path="/security" element={<SecurityPage />} />
         <Route path="/account" element={<AccountPage />} />
-        {[...minecraftRoutes, ...botsRoutes, ...billingRoutes, ...backupsRoutes].map((r, i) => (
+        {[...billingRoutes, ...backupsRoutes].map((r, i) => (
           <Route key={i} path={r.path} element={r.element} />
         ))}
         <Route path="*" element={<Navigate to="/" replace />} />

@@ -4,10 +4,8 @@
 //   Nodes     +-- CPU / RAM / Disk / Network / Health
 //   Services  +-- Nginx / Apache / OLS / PHP-FPM / MariaDB / Docker
 //   Customers +-- CPU / RAM / Disk / Bandwidth
-//   Minecraft +-- TPS / MSPT / Players
-//   Discord   +-- CPU / RAM / Uptime
 import { Link } from 'react-router-dom'
-import { ChevronRight, Server, ServerCog, Users, Gamepad2, Bot } from 'lucide-react'
+import { ChevronRight, Server, ServerCog, Users } from 'lucide-react'
 import { Card } from '@epicpanel/ui'
 
 export interface TreeGroup {
@@ -22,8 +20,6 @@ export const TREE: TreeGroup[] = [
   { key: 'nodes', label: 'Nodes', to: '/monitoring/nodes', icon: <Server size={15} strokeWidth={1.8} />, leaves: ['CPU', 'RAM', 'Disk', 'Network', 'Health'] },
   { key: 'services', label: 'Services', to: '/monitoring/services', icon: <ServerCog size={15} strokeWidth={1.8} />, leaves: ['Nginx', 'Apache', 'OLS', 'PHP-FPM', 'MariaDB', 'Docker'] },
   { key: 'customers', label: 'Customers', to: '/monitoring/customers', icon: <Users size={15} strokeWidth={1.8} />, leaves: ['CPU', 'RAM', 'Disk', 'Bandwidth'] },
-  { key: 'minecraft', label: 'Minecraft', to: '/monitoring/minecraft', icon: <Gamepad2 size={15} strokeWidth={1.8} />, leaves: ['TPS', 'MSPT', 'Players'] },
-  { key: 'discord', label: 'Discord', to: '/monitoring/discord', icon: <Bot size={15} strokeWidth={1.8} />, leaves: ['CPU', 'RAM', 'Uptime'] },
 ]
 
 export function OverviewTree() {

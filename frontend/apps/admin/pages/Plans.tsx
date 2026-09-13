@@ -131,7 +131,7 @@ export function PlansPage() {
                   right={<span className="badge-ok">{using.length} active</span>}
                 />
                 <div className="space-y-3">
-                  <Row label={p.kind === 'minecraft' ? 'Instances' : p.kind === 'discord' ? 'Bots' : 'Websites'} value={String(p.max_websites)} pct={pct(using.reduce((a, o) => a + o.websites, 0), p.max_websites * Math.max(1, using.length))} color="#2563eb" />
+                  <Row label="Websites" value={String(p.max_websites)} pct={pct(using.reduce((a, o) => a + o.websites, 0), p.max_websites * Math.max(1, using.length))} color="#2563eb" />
                   <Row label="Databases" value={String(p.max_databases)} pct={0} color="#0f9d6e" />
                   <Row label="Disk" value={fmtBytes(p.max_disk_mb * 1024 * 1024)} pct={0} color="#7c4dff" />
                   <Row label="RAM" value={fmtBytes(p.memory_limit_mb * 1024 * 1024)} pct={0} color="#d88b00" />
@@ -150,20 +150,18 @@ export function PlansPage() {
         </div>
       )}
 
-        <Modal open={show} onClose={() => setShow(false)} title="New hosting plan" subtitle="Plans define resources only — websites/Minecraft/Discord are chosen by the customer, not locked by the plan." width="max-w-[560px]">
+        <Modal open={show} onClose={() => setShow(false)} title="New hosting plan" subtitle="Plans define resources only — the runtime stack is chosen per site, not locked by the plan." width="max-w-[560px]">
           <ErrorNote message={err} />
           <FormRow>
             <Field label="Plan name"><input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Business Pro" /></Field>
             <Field label="Workload kind">
               <select className="input" value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })}>
                 <option value="web">Web hosting</option>
-                <option value="minecraft">Minecraft</option>
-                <option value="discord">Discord bots</option>
               </select>
             </Field>
           </FormRow>
           <FormRow>
-            <Field label={form.kind === 'web' ? 'Max websites' : form.kind === 'minecraft' ? 'Max instances' : 'Max bots'}>
+            <Field label="Max websites">
               <input className="input" type="number" value={form.max_websites} onChange={(e) => setForm({ ...form, max_websites: e.target.value })} />
             </Field>
             <Field label="Max databases"><input className="input" type="number" value={form.max_databases} onChange={(e) => setForm({ ...form, max_databases: e.target.value })} /></Field>

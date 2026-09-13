@@ -244,7 +244,7 @@ export interface ContainerSample {
 
 export interface AppSample {
   website_id: string
-  kind: 'app' | 'minecraft' | 'discord'
+  kind: string
   status: string
   cpu_percent: number
   memory_bytes: number
@@ -253,9 +253,6 @@ export interface AppSample {
   disk_used_mb: number
   uptime_s: number
   restart_count: number
-  players: number
-  tps: number
-  mspt: number
 }
 
 export interface SnapshotFrame {

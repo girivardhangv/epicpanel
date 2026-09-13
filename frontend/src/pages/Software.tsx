@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Package, Plus, Trash2, Server as ServerIcon, RefreshCw, Loader2, Puzzle, ChevronDown } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { Package, Plus, Trash2, Server as ServerIcon, RefreshCw, Loader2, Puzzle, ChevronDown, Boxes } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
 import { Card, StatusBadge, EmptyState, SkeletonRows } from '@/components/cards'
@@ -256,9 +257,14 @@ export function SoftwarePage() {
             Managed runtimes, web servers and PHP extensions — installed once per server, shared safely by all sites.
           </p>
         </div>
-        <button className="btn-primary" onClick={() => setShow(true)} disabled={eligibleServers.length === 0}>
-          <Plus size={14} /> Install software
-        </button>
+        <div className="flex items-center gap-2">
+          <Link className="btn-ghost" to="/software/installer">
+            <Boxes size={14} /> Catalog installer
+          </Link>
+          <button className="btn-primary" onClick={() => setShow(true)} disabled={eligibleServers.length === 0}>
+            <Plus size={14} /> Install software
+          </button>
+        </div>
       </div>
 
       <ErrorNote message={err} />

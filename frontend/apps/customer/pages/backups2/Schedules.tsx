@@ -2,19 +2,16 @@ import { useCallback, useEffect, useState } from 'react'
 import { CalendarClock, Plus, RefreshCw, Timer, Trash2 } from 'lucide-react'
 import { api, timeAgo, useAuth } from '@epicpanel/core'
 import { Card, CardHeader, EmptyState, PageTitle, RowActions, SkeletonRows, pushToast } from '@epicpanel/ui'
-import { ConfirmDialog, ErrorNote, Field, FormRow, InfoNote, Modal, Select } from '@epicpanel/forms'
-import { TYPE_LABELS, cronLooksValid, scopeForType } from './model'
+import { ConfirmDialog, ErrorNote, Field, FormRow, Modal, Select } from '@epicpanel/forms'
+import { TYPE_LABELS, cronLooksValid } from './model'
 import type { BackupType, ScheduleRow, WorkloadOption } from './model'
 
-/** Phase 11 schedules: 5-field cron, per workload type. The API scopes a
- * schedule to a website or bot; Minecraft-instance schedules are a backend
- * gap (the schedule table has website_id/bot_id columns only) — stated
- * honestly in the picker instead of faked. */
+/** Phase 11 schedules: 5-field cron, per workload type. The API scopes every
+ * schedule to a website (server-side invariant: website_id required). */
 export function SchedulesPage() {
   const { org, myRole } = useAuth()
   const [schedules, setSchedules] = useState<ScheduleRow[] | null>(null)
   const [sites, setSites] = useState<WorkloadOption[]>([])
-  const [bots, setBots] = useState<WorkloadOption[]>([])
   const [showCreate, setShowCreate] = useState(false)
   const [confirm, setConfirm] = useState<{ schedule: ScheduleRow } | null>(null)
   const [confirmBusy, setConfirmBusy] = useState(false)
@@ -46,15 +43,9 @@ export function SchedulesPage() {
       .get<{ websites: { id: string; name: string; primary_domain: string }[] }>(`/v1/organizations/${org.id}/websites`)
       .then((r) => setSites((r.websites ?? []).map((w) => ({ id: w.id, name: w.primary_domain || w.name, sub: w.name }))))
       .catch(() => setSites([]))
-    api
-      .get<{ bots: { id: string; name: string }[] }>(`/v1/organizations/${org.id}/bots`)
-      .then((r) => setBots((r.bots ?? []).map((b) => ({ id: b.id, name: b.name, sub: 'Discord bot' }))))
-      .catch(() => setBots([]))
   }, [org?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const scope = scopeForType(form.type)
-  const workloadList = scope === 'bot_id' ? bots : scope === 'instance_id' ? [] : sites
-  const workloadBlocked = form.type === 'minecraft_world' // schedule table is website/bot-scoped server-side
+  const workloadList = sites
 
   const create = async () => {
     if (!org) return
@@ -65,9 +56,7 @@ export function SchedulesPage() {
     }
     setBusy(true)
     try {
-      const body: Record<string, unknown> = { type: form.type, cron: form.cron.trim() }
-      if (scope === 'bot_id') body.bot_id = form.workload_id
-      else body.website_id = form.workload_id
+      const body: Record<string, unknown> = { type: form.type, cron: form.cron.trim(), website_id: form.workload_id }
       await api.post(`/v1/organizations/${org.id}/backup-schedules`, body)
       pushToast('success', 'Schedule created — the control-plane scheduler fires it on the cron')
       setShowCreate(false)
@@ -96,9 +85,8 @@ export function SchedulesPage() {
   }
 
   const workloadName = (s: ScheduleRow): string => {
-    const list = s.bot_id ? bots : sites
-    const hit = list.find((w) => w.id === (s.bot_id ?? s.website_id))
-    return hit?.name ?? (s.bot_id ?? s.website_id ?? 'unknown').slice(0, 8)
+    const hit = sites.find((w) => w.id === s.website_id)
+    return hit?.name ?? (s.website_id ?? 'unknown').slice(0, 8)
   }
 
   return (
@@ -157,7 +145,7 @@ export function SchedulesPage() {
                   <tr key={s.id} className="border-b border-line/60">
                     <td className="px-4 py-3">
                       <strong className="text-[13px] text-ink">{workloadName(s)}</strong>
-                      <span className="block text-[10.5px] text-muted">{s.bot_id ? 'Discord bot' : 'Website'}</span>
+                      <span className="block text-[10.5px] text-muted">Website</span>
                     </td>
                     <td className="px-4 py-3 text-sub">{TYPE_LABELS[s.type as BackupType] ?? s.type}</td>
                     <td className="px-4 py-3">
@@ -214,13 +202,10 @@ export function SchedulesPage() {
                 { value: 'website_files', label: TYPE_LABELS.website_files },
                 { value: 'account', label: TYPE_LABELS.account },
                 { value: 'database', label: TYPE_LABELS.database },
-                { value: 'minecraft_world', label: `${TYPE_LABELS.minecraft_world} (not schedulable yet)` },
-                { value: 'discord_bot', label: TYPE_LABELS.discord_bot },
-                { value: 'full_instance', label: TYPE_LABELS.full_instance },
               ]}
             />
           </Field>
-          <Field label="Workload" hint={workloadList.length === 0 ? (scope === 'bot_id' ? 'no bots in this organization yet' : 'no websites in this organization yet') : undefined}>
+          <Field label="Workload" hint={workloadList.length === 0 ? 'no websites in this organization yet' : undefined}>
             <Select
               value={form.workload_id}
               onChange={(v) => setForm({ ...form, workload_id: v })}
@@ -233,7 +218,6 @@ export function SchedulesPage() {
         <Field label="Cron expression" hint="5 fields: minute hour day-of-month month day-of-week">
           <input className="input font-mono" value={form.cron} onChange={(e) => setForm({ ...form, cron: e.target.value })} placeholder="0 3 * * *" />
         </Field>
-        {workloadBlocked && <InfoNote tone="warn" message="Minecraft-world schedules are not available yet — the schedule table scopes to websites and bots. Use a manual world backup or a website-type schedule meanwhile." />}
         <div className="mt-2 flex flex-wrap gap-1.5">
           {[
             { label: 'Daily 03:00', value: '0 3 * * *' },
@@ -253,7 +237,7 @@ export function SchedulesPage() {
         </div>
         <div className="mt-4 flex justify-end gap-2">
           <button className="btn-ghost" onClick={() => setShowCreate(false)}>Cancel</button>
-          <button className="btn-brand" onClick={create} disabled={busy || workloadBlocked || !form.workload_id || !cronLooksValid(form.cron)}>
+          <button className="btn-brand" onClick={create} disabled={busy || !form.workload_id || !cronLooksValid(form.cron)}>
             {busy ? 'Creating…' : 'Create schedule'}
           </button>
         </div>

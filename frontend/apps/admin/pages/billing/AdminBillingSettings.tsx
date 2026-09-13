@@ -112,7 +112,7 @@ export function AdminBillingSettingsPage() {
                   placeholder="7"
                 />
               </Field>
-              <InfoNote message="Suspension uses the existing workload lifecycle jobs (site offline / instance stop) and is reversible until termination." />
+              <InfoNote message="Suspension uses the existing workload lifecycle jobs (site offline) and is reversible until termination." />
             </div>
           </Card>
 

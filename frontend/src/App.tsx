@@ -31,8 +31,7 @@ import { PackagesPage } from '@/pages/Packages'
 import { BackupsPage } from '@/pages/Backups'
 import { SecurityPage } from '@/pages/Security'
 import { SettingsPage } from '@/pages/Settings'
-import { MinecraftPage, MinecraftDetailPage } from '@/pages/Minecraft'
-import { BotsPage, BotDetailPage } from '@/pages/Bots'
+import { SoftwareInstallerPage } from '@/pages/SoftwareInstaller'
 import { BillingPage } from '@/pages/Billing'
 
 function Shell({ children }: { children: ReactNode }) {
@@ -159,14 +158,11 @@ function Guarded() {
         <Route path="/sites/:website_id/dns" element={<DnsZonePage />} />
         <Route path="/sites/:website_id/terminal" element={<TerminalPage />} />
         <Route path="/files" element={<FilesLandingPage />} />
-        <Route path="/minecraft" element={<MinecraftPage />} />
-        <Route path="/minecraft/:id" element={<MinecraftDetailPage />} />
-        <Route path="/bots" element={<BotsPage />} />
-        <Route path="/bots/:id" element={<BotDetailPage />} />
         <Route path="/billing" element={<BillingPage />} />
         <Route path="/databases" element={<DatabasesPage />} />
         <Route path="/servers" element={<RequireAdmin><ServersPage /></RequireAdmin>} />
         <Route path="/software" element={<RequireAdmin><SoftwarePage /></RequireAdmin>} />
+        <Route path="/software/installer" element={<RequireAdmin><SoftwareInstallerPage /></RequireAdmin>} />
         <Route path="/activity" element={<ActivityPage />} />
         <Route path="/team" element={<TeamPage />} />
         <Route path="/admin/users" element={<RequireAdmin><AdminUsersPage /></RequireAdmin>} />

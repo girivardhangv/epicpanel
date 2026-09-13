@@ -3,14 +3,11 @@
 // write-only: the API never returns the sealed blob, and nothing here renders
 // one.
 
-/** The verbatim master-doc backup types + the website_files split. */
+/** The backup types the API's resolveWorkload accepts (website-scoped). */
 export const BACKUP_TYPES = [
   'account',
   'database',
   'website',
-  'minecraft_world',
-  'discord_bot',
-  'full_instance',
   'website_files',
 ] as const
 
@@ -20,9 +17,6 @@ export const TYPE_LABELS: Record<BackupType, string> = {
   account: 'Account',
   database: 'Database',
   website: 'Website',
-  minecraft_world: 'Minecraft World',
-  discord_bot: 'Discord Bot',
-  full_instance: 'Full Instance',
   website_files: 'Website Files',
 }
 
@@ -31,28 +25,22 @@ export const TYPE_ORDER: BackupType[] = [
   'website_files',
   'account',
   'database',
-  'minecraft_world',
-  'discord_bot',
-  'full_instance',
 ]
 
 /** Which workload scope each type resolves against (mirrors the API's
  * resolveWorkload). The values are the query/body field names. */
-export type WorkloadScope = 'website_id' | 'instance_id' | 'bot_id'
+export type WorkloadScope = 'website_id'
 
-export function scopeForType(t: BackupType): WorkloadScope {
-  if (t === 'minecraft_world') return 'instance_id'
-  if (t === 'discord_bot' || t === 'full_instance') return 'bot_id'
+export function scopeForType(_t: BackupType): WorkloadScope {
   return 'website_id'
 }
 
-/** Chip tone per type (bg/text utility classes on the neutral chip base). */
-export const TYPE_TONES: Record<BackupType, string> = {
+/** Chip tone per type (bg/text utility classes on the neutral chip base).
+ * Also carries labels for legacy rows the API may still return. */
+export const TYPE_TONES: Record<string, string> = {
   account: 'bg-purple-soft text-purple',
   database: 'bg-brand-soft text-brand',
   website: 'bg-brand-soft text-brand',
-  minecraft_world: 'bg-ok-soft text-ok',
-  discord_bot: 'bg-purple-soft text-purple',
   full_instance: 'bg-warn-soft text-warn',
   website_files: 'bg-surface-2 text-sub',
 }
@@ -75,8 +63,6 @@ export interface BackupRow {
   id: string
   organization_id: string
   website_id?: string
-  instance_id?: string
-  bot_id?: string
   target_id?: string
   type: string
   status: string
@@ -112,12 +98,11 @@ export interface TargetRow {
   created_at: string
 }
 
-/** Org-level cron schedule (website- or bot-scoped server-side). */
+/** Org-level cron schedule (website-scoped server-side). */
 export interface ScheduleRow {
   id: string
   organization_id: string
   website_id?: string
-  bot_id?: string
   type: string
   cron: string
   enabled: boolean

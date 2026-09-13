@@ -23,8 +23,6 @@ export interface Subscription {
   grace_until?: string | null
   last_error?: string
   website_id?: string
-  bot_id?: string
-  instance_id?: string
   created_at: string
 }
 

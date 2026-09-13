@@ -6,9 +6,8 @@ import { SchedulesPage } from './pages/backups2/Schedules'
 /**
  * Phase 11 route fragment. The coordinator mounts this under the guarded
  * shell: export const routes: RouteObject[] (react-router v7 contract).
- * /backups2/:workload_type narrows the unified list to one verbatim type
- * (account | database | website | minecraft_world | discord_bot |
- * full_instance | website_files).
+ * /backups2/:workload_type narrows the unified list to one type
+ * (account | database | website | website_files).
  */
 export const routes: RouteObject[] = [
   { path: '/backups2', element: <Backups2Page /> },

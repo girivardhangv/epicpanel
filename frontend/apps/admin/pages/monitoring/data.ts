@@ -40,19 +40,6 @@ export interface ObsCustomer {
   bandwidth_bps: number
 }
 
-export interface ObsWorkload {
-  ref: string
-  kind: string
-  state: string
-  tps: number
-  mspt: number
-  players: number
-  cpu_percent: number
-  ram_percent: number
-  uptime_s: number
-  restarts: number
-}
-
 export interface AlertRow {
   id: string
   organization_id?: string | null
@@ -129,12 +116,6 @@ export const METRICS: Record<RuleClass, { value: string; label: string; unit: st
     { value: 'cpu', label: 'Node CPU', unit: '%' },
     { value: 'ram', label: 'Node RAM', unit: '%' },
     { value: 'disk', label: 'Node disk', unit: '%' },
-    { value: 'mc_tps', label: 'Minecraft TPS', unit: 'tps' },
-    { value: 'mc_mspt', label: 'Minecraft MSPT', unit: 'ms' },
-    { value: 'mc_players', label: 'Minecraft players', unit: 'players' },
-    { value: 'discord_cpu', label: 'Discord CPU', unit: '%' },
-    { value: 'discord_ram', label: 'Discord RAM', unit: '%' },
-    { value: 'discord_uptime', label: 'Discord uptime', unit: 's' },
   ],
   state: [
     { value: 'node_offline', label: 'Node offline', unit: '' },
@@ -200,14 +181,4 @@ export function liveState(nodeState: string): 'LIVE' | 'STALE' | 'OFFLINE' {
 export function shortId(id: string | null | undefined): string {
   if (!id) return '—'
   return id.length > 8 ? id.slice(0, 8) : id
-}
-
-export function fmtUptime(seconds: number): string {
-  if (!seconds || seconds <= 0) return '—'
-  const d = Math.floor(seconds / 86400)
-  const h = Math.floor((seconds % 86400) / 3600)
-  const m = Math.floor((seconds % 3600) / 60)
-  if (d > 0) return `${d}d ${h}h`
-  if (h > 0) return `${h}h ${m}m`
-  return `${m}m`
 }

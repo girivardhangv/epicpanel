@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import {
   LayoutGrid, Globe, Database, Folder, History, Lock, UserRound,
-  Settings, Server, Activity, Package, ShieldCheck, Gamepad2, Bot, CreditCard,
+  Settings, Server, Activity, Package, ShieldCheck, CreditCard, HardDriveDownload,
 } from 'lucide-react'
 import { AppSidebar } from '@epicpanel/ui'
 import type { SidebarGroup, SidebarNavItem } from '@epicpanel/ui'
@@ -28,17 +28,11 @@ const NAV: { section: string; items: NavItem[] }[] = [
     ],
   },
   {
-    section: 'Workloads',
-    items: [
-      { to: '/minecraft', label: 'Minecraft', icon: Gamepad2 },
-      { to: '/bots', label: 'Discord Bots', icon: Bot },
-    ],
-  },
-  {
     section: 'Server',
     items: [
       { to: '/servers', label: 'Servers', icon: Server, adminOnly: true },
       { to: '/software', label: 'Software', icon: Package, adminOnly: true },
+      { to: '/software/installer', label: 'Installer', icon: HardDriveDownload, adminOnly: true },
       { to: '/backups', label: 'Backups', icon: History },
       { to: '/security', label: 'SSL / Security', icon: Lock },
       { to: '/billing', label: 'Billing', icon: CreditCard },

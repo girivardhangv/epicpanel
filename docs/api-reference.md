@@ -28,7 +28,32 @@ All bearer traffic is CSRF-exempt. Both token/key types are SHA-256 hashed at
 rest, carry optional expiry, are revocable, and are audited on
 create/revoke/use (`last_used_at`).
 
-### 1.1 Platform admin API keys (`epa_`) — full control
+### 1.1 Short URLs & your active organization
+
+You never need to know an organization id. Every org-scoped route registered
+as `/v1/organizations/{org_id}/X` is **also served at the short form
+`/v1/X`** — the active organization resolves server-side, in this priority:
+
+1. **Org tokens (`epk_`)**: always their bound organization (the header
+   below is ignored — confinement cannot be escaped through aliases).
+2. **`X-EpicPanel-Org: <org_id>` header** when present (admins and platform
+   keys targeting a specific org).
+3. Otherwise the caller's **primary organization** (earliest membership).
+
+Every account is created inside its own auto-provisioned personal
+organization (at signup and via `POST /v1/admin/users`), so for the common
+case `/v1/websites`, `/v1/databases`, … simply work:
+
+```bash
+curl -H "$EPK" https://panel.example.com/api/v1/websites
+curl -X POST -H "$EPK" -H "Content-Type: application/json" \
+  https://panel.example.com/api/v1/databases -d '{"name":"appdb","engine":"mariadb"}'
+```
+
+Both spellings remain valid everywhere — the canonical `{org_id}` paths are
+unchanged and are what the OpenAPI spec enumerates.
+
+### 1.2 Platform admin API keys (`epa_`) — full control
 
 An `epa_` key acts **as the platform admin**: it can reach every org-scoped
 route for any organization, plus the admin-only surface

@@ -92,7 +92,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
 	authH := &auth.Handler{Users: s.Users, Sessions: s.Sessions, Audit: s.Audit, Cfg: s.Cfg,
-		SetupDone: s.setupCompleted, MFA: s.MFA}
+		SetupDone: s.setupCompleted, MFA: s.MFA, Orgs: s.Orgs}
 	mfaH := &auth.MFAHandler{Users: s.Users, MFA: s.MFA, Sessions: s.Sessions, Audit: s.Audit, Cfg: s.Cfg}
 	mux.HandleFunc("POST /v1/auth/register", authH.Register)
 	mux.HandleFunc("POST /v1/auth/login", authH.Login)
@@ -324,7 +324,7 @@ func (s *Server) Handler() http.Handler {
 	pkeyH := &apitokens.PlatformKeysHandler{Tokens: s.Tokens, Audit: s.Audit}
 	pkeyH.Register(mux)
 
-	adminUsers := &users.AdminHandler{Users: s.Users}
+	adminUsers := &users.AdminHandler{Users: s.Users, Orgs: s.Orgs}
 	adminUsers.Register(mux)
 
 	pkgH := &packages.Handler{
@@ -493,13 +493,16 @@ func (s *Server) Handler() http.Handler {
 	// Built panel UI (EPICPANEL_WEB_DIR) — SPA catch-all AFTER all API routes.
 	s.mountWebUI(mux)
 
-	// Request flow (inside-out): ScopeEnforce -> CSRF -> SessionAuth ->
-	// CORS -> RateLimit -> RequestLog -> AgentReplayGuard -> APIPrefixRewrite
-	// -> mux. The prefix rewrite is outermost so /api/v1 and /v1 share every
-	// route below.
+	// Request flow (inside-out): ScopeEnforce -> CSRF -> OrgAlias ->
+	// SessionAuth -> CORS -> RateLimit -> RequestLog -> AgentReplayGuard
+	// -> APIPrefixRewrite -> mux. The prefix rewrite is outermost so /api/v1
+	// and /v1 share every route below; OrgAlias (ADR-060) rewrites short
+	// /v1/X paths to the canonical /v1/organizations/{active_org}/X after
+	// session auth has resolved the caller, before scope enforcement.
 	var h http.Handler = mux
 	h = httpapi.ScopeEnforce(h)
 	h = httpapi.CSRFGuard(h)
+	h = s.ResolveOrgAlias(h)
 	h = auth.SessionMiddleware(s.Users, s.Sessions, s.Tokens, h)
 	h = httpapi.CORSMiddleware(s.Cfg.CORSOrigins, h)
 	h = httpapi.RateLimit(s.Limiter, h)

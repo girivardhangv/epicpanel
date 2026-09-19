@@ -39,7 +39,7 @@ const NAV: { section: string; items: NavItem[] }[] = [
     ],
   },
   {
-    section: 'Organization',
+    section: 'Platform',
     items: [
       { to: '/activity', label: 'Activity Log', icon: Activity },
       { to: '/team', label: 'Users', icon: UserRound, minRole: 'admin' },
@@ -111,7 +111,9 @@ export function Sidebar({ open, onClose, collapsed, onToggleCollapsed }: {
       collapsed={collapsed}
       onToggleCollapsed={onToggleCollapsed}
       top={
-        orgs.length > 0 && (
+        // Invisible tenancy (ADR-060): single-org members never see the
+        // switcher — the org picker only appears for multi-org users.
+        orgs.length > 1 && (
           <div className="px-4 pt-2">
             <select
               value={org?.id ?? ''}

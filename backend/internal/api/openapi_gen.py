@@ -335,6 +335,10 @@ def build():
                 "- `agt_` agent token: data-plane agent channel only.\n\n"
                 "Mutating infrastructure operations (provision, install, deploy, backup, DNS sync, ...)\n"
                 "return 202 with a job_id; poll GET .../jobs/{id} or subscribe to GET /v1/ws.\n\n"
+                "Short URLs (ADR-060): every /v1/organizations/{org_id}/X route is ALSO served at /v1/X -\n"
+                "the caller's active organization resolves server-side (org tokens: their bound org;\n"
+                "otherwise the X-EpicPanel-Org header if present, else the caller's primary org).\n"
+                "Every account is created inside its own personal organization, so /v1/websites just works.\n\n"
                 "Errors: JSON {error: {code, message, details?}}. Rate limits: 10/min auth, 300/min API."
             ),
         },

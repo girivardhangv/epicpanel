@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/epicbyte/epicpanel/backend/internal/audit"
 	"github.com/epicbyte/epicpanel/backend/internal/config"
 	"github.com/epicbyte/epicpanel/backend/internal/httpapi"
+	"github.com/epicbyte/epicpanel/backend/internal/organizations"
 	"github.com/epicbyte/epicpanel/backend/internal/users"
 )
 
@@ -22,7 +24,11 @@ type Handler struct {
 	Sessions *SessionStore
 	MFA      *MFAStore
 	Audit    *audit.Store
-	Cfg      config.Config
+	// Orgs powers the invisible-tenancy signup (ADR-060): every registered
+	// user immediately gets their own personal organization. Nil-safe (only
+	// skips the auto-org when unset, e.g. some unit tests).
+	Orgs *organizations.Store
+	Cfg  config.Config
 	// SetupDone reports whether first-boot setup completed; once true,
 	// public registration is disabled (accounts are created by admins,
 	// cPanel model). Tests/bootstrap leave it unset.
@@ -86,6 +92,16 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		httpapi.RespondError(w, httpapi.ErrInternal(err))
 		return
+	}
+
+	// Invisible tenancy (ADR-060): the account starts inside its own
+	// organization, so neither the UI nor the API ever needs a "create org"
+	// step. Best-effort — a failure here must not fail the registration
+	// (an admin can still add the user to an org later).
+	if h.Orgs != nil {
+		if _, err := h.Orgs.EnsurePersonalOrg(r.Context(), u.ID, u.Name); err != nil {
+			slog.Warn("personal org creation failed", "user", u.ID, "err", err)
+		}
 	}
 
 	token, sess, err := h.Sessions.Create(r.Context(), u.ID, h.Cfg.SessionTTL, r.UserAgent(), clientIP(r))

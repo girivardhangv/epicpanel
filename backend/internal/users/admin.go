@@ -1,12 +1,14 @@
 package users
 
 import (
+	"log/slog"
 	"net/http"
 	"strings"
 
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/epicbyte/epicpanel/backend/internal/httpapi"
+	"github.com/epicbyte/epicpanel/backend/internal/organizations"
 )
 
 func hashPassword(password string) (string, error) {
@@ -18,6 +20,10 @@ func hashPassword(password string) (string, error) {
 // the hosting operator creates customer accounts; customers don't self-serve).
 type AdminHandler struct {
 	Users *Store
+	// Orgs powers the invisible-tenancy flow (ADR-060): admin-created
+	// customers get a personal org automatically. Nil-safe (skips auto-org
+	// when unset).
+	Orgs *organizations.Store
 }
 
 func (h *AdminHandler) Register(mux *http.ServeMux) {
@@ -73,6 +79,16 @@ func (h *AdminHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		httpapi.RespondError(w, httpapi.ErrInternal(err))
 		return
+	}
+
+	// Invisible tenancy (ADR-060): the customer lands in their own personal
+	// organization (created here, owned by them) instead of the admin having
+	// to mint an org and add them as a member. Best-effort; admins can still
+	// assign users to other orgs via membership endpoints.
+	if h.Orgs != nil {
+		if _, err := h.Orgs.EnsurePersonalOrg(r.Context(), u.ID, u.Name); err != nil {
+			slog.Warn("personal org creation failed", "user", u.ID, "err", err)
+		}
 	}
 	httpapi.WriteJSON(w, http.StatusCreated, u)
 }

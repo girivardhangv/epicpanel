@@ -1640,6 +1640,28 @@ Reason:   "Admin controls everything via API" was impossible: platform-admin
           shared gate keeps admin-route policy from drifting per feature.
 Status:   Accepted
 
+ADR-060
+Decision: Invisible tenancy: organizations stay the isolation engine, but
+          users never manage them. Every account is created inside its own
+          auto-provisioned personal organization (auth.Register and
+          POST /v1/admin/users call organizations.EnsurePersonalOrg,
+          idempotent, collision-safe slugs); every org-scoped route
+          /v1/organizations/{org_id}/X is ALSO served at /v1/X via the
+          ResolveOrgAlias middleware (session auth -> alias -> CSRF -> scope
+          enforcement), resolving the active org as: org tokens = bound org
+          (header ignored, confinement cannot be escaped); X-EpicPanel-Org
+          header if present; else the caller's primary (earliest) org. The
+          org switcher renders only for multi-org members; the create-org
+          screen remains as a legacy-user fallback.
+Reason:   Org CRUD, slugs, switchers and "create an organization first"
+          onboarding were pure friction for customers (1:1 user:org in
+          practice) while the tenancy layer is load-bearing (isolation
+          invariant, billing, reseller, RBAC) and must NOT be removed —
+          ADR-027/043 confinement and the phase-12 matrix keep working
+          unchanged because the alias rewrites BEFORE scope enforcement and
+          every handler keeps its own org resolution.
+Status:   Accepted
+
 Coordinator notes (wave execution): subagents ran with exclusive file ownership
 (phases/wave-contract.md); shared files (server.go routes, worker dispatch, App.tsx) were
 wired centrally. Two crash interruptions were healed by the coordinator (agent

@@ -323,6 +323,12 @@ func (s *Server) Handler() http.Handler {
 	}
 	tokH.Register(mux)
 
+	// Platform admin API keys (epa_): full-panel automation principals.
+	// Listing needs admin:read (session or key); create/revoke are
+	// session-only so a leaked key cannot mint or revoke other keys.
+	pkeyH := &apitokens.PlatformKeysHandler{Tokens: s.Tokens, Audit: s.Audit}
+	pkeyH.Register(mux)
+
 	adminUsers := &users.AdminHandler{Users: s.Users}
 	adminUsers.Register(mux)
 
@@ -470,10 +476,11 @@ func (s *Server) Handler() http.Handler {
 		s.WSHub.HandleWS(w, r, user.ID, user.Role == "admin", httpapi.IsAPIToken(r.Context()), httpapi.TokenOrgID(r.Context()))
 	}))
 
-	// Dead-letter / recent jobs visibility (platform admin, session only).
-	mux.HandleFunc("GET /v1/jobs", httpapi.RequireUser(func(w http.ResponseWriter, r *http.Request) {
+	// Dead-letter / recent jobs visibility (platform admin: session or
+	// epa_ key with admin:read).
+	mux.HandleFunc("GET /v1/jobs", httpapi.RequireAdmin(func(w http.ResponseWriter, r *http.Request) {
 		user, _ := httpapi.UserFrom(r.Context())
-		if user.Role != "admin" || httpapi.IsAPIToken(r.Context()) {
+		if user.Role != "admin" || (httpapi.IsAPIToken(r.Context()) && !httpapi.IsPlatformKey(r.Context())) {
 			httpapi.RespondError(w, httpapi.ErrForbidden("platform admin session required"))
 			return
 		}

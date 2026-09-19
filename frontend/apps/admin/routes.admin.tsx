@@ -32,6 +32,7 @@ const BillingPage = lazy(() => import('./pages/Billing').then((m) => ({ default:
 const SupportPage = lazy(() => import('./pages/Billing').then((m) => ({ default: m.SupportPage })))
 const SettingsPage = lazy(() => import('./pages/Settings').then((m) => ({ default: m.SettingsPage })))
 const SoftwarePage = lazy(() => import('./pages/Software').then((m) => ({ default: m.SoftwarePage })))
+const ApiKeysPage = lazy(() => import('./pages/ApiKeys').then((m) => ({ default: m.ApiKeysPage })))
 
 export const routes: RouteObject[] = [
   { path: '/', element: <DashboardPage /> },
@@ -56,5 +57,6 @@ export const routes: RouteObject[] = [
   { path: '/support', element: <SupportPage /> },
   { path: '/settings', element: <SettingsPage /> },
   { path: '/software', element: <SoftwarePage /> },
+  { path: '/api-keys', element: <ApiKeysPage /> },
   { path: '*', element: <Navigate to="/" replace /> },
 ]

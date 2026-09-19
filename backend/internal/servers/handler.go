@@ -36,10 +36,10 @@ type Handler struct {
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
-	// Mutations are platform-admin-only (session, no tokens): the fleet is
-	// shared infrastructure and org members must never be able to delete,
-	// re-enroll (rotate registration token) or reconfigure servers — the
-	// audit's top security finding.
+	// Mutations are platform-admin-only (admin session or epa_ platform key):
+	// the fleet is shared infrastructure and org members (incl. org tokens)
+	// must never be able to delete, re-enroll (rotate registration token) or
+	// reconfigure servers — the audit's top security finding.
 	mux.HandleFunc("POST /v1/organizations/{org_id}/servers", h.requirePlatformAdmin(h.Create))
 	mux.HandleFunc("GET /v1/organizations/{org_id}/servers", h.requireOrgRole(organizations.RoleBilling, h.List))
 	mux.HandleFunc("GET /v1/organizations/{org_id}/servers/{server_id}", h.requireOrgRole(organizations.RoleBilling, h.Get))
@@ -56,8 +56,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/agent/stream", h.requireAgent(h.AgentStream))
 }
 
-// requirePlatformAdmin enforces a platform-admin SESSION (API tokens never
-// inherit platform-admin) while preserving the org context the handlers read.
+// requirePlatformAdmin enforces the platform-admin surface: an admin
+// session or an epa_ platform admin API key (org tokens never inherit
+// platform-admin) while preserving the org context the handlers read.
 func (h *Handler) requirePlatformAdmin(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, ok := httpapi.UserFrom(r.Context())
@@ -65,7 +66,7 @@ func (h *Handler) requirePlatformAdmin(next http.HandlerFunc) http.HandlerFunc {
 			httpapi.RespondError(w, httpapi.ErrUnauthorized("authentication required"))
 			return
 		}
-		if user.Role != "admin" || httpapi.IsAPIToken(r.Context()) {
+		if user.Role != "admin" || (httpapi.IsAPIToken(r.Context()) && !httpapi.IsPlatformKey(r.Context())) {
 			httpapi.RespondError(w, httpapi.ErrForbidden("platform admin session required"))
 			return
 		}
@@ -128,15 +129,18 @@ func (h *Handler) resolveOrg(r *http.Request, orgIDParam string, min organizatio
 	if err != nil {
 		return uuid.Nil, httpapi.ErrValidation("invalid organization id")
 	}
-	// Platform admins operate across all organizations (cPanel root model).
+	// Platform admins operate across all organizations (cPanel root model):
+	// admin sessions and platform admin API keys (epa_) alike.
 	user, _ := httpapi.UserFrom(r.Context())
-	isPlatformAdmin := user != nil && user.Role == "admin" && !httpapi.IsAPIToken(r.Context())
+	isPlatformAdmin := user != nil && user.Role == "admin" &&
+		(!httpapi.IsAPIToken(r.Context()) || httpapi.IsPlatformKey(r.Context()))
 	if isPlatformAdmin {
 		return orgID, nil
 	}
-	// API tokens are confined to their own organization regardless of the
-	// creator's memberships (Phase 11 tenant confinement).
-	if httpapi.IsAPIToken(r.Context()) {
+	// Org tokens (epk_) are confined to their own organization regardless of
+	// the creator's memberships (Phase 11 tenant confinement); platform keys
+	// carry no bound org and already passed the platform-admin branch.
+	if httpapi.IsAPIToken(r.Context()) && !httpapi.IsPlatformKey(r.Context()) {
 		if bound := httpapi.TokenOrgID(r.Context()); bound != orgIDParam {
 			return uuid.Nil, httpapi.ErrNotFound("organization not found")
 		}

@@ -7,7 +7,8 @@ package authzmatrix
 //   - public routes: reachable unauthenticated
 //   - customer routes: org-scoped; cross-tenant access must 404 (never 403 —
 //     existence leaks)
-//   - admin routes: platform-admin session only (API tokens refused)
+//   - admin routes: platform-admin session or epa_ platform admin API key
+//     (org tokens epk_ refused — they never inherit platform-admin)
 //   - agent routes: agent tokens only
 //
 // This is the executable form of the mandatory checklist line "RBAC".
@@ -49,7 +50,8 @@ var probeTable = []routeProbe{
 	{"GET", "/v1/ws", "customer", ""},
 	// Agent-only (server-scope).
 	{"GET", "/v1/agent/stream", "agent", ""},
-	// Admin-only platform surface (session-only; API tokens refused).
+	// Admin-only platform surface (admin session or epa_ platform key;
+	// org tokens refused).
 	{"GET", "/v1/admin/alerts", "admin", ""},
 	{"GET", "/v1/admin/alert-rules", "admin", ""},
 	{"GET", "/v1/admin/observability/nodes", "admin", ""},
@@ -57,6 +59,12 @@ var probeTable = []routeProbe{
 	{"GET", "/v1/admin/observability/customers", "admin", ""},
 	{"GET", "/v1/admin/observability/workloads", "admin", ""},
 	{"GET", "/v1/admin/users", "admin", ""},
+	// Platform admin API key management: list reachable by key, but
+	// create/revoke are session-only (a leaked key must not mint keys).
+	{"GET", "/v1/admin/api-keys", "admin", ""},
+	{"POST", "/v1/admin/api-keys", "admin", ""},
+	{"DELETE", "/v1/admin/api-keys/{key_id}", "admin", ""},
+	{"GET", "/v1/jobs", "admin", ""},
 	// Customer org-scoped (spot matrix: read + mutate per module).
 	{"GET", "/v1/organizations/{org_id}/servers", "customer", "any"},
 	{"GET", "/v1/organizations/{org_id}/websites", "customer", "any"},

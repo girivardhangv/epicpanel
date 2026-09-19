@@ -10,6 +10,7 @@ import (
 type tokenScopesKey struct{}
 type tokenOrgKey struct{}
 type tokenIsAPIKey struct{}
+type tokenIsPlatformKey struct{}
 
 func WithTokenAuth(ctx context.Context, scopes map[string]bool, orgID string) context.Context {
 	ctx = context.WithValue(ctx, tokenScopesKey{}, scopes)
@@ -17,8 +18,26 @@ func WithTokenAuth(ctx context.Context, scopes map[string]bool, orgID string) co
 	return context.WithValue(ctx, tokenIsAPIKey{}, true)
 }
 
+// WithPlatformKeyAuth marks a platform admin API key (epa_): a machine
+// principal that acts as the platform admin across all organizations. It
+// carries no bound org — org scope comes from the request path and every
+// route is still scope-checked via ScopeEnforce.
+func WithPlatformKeyAuth(ctx context.Context, scopes map[string]bool) context.Context {
+	ctx = context.WithValue(ctx, tokenScopesKey{}, scopes)
+	ctx = context.WithValue(ctx, tokenIsAPIKey{}, true)
+	return context.WithValue(ctx, tokenIsPlatformKey{}, true)
+}
+
 func IsAPIToken(ctx context.Context) bool {
 	v, _ := ctx.Value(tokenIsAPIKey{}).(bool)
+	return v
+}
+
+// IsPlatformKey reports whether the request authenticated via a platform
+// admin API key (epa_) rather than an org token (epk_). Org tokens can
+// never set this flag, so admin-surface gates may rely on it.
+func IsPlatformKey(ctx context.Context) bool {
+	v, _ := ctx.Value(tokenIsPlatformKey{}).(bool)
 	return v
 }
 
@@ -30,6 +49,33 @@ func TokenScopes(ctx context.Context) map[string]bool {
 func TokenOrgID(ctx context.Context) string {
 	v, _ := ctx.Value(tokenOrgKey{}).(string)
 	return v
+}
+
+// RequireAdmin gates the platform-admin surface. It accepts:
+//   - a platform-admin browser session (cookie or session bearer token), or
+//   - a platform admin API key (epa_, IsPlatformKey).
+//
+// Org-scoped tokens (epk_) are always rejected — they never inherit
+// platform-admin (ADR-027/ADR-043). This is the single shared replacement
+// for the per-package requireAdminSession/requirePlatformAdmin copies so the
+// API-key policy cannot drift between features.
+func RequireAdmin(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user, ok := UserFrom(r.Context())
+		if !ok {
+			RespondError(w, ErrUnauthorized("authentication required"))
+			return
+		}
+		if user.Role != "admin" {
+			RespondError(w, ErrForbidden("platform administrator access required"))
+			return
+		}
+		if IsAPIToken(r.Context()) && !IsPlatformKey(r.Context()) {
+			RespondError(w, ErrForbidden("org api tokens cannot access the admin surface"))
+			return
+		}
+		next(w, r)
+	}
 }
 
 // scopeResource maps a path's resource segment to a scope group.
@@ -59,6 +105,8 @@ func scopeResource(resource string) string {
 		return "org"
 	case "package":
 		return "org"
+	case "billing":
+		return "billing"
 	case "ssh-keys":
 		return "websites"
 	case "crons":
@@ -89,8 +137,16 @@ func scopeResource(resource string) string {
 func requiredScope(method, path string) (string, bool) {
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	// Expect: v1 / organizations / {org} / resource...
-	if len(parts) < 4 || parts[0] != "v1" || parts[1] != "organizations" {
+	if len(parts) < 2 || parts[0] != "v1" || parts[1] != "organizations" {
 		return "", false
+	}
+	// v1/organizations            -> list orgs / create org
+	// v1/organizations/{org}      -> org details / rename
+	if len(parts) <= 3 {
+		if method == http.MethodGet {
+			return "org:read", true
+		}
+		return "org:write", true
 	}
 	resource := parts[3]
 	// Refinements for sub-resources under websites.
@@ -161,6 +217,30 @@ func tokenExempt(path string) bool {
 	return false
 }
 
+// requiredAdminScope derives the scope needed for a method+path on the
+// platform-admin surface: the cross-organization read models
+// (/v1/adminview, /v1/admin), the job console and platform settings. Only
+// platform admin keys (epa_) can hold admin scopes, so org tokens are
+// excluded from these routes by construction.
+func requiredAdminScope(method, path string) (string, bool) {
+	admin := func() (string, bool) {
+		if method == http.MethodGet || method == http.MethodHead {
+			return "admin:read", true
+		}
+		return "admin:write", true
+	}
+	switch {
+	case strings.HasPrefix(path, "/v1/adminview/"),
+		strings.HasPrefix(path, "/v1/admin/"):
+		return admin()
+	case path == "/v1/jobs",
+		path == "/v1/settings",
+		path == "/v1/audit-logs":
+		return admin()
+	}
+	return "", false
+}
+
 // ScopeEnforce rejects token-authenticated requests whose scopes don't cover
 // the route. Session-authenticated users are unaffected. Deny-by-default:
 // an unmapped path is refused for API tokens rather than allowed.
@@ -168,6 +248,16 @@ func ScopeEnforce(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if IsAPIToken(r.Context()) {
 			if tokenExempt(r.URL.Path) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			// Platform admin surface first: only epa_ keys can satisfy it.
+			if scope, ok := requiredAdminScope(r.Method, r.URL.Path); ok {
+				scopes := TokenScopes(r.Context())
+				if !scopes[scope] {
+					RespondError(w, ErrForbidden("token missing required scope: "+scope))
+					return
+				}
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -199,7 +289,9 @@ func RateLimit(limiter *TokenBucket, next http.Handler) http.Handler {
 			}
 		} else if strings.HasPrefix(path, "/v1/") {
 			key := clientKey(r)
-			if IsAPIToken(r.Context()) {
+			if IsPlatformKey(r.Context()) {
+				key = "tok:platform:" + key
+			} else if IsAPIToken(r.Context()) {
 				key = "tok:" + TokenOrgID(r.Context()) + ":" + key
 			}
 			if !limiter.Allow(key, 300.0/60.0, 600) {

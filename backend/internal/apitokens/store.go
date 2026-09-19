@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -42,6 +43,8 @@ const (
 	ScopeAlertsRead       Scope = "alerts:read"
 	ScopeAlertsWrite      Scope = "alerts:write"
 	ScopeAuditRead        Scope = "audit:read"
+	ScopeBillingRead      Scope = "billing:read"
+	ScopeBillingWrite     Scope = "billing:write"
 )
 
 // ValidScopes is the full set accepted at token creation.
@@ -57,7 +60,16 @@ var ValidScopes = []Scope{
 	ScopeMonitoringRead,
 	ScopeAlertsRead, ScopeAlertsWrite,
 	ScopeAuditRead,
+	ScopeBillingRead, ScopeBillingWrite,
 }
+
+// Admin-only scopes for platform admin keys (epa_). Deliberately NOT in
+// ValidScopes: org tokens (epk_) can never hold them, which is what keeps
+// the admin surface unreachable for org tokens by construction.
+const (
+	ScopeAdminRead  Scope = "admin:read"
+	ScopeAdminWrite Scope = "admin:write"
+)
 
 func ValidScope(s string) bool {
 	for _, v := range ValidScopes {
@@ -96,7 +108,10 @@ type Resolved struct {
 	UserID  uuid.UUID
 	Email   string
 	IsAdmin bool
-	Scopes  map[string]bool
+	// Platform marks a platform admin key (epa_): acts as the platform
+	// admin across all organizations. Org tokens (epk_) are always false.
+	Platform bool
+	Scopes   map[string]bool
 }
 
 type Store struct {
@@ -148,8 +163,14 @@ func (s *Store) CreateKind(ctx context.Context, orgID, createdBy uuid.UUID, name
 	return t, token, nil
 }
 
-// Resolve authenticates a raw token and updates last_used_at.
+// Resolve authenticates a raw token and updates last_used_at. The prefix
+// selects the principal type: epa_ = platform admin key, anything else =
+// org-confined epk_ token.
 func (s *Store) Resolve(ctx context.Context, raw string) (*Resolved, error) {
+	if strings.HasPrefix(raw, AdminKeyPrefix) {
+		return s.resolveAdminKey(ctx, raw)
+	}
+
 	sum := sha256.Sum256([]byte(raw))
 	hash := hex.EncodeToString(sum[:])
 

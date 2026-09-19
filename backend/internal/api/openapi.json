@@ -1,126 +1,6303 @@
 {
-  "openapi": "3.0.3",
-  "info": {
-    "title": "EpicPanel API",
-    "version": "1.0.0",
-    "description": "Linux-first hosting control plane API. Session cookie or Bearer session token for users; Bearer epk_ tokens for automation (scoped)."
-  },
-  "servers": [{"url": "/"}],
-  "components": {
-    "securitySchemes": {
-      "bearer": {"type": "http", "scheme": "bearer"}
-    },
-    "schemas": {
-      "Error": {
-        "type": "object",
-        "properties": {
-          "error": {
-            "type": "object",
-            "properties": {
-              "code": {"type": "string"},
-              "message": {"type": "string"},
-              "details": {}
-            }
-          }
-        }
-      }
-    }
-  },
-  "paths": {
-    "/healthz": {"get": {"summary": "Liveness + database ping", "responses": {"200": {"description": "ok"}, "503": {"description": "degraded"}}}},
-    "/v1/openapi.json": {"get": {"summary": "This document", "responses": {"200": {"description": "ok"}}}},
-    "/v1/auth/register": {"post": {"summary": "Register user (first user becomes platform admin)", "responses": {"201": {"description": "created"}, "409": {"description": "email taken"}, "422": {"description": "validation"}}}},
-    "/v1/auth/login": {"post": {"summary": "Session login", "responses": {"200": {"description": "ok"}, "401": {"description": "invalid credentials"}}}},
-    "/v1/auth/logout": {"post": {"summary": "Revoke session", "responses": {"204": {"description": "done"}}}},
-    "/v1/auth/me": {"get": {"summary": "Current user", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}, "401": {"description": "unauthenticated"}}}},
-    "/v1/organizations": {
-      "get": {"summary": "List organizations of current user", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}},
-      "post": {"summary": "Create organization (creator becomes owner)", "security": [{"bearer": []}], "responses": {"201": {"description": "created"}, "409": {"description": "slug taken"}}}
-    },
-    "/v1/organizations/{org_id}": {
-      "get": {"summary": "Organization details (billing+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}, "404": {"description": "not a member"}}},
-      "patch": {"summary": "Rename organization (admin+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}}
-    },
-    "/v1/organizations/{org_id}/members": {
-      "get": {"summary": "List members (billing+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}},
-      "post": {"summary": "Add member by email (admin+)", "security": [{"bearer": []}], "responses": {"201": {"description": "added"}, "404": {"description": "no such user"}}}
-    },
-    "/v1/organizations/{org_id}/members/{user_id}": {
-      "patch": {"summary": "Change member role (admin+)", "security": [{"bearer": []}], "responses": {"204": {"description": "done"}}},
-      "delete": {"summary": "Remove member (admin+, last owner protected)", "security": [{"bearer": []}], "responses": {"204": {"description": "done"}, "409": {"description": "last owner"}}}
-    },
-    "/v1/organizations/{org_id}/servers": {
-      "get": {"summary": "List servers (billing+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}},
-      "post": {"summary": "Register server (admin+) -> one-time registration token", "security": [{"bearer": []}], "responses": {"201": {"description": "created"}}}
-    },
-    "/v1/organizations/{org_id}/servers/capacity": {"get": {"summary": "Placement/capacity overview (admin+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}}},
-    "/v1/organizations/{org_id}/servers/{server_id}": {
-      "get": {"summary": "Server details (billing+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}},
-      "delete": {"summary": "Delete server (admin+)", "security": [{"bearer": []}], "responses": {"204": {"description": "done"}}}
-    },
-    "/v1/organizations/{org_id}/servers/{server_id}/maintenance": {"patch": {"summary": "Toggle maintenance mode (admin+)", "security": [{"bearer": []}], "responses": {"204": {"description": "done"}}}},
-    "/v1/organizations/{org_id}/servers/{server_id}/runtimes": {
-      "get": {"summary": "List runtimes (billing+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}},
-      "post": {"summary": "Install runtime {type, version} (admin+) -> 202", "security": [{"bearer": []}], "responses": {"202": {"description": "installing"}}}
-    },
-    "/v1/organizations/{org_id}/servers/{server_id}/runtimes/{runtime_id}": {"delete": {"summary": "Remove runtime (admin+; 409 while in use)", "security": [{"bearer": []}], "responses": {"202": {"description": "removing"}}}},
-    "/v1/organizations/{org_id}/websites": {
-      "get": {"summary": "List websites (billing+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}},
-      "post": {"summary": "Create website (developer+) -> 202 + job (server_id optional: auto-placement)", "security": [{"bearer": []}], "responses": {"202": {"description": "accepted"}}}
-    },
-    "/v1/organizations/{org_id}/websites/{website_id}": {
-      "get": {"summary": "Website details (billing+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}},
-      "patch": {"summary": "Change runtime_version -> reconcile (developer+)", "security": [{"bearer": []}], "responses": {"202": {"description": "accepted"}}},
-      "delete": {"summary": "Request deletion (admin+)", "security": [{"bearer": []}], "responses": {"204": {"description": "deleting"}}}
-    },
-    "/v1/organizations/{org_id}/websites/{website_id}/staging": {"post": {"summary": "Create staging env + clone (admin+) -> 202", "security": [{"bearer": []}], "responses": {"202": {"description": "cloning"}}}},
-    "/v1/organizations/{org_id}/websites/{website_id}/promote": {"post": {"summary": "Promote staging to production (admin+) -> 202", "security": [{"bearer": []}], "responses": {"202": {"description": "promoting"}}}},
-    "/v1/organizations/{org_id}/websites/{website_id}/domains": {
-      "get": {"summary": "List domains (billing+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}},
-      "post": {"summary": "Add alias domain (developer+; globally unique)", "security": [{"bearer": []}], "responses": {"201": {"description": "added"}, "409": {"description": "domain taken"}}}
-    },
-    "/v1/organizations/{org_id}/domains": {"get": {"summary": "List all domains in the org (SSL dashboard, billing+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}}},
-    "/v1/setup/status": {"get": {"summary": "Setup status (+ ?token= validity check, no auth)", "responses": {"200": {"description": "ok"}}}},
-    "/v1/setup/verify-hostname": {"post": {"summary": "Verify hostname resolves to this server (no auth)", "responses": {"200": {"description": "matched/resolved"}}}},
-    "/v1/setup/software": {"get": {"summary": "Setup catalog + install jobs (requires valid setup token)", "responses": {"200": {"description": "ok"}, "401": {"description": "token required"}}}, "post": {"summary": "Queue managed software installs during setup (token-gated) -> 202", "responses": {"202": {"description": "queued"}}}},
-    "/v1/setup/jobs": {"get": {"summary": "Live job progress during setup (token-gated)", "responses": {"200": {"description": "ok"}}}},
-    "/v1/organizations/{org_id}/servers/{server_id}/jobs": {"get": {"summary": "Recent jobs for a server (live progress, billing+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}}},
-    "/v1/organizations/{org_id}/servers/{server_id}/detect-software": {"post": {"summary": "Inventory installed managed software and adopt it (admin+) -> 202", "security": [{"bearer": []}], "responses": {"202": {"description": "detecting"}}}},
-    "/v1/organizations/{org_id}/servers/{server_id}/runtimes/{runtime_id}/extensions": {"get": {"summary": "List managed PHP extensions (billing+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}}, "post": {"summary": "Install/remove a PHP extension {name, action} (developer+) -> 202", "security": [{"bearer": []}], "responses": {"202": {"description": "queued"}}}},
-    "/v1/organizations/{org_id}/websites/{website_id}/usage": {"get": {"summary": "Per-site resource usage (cgroup CPU/memory + disk, auto-sampled)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}}},
-    "/v1/organizations/{org_id}/websites/{website_id}/config": {"get": {"summary": "Get per-site config (rewrite rules, billing+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}}},
-    "/v1/organizations/{org_id}/websites/{website_id}/config/rewrite": {"put": {"summary": "Save rewrite rules snippet and reconcile vhost (developer+)", "security": [{"bearer": []}], "responses": {"200": {"description": "saved"}, "422": {"description": "unsupported directive"}}}},
-    "/v1/organizations/{org_id}/databases/{db_id}/pma-sso": {"get": {"summary": "One-time phpMyAdmin/Adminer SSO link (developer+, audited)", "security": [{"bearer": []}], "responses": {"200": {"description": "url"}, "409": {"description": "not ready"}}}},
-    "/v1/pma-gate": {"get": {"summary": "Public one-time auto-login gate (encrypted token is the auth)", "responses": {"200": {"description": "html form"}, "401": {"description": "expired"}, "409": {"description": "already used"}}}},
-    "/v1/organizations/{org_id}/domains/{domain_id}/ssl": {"post": {"summary": "Set SSL mode {none|selfsigned|letsencrypt} (developer+) -> 202", "security": [{"bearer": []}], "responses": {"202": {"description": "issuing"}}}},
-    "/v1/organizations/{org_id}/domains/{domain_id}/verify-dns": {"post": {"summary": "Queue DNS verification (developer+) -> 202", "security": [{"bearer": []}], "responses": {"202": {"description": "queued"}}}},
-    "/v1/organizations/{org_id}/databases": {
-      "get": {"summary": "List databases (billing+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}},
-      "post": {"summary": "Create database {name, server_id, engine, website_id?} (developer+) -> 202", "security": [{"bearer": []}], "responses": {"202": {"description": "creating"}}}
-    },
-    "/v1/organizations/{org_id}/databases/{db_id}/credentials": {"get": {"summary": "Reveal credentials (developer+, audited)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}, "409": {"description": "not available"}}}},
-    "/v1/organizations/{org_id}/websites/{website_id}/deployment-config": {"patch": {"summary": "Set git deploy config (developer+)", "security": [{"bearer": []}], "responses": {"204": {"description": "done"}}}},
-    "/v1/organizations/{org_id}/websites/{website_id}/deploy": {"post": {"summary": "Trigger deploy (developer+) -> 202", "security": [{"bearer": []}], "responses": {"202": {"description": "deploying"}}}},
-    "/v1/organizations/{org_id}/websites/{website_id}/rollback": {"post": {"summary": "Rollback to last successful release (admin+) -> 202", "security": [{"bearer": []}], "responses": {"202": {"description": "rolling back"}}}},
-    "/v1/organizations/{org_id}/websites/{website_id}/deployments": {"get": {"summary": "Deployment history (billing+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}}},
-    "/v1/organizations/{org_id}/websites/{website_id}/backups": {
-      "get": {"summary": "Backup history (billing+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}},
-      "post": {"summary": "Create backup (developer+) -> 202", "security": [{"bearer": []}], "responses": {"202": {"description": "backing up"}}}
-    },
-    "/v1/organizations/{org_id}/websites/{website_id}/backup-config": {"patch": {"summary": "Set schedule {off|daily|weekly} + retention (admin+)", "security": [{"bearer": []}], "responses": {"204": {"description": "done"}}}},
-    "/v1/organizations/{org_id}/backups/{backup_id}/restore": {"post": {"summary": "Restore backup (admin+) -> 202", "security": [{"bearer": []}], "responses": {"202": {"description": "restoring"}}}},
-    "/v1/organizations/{org_id}/websites/{website_id}/health": {"get": {"summary": "Last 50 HTTP health checks (billing+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}}},
-    "/v1/organizations/{org_id}/alerts": {"get": {"summary": "Alerts (unresolved by default; ?resolved=true for all) (billing+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}}},
-    "/v1/organizations/{org_id}/servers/{server_id}/metrics/history": {"get": {"summary": "Last 200 server metric points (billing+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}}},
-    "/v1/organizations/{org_id}/api-tokens": {
-      "get": {"summary": "List API tokens (admin+)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}},
-      "post": {"summary": "Create API token {name, scopes, expires_in_days?} (admin+) — raw shown once", "security": [{"bearer": []}], "responses": {"201": {"description": "created"}}}
-    },
-    "/v1/organizations/{org_id}/api-tokens/{token_id}": {"delete": {"summary": "Revoke API token (admin+)", "security": [{"bearer": []}], "responses": {"204": {"description": "done"}}}},
-    "/v1/organizations/{org_id}/audit-logs": {"get": {"summary": "Audit trail (billing+ org members; all orgs for platform admin)", "security": [{"bearer": []}], "responses": {"200": {"description": "ok"}}}},
-    "/v1/agent/enroll": {"post": {"summary": "Agent enrollment (one-time registration token)", "responses": {"201": {"description": "enrolled"}, "401": {"description": "invalid token"}}}},
-    "/v1/agent/heartbeat": {"post": {"summary": "Agent heartbeat + metrics (Bearer agent token)", "responses": {"200": {"description": "ok"}}}},
-    "/v1/agent/jobs/claim": {"post": {"summary": "Agent claims next pending job (Bearer agent token)", "responses": {"200": {"description": "job or null"}}}},
-    "/v1/agent/jobs/{job_id}/result": {"post": {"summary": "Agent reports job outcome (Bearer agent token)", "responses": {"200": {"description": "ok"}}}}
+ "openapi": "3.0.3",
+ "info": {
+  "title": "EpicPanel API",
+  "version": "1.0.0",
+  "description": "EpicPanel hosting control plane. Canonical prefix: /api/v1 (the /v1 spelling is equivalent).\n\nPrincipal types (Authorization: Bearer <token>):\n- Session: browser cookie or session token (full role of the user).\n- `epk_` org API token: org-confined automation identity; deny-by-default scopes\n  (x_scope on each operation). Never inherits platform-admin. CSRF-exempt.\n- `epa_` platform admin API key: operates across ALL organizations with the\n  platform-admin role; needs the org scope for /v1/organizations/... routes and\n  admin:read/admin:write for the /v1/admin* + /v1/jobs surface. Create/revoke via\n  admin SESSION only (POST/DELETE /v1/admin/api-keys).\n- `agt_` agent token: data-plane agent channel only.\n\nMutating infrastructure operations (provision, install, deploy, backup, DNS sync, ...)\nreturn 202 with a job_id; poll GET .../jobs/{id} or subscribe to GET /v1/ws.\n\nErrors: JSON {error: {code, message, details?}}. Rate limits: 10/min auth, 300/min API."
+ },
+ "servers": [
+  {
+   "url": "/"
   }
+ ],
+ "tags": [
+  {
+   "name": "Auth & MFA"
+  },
+  {
+   "name": "Organizations"
+  },
+  {
+   "name": "Servers & Agent"
+  },
+  {
+   "name": "Agent channel (machine)"
+  },
+  {
+   "name": "Websites"
+  },
+  {
+   "name": "File manager"
+  },
+  {
+   "name": "Domains, DNS & SSL"
+  },
+  {
+   "name": "Databases"
+  },
+  {
+   "name": "Deployments"
+  },
+  {
+   "name": "Backups"
+  },
+  {
+   "name": "Runtimes & Applications"
+  },
+  {
+   "name": "Cron, FTP & SSH"
+  },
+  {
+   "name": "Monitoring & Alerts"
+  },
+  {
+   "name": "Admin Alerts & Observability"
+  },
+  {
+   "name": "API Access (tokens, keys, service accounts)"
+  },
+  {
+   "name": "Hosting Packages & Users"
+  },
+  {
+   "name": "Admin WHM Console"
+  },
+  {
+   "name": "Billing (org side)"
+  },
+  {
+   "name": "Billing (admin side)"
+  },
+  {
+   "name": "Audit, Setup & Settings"
+  },
+  {
+   "name": "System"
+  }
+ ],
+ "paths": {
+  "/v1/auth/register": {
+   "post": {
+    "summary": "Register user (first user = platform admin; locked after setup)",
+    "tags": [
+     "Auth & MFA"
+    ],
+    "security": [],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/auth/login": {
+   "post": {
+    "summary": "Login (sets session cookie; returns bearer-capable token)",
+    "tags": [
+     "Auth & MFA"
+    ],
+    "security": [],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/auth/logout": {
+   "post": {
+    "summary": "Logout (revoke session)",
+    "tags": [
+     "Auth & MFA"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/auth/me": {
+   "get": {
+    "summary": "Current user",
+    "tags": [
+     "Auth & MFA"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/auth/mfa/setup": {
+   "post": {
+    "summary": "Start MFA enrollment",
+    "tags": [
+     "Auth & MFA"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/auth/mfa/enable": {
+   "post": {
+    "summary": "Enable MFA with TOTP code",
+    "tags": [
+     "Auth & MFA"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/auth/mfa/disable": {
+   "post": {
+    "summary": "Disable MFA",
+    "tags": [
+     "Auth & MFA"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/auth/mfa/verify": {
+   "post": {
+    "summary": "Verify MFA during login",
+    "tags": [
+     "Auth & MFA"
+    ],
+    "security": [],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/organizations": {
+   "post": {
+    "summary": "Create organization (creator becomes owner)",
+    "tags": [
+     "Organizations"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "org:write"
+   },
+   "get": {
+    "summary": "List own organizations",
+    "tags": [
+     "Organizations"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "org:read"
+   }
+  },
+  "/v1/organizations/{org_id}": {
+   "get": {
+    "summary": "Organization details (billing+)",
+    "tags": [
+     "Organizations"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "org:read",
+    "parameters": []
+   },
+   "patch": {
+    "summary": "Rename organization (admin+)",
+    "tags": [
+     "Organizations"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "org:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/members": {
+   "get": {
+    "summary": "List members (billing+)",
+    "tags": [
+     "Organizations"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "org:read",
+    "parameters": []
+   },
+   "post": {
+    "summary": "Add member by email (admin+)",
+    "tags": [
+     "Organizations"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "org:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/members/{user_id}": {
+   "patch": {
+    "summary": "Change member role (admin+)",
+    "tags": [
+     "Organizations"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "org:write",
+    "parameters": []
+   },
+   "delete": {
+    "summary": "Remove member (admin+; last owner protected)",
+    "tags": [
+     "Organizations"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "org:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/servers": {
+   "post": {
+    "summary": "Register server (platform admin; one-time reg token)",
+    "tags": [
+     "Servers & Agent"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "servers:write",
+    "parameters": []
+   },
+   "get": {
+    "summary": "List org servers (billing+)",
+    "tags": [
+     "Servers & Agent"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "servers:read",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/servers/{server_id}": {
+   "get": {
+    "summary": "Server details (billing+)",
+    "tags": [
+     "Servers & Agent"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "servers:read",
+    "parameters": []
+   },
+   "delete": {
+    "summary": "Delete server (platform admin)",
+    "tags": [
+     "Servers & Agent"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "servers:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/servers/{server_id}/registration-token": {
+   "post": {
+    "summary": "Rotate one-time registration token (platform admin)",
+    "tags": [
+     "Servers & Agent"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "servers:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/servers/{server_id}/metrics": {
+   "get": {
+    "summary": "Latest server metrics (billing+)",
+    "tags": [
+     "Servers & Agent"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "servers:read",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/servers/metrics": {
+   "get": {
+    "summary": "Latest metrics for all servers (billing+)",
+    "tags": [
+     "Servers & Agent"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "servers:read",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/servers/{server_id}/metrics/history": {
+   "get": {
+    "summary": "Metrics history (billing+)",
+    "tags": [
+     "Servers & Agent"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "servers:read",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/servers/{server_id}/jobs": {
+   "get": {
+    "summary": "Recent jobs for a server (billing+)",
+    "tags": [
+     "Servers & Agent"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "servers:read",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/servers/capacity": {
+   "get": {
+    "summary": "Placement/capacity overview (platform admin)",
+    "tags": [
+     "Servers & Agent"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "servers:read",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/servers/{server_id}/maintenance": {
+   "patch": {
+    "summary": "Maintenance mode (platform admin)",
+    "tags": [
+     "Servers & Agent"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "servers:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/servers/{server_id}/database-tools": {
+   "post": {
+    "summary": "Install phpMyAdmin/Adminer (platform admin)",
+    "tags": [
+     "Servers & Agent"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "servers:write",
+    "parameters": []
+   }
+  },
+  "/v1/agent/enroll": {
+   "post": {
+    "summary": "Exchange one-time reg token for agent token",
+    "tags": [
+     "Agent channel (machine)"
+    ],
+    "security": [],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/agent/heartbeat": {
+   "post": {
+    "summary": "Agent heartbeat + metrics (Bearer agt_)",
+    "tags": [
+     "Agent channel (machine)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/agent/stream": {
+   "get": {
+    "summary": "Agent SSE event stream (Bearer agt_)",
+    "tags": [
+     "Agent channel (machine)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/agent/jobs/claim": {
+   "post": {
+    "summary": "Claim next pending job (Bearer agt_)",
+    "tags": [
+     "Agent channel (machine)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/agent/jobs/{job_id}/result": {
+   "post": {
+    "summary": "Report job outcome (Bearer agt_)",
+    "tags": [
+     "Agent channel (machine)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/agent/jobs/{job_id}/progress": {
+   "post": {
+    "summary": "Report job progress (Bearer agt_)",
+    "tags": [
+     "Agent channel (machine)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/organizations/{org_id}/websites": {
+   "post": {
+    "summary": "Create website -> 202 + job (server_id optional: auto-placement)",
+    "tags": [
+     "Websites"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
+    "parameters": []
+   },
+   "get": {
+    "summary": "List websites (billing+)",
+    "tags": [
+     "Websites"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:read",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}": {
+   "get": {
+    "summary": "Website details (billing+)",
+    "tags": [
+     "Websites"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:read",
+    "parameters": []
+   },
+   "patch": {
+    "summary": "Update website (runtime/docroot) -> reconcile job",
+    "tags": [
+     "Websites"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
+    "parameters": []
+   },
+   "delete": {
+    "summary": "Delete website -> delete job (admin+)",
+    "tags": [
+     "Websites"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/jobs": {
+   "get": {
+    "summary": "Website job history",
+    "tags": [
+     "Websites"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:read",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/config": {
+   "get": {
+    "summary": "Rendered site config (billing+)",
+    "tags": [
+     "Websites"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:read",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/usage": {
+   "get": {
+    "summary": "Per-site resource usage (billing+)",
+    "tags": [
+     "Websites"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:read",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/config/rewrite": {
+   "put": {
+    "summary": "Set nginx rewrite rules (developer+)",
+    "tags": [
+     "Websites"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/php-settings": {
+   "get": {
+    "summary": "Per-site PHP settings",
+    "tags": [
+     "Websites"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:read",
+    "parameters": []
+   },
+   "put": {
+    "summary": "Update PHP settings -> job",
+    "tags": [
+     "Websites"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/suspend": {
+   "post": {
+    "summary": "Suspend site (admin+)",
+    "tags": [
+     "Websites"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/resume": {
+   "post": {
+    "summary": "Resume site (admin+)",
+    "tags": [
+     "Websites"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/staging": {
+   "post": {
+    "summary": "Create staging clone (admin+)",
+    "tags": [
+     "Websites"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "deployments:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/promote": {
+   "post": {
+    "summary": "Promote staging -> production (admin+)",
+    "tags": [
+     "Websites"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "deployments:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/wordpress": {
+   "post": {
+    "summary": "WordPress one-click install (developer+)",
+    "tags": [
+     "Websites"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/files": {
+   "get": {
+    "summary": "List directory (path query)",
+    "tags": [
+     "File manager"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:read",
+    "parameters": []
+   },
+   "post": {
+    "summary": "Create file/dir",
+    "tags": [
+     "File manager"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
+    "parameters": []
+   },
+   "patch": {
+    "summary": "Rename/move",
+    "tags": [
+     "File manager"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
+    "parameters": []
+   },
+   "delete": {
+    "summary": "Delete file/dir",
+    "tags": [
+     "File manager"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/files/content": {
+   "get": {
+    "summary": "Read file (editor, 2MB cap)",
+    "tags": [
+     "File manager"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:read",
+    "parameters": []
+   },
+   "put": {
+    "summary": "Write file",
+    "tags": [
+     "File manager"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/files/download": {
+   "get": {
+    "summary": "Download file or whole-site tar.gz",
+    "tags": [
+     "File manager"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:read",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/files/upload": {
+   "post": {
+    "summary": "Multipart upload (32MB cap)",
+    "tags": [
+     "File manager"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/domains": {
+   "get": {
+    "summary": "List website domains (billing+)",
+    "tags": [
+     "Domains, DNS & SSL"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "domains:read",
+    "parameters": []
+   },
+   "post": {
+    "summary": "Add alias/subdomain (developer+)",
+    "tags": [
+     "Domains, DNS & SSL"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "domains:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/domains/{domain_id}": {
+   "patch": {
+    "summary": "Update domain docroot (developer+)",
+    "tags": [
+     "Domains, DNS & SSL"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "domains:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/domains/{domain_id}": {
+   "delete": {
+    "summary": "Remove alias (admin+)",
+    "tags": [
+     "Domains, DNS & SSL"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "domains:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/domains/{domain_id}/ssl": {
+   "post": {
+    "summary": "Set SSL mode none|selfsigned|letsencrypt -> cert job",
+    "tags": [
+     "Domains, DNS & SSL"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "domains:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/domains/{domain_id}/verify-dns": {
+   "post": {
+    "summary": "Queue DNS verification -> job",
+    "tags": [
+     "Domains, DNS & SSL"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "domains:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/domains": {
+   "get": {
+    "summary": "List org domains (billing+)",
+    "tags": [
+     "Domains, DNS & SSL"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "domains:read",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/redirects": {
+   "get": {
+    "summary": "List redirects",
+    "tags": [
+     "Domains, DNS & SSL"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "domains:read",
+    "parameters": []
+   },
+   "post": {
+    "summary": "Create redirect",
+    "tags": [
+     "Domains, DNS & SSL"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "domains:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/redirects/{redirect_id}": {
+   "patch": {
+    "summary": "Update redirect",
+    "tags": [
+     "Domains, DNS & SSL"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "domains:write",
+    "parameters": []
+   },
+   "delete": {
+    "summary": "Delete redirect",
+    "tags": [
+     "Domains, DNS & SSL"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "domains:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/dns-zone": {
+   "get": {
+    "summary": "Get DNS zone (billing+)",
+    "tags": [
+     "Domains, DNS & SSL"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "domains:read",
+    "parameters": []
+   },
+   "post": {
+    "summary": "Create zone for primary domain (developer+)",
+    "tags": [
+     "Domains, DNS & SSL"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "domains:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/dns-zones/{zone_id}": {
+   "delete": {
+    "summary": "Delete zone (admin+)",
+    "tags": [
+     "Domains, DNS & SSL"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "domains:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/dns-zones/{zone_id}/records": {
+   "post": {
+    "summary": "Create DNS record (developer+)",
+    "tags": [
+     "Domains, DNS & SSL"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "domains:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/dns-records/{record_id}": {
+   "patch": {
+    "summary": "Update DNS record (developer+)",
+    "tags": [
+     "Domains, DNS & SSL"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "domains:write",
+    "parameters": []
+   },
+   "delete": {
+    "summary": "Delete DNS record (admin+)",
+    "tags": [
+     "Domains, DNS & SSL"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "domains:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/dns-zones/{zone_id}/publish": {
+   "post": {
+    "summary": "Publish zone to agent -> job",
+    "tags": [
+     "Domains, DNS & SSL"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "domains:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/databases": {
+   "post": {
+    "summary": "Create database {name,server_id,engine,website_id?} -> 202 + job",
+    "tags": [
+     "Databases"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "databases:write",
+    "parameters": []
+   },
+   "get": {
+    "summary": "List databases (billing+)",
+    "tags": [
+     "Databases"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "databases:read",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/databases/{db_id}": {
+   "get": {
+    "summary": "Database details (billing+)",
+    "tags": [
+     "Databases"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "databases:read",
+    "parameters": []
+   },
+   "delete": {
+    "summary": "Drop database -> job (admin+)",
+    "tags": [
+     "Databases"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "databases:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/databases/{db_id}/credentials": {
+   "get": {
+    "summary": "Reveal credentials (developer+, audited)",
+    "tags": [
+     "Databases"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "databases:read",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/databases/{db_id}/pma-sso": {
+   "get": {
+    "summary": "phpMyAdmin SSO URL (developer+)",
+    "tags": [
+     "Databases"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "databases:read",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/deployments": {
+   "get": {
+    "summary": "Deployment history (billing+)",
+    "tags": [
+     "Deployments"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "deployments:read",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/deployment-config": {
+   "patch": {
+    "summary": "Set repo/branch/token (developer+)",
+    "tags": [
+     "Deployments"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "deployments:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/deploy": {
+   "post": {
+    "summary": "Trigger deploy -> job",
+    "tags": [
+     "Deployments"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "deployments:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/rollback": {
+   "post": {
+    "summary": "Rollback to last release (admin+)",
+    "tags": [
+     "Deployments"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "deployments:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/backups": {
+   "get": {
+    "summary": "Backup history (billing+)",
+    "tags": [
+     "Backups"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "backups:read",
+    "parameters": []
+   },
+   "post": {
+    "summary": "Manual backup -> job",
+    "tags": [
+     "Backups"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "backups:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/backup-config": {
+   "patch": {
+    "summary": "Schedule + retention (admin+)",
+    "tags": [
+     "Backups"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "backups:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/backups/{backup_id}/restore": {
+   "post": {
+    "summary": "Restore backup -> job (admin+)",
+    "tags": [
+     "Backups"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "backups:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/backup-targets": {
+   "get": {
+    "summary": "List backup targets (Phase 11)",
+    "tags": [
+     "Backups"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "backups:read",
+    "parameters": []
+   },
+   "post": {
+    "summary": "Create backup target",
+    "tags": [
+     "Backups"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "backups:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/backup-targets/{target_id}": {
+   "delete": {
+    "summary": "Delete backup target",
+    "tags": [
+     "Backups"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "backups:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/backups2": {
+   "get": {
+    "summary": "List backups (unified engine)",
+    "tags": [
+     "Backups"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "backups:read",
+    "parameters": []
+   },
+   "post": {
+    "summary": "Create backup {type,website_id?,target_id?,encrypt?,verify?}",
+    "tags": [
+     "Backups"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "backups:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/backups2/{backup_id}/restore": {
+   "post": {
+    "summary": "Restore (unified engine)",
+    "tags": [
+     "Backups"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "backups:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/backups2/{backup_id}/verify": {
+   "post": {
+    "summary": "Verify backup archive",
+    "tags": [
+     "Backups"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "backups:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/backup-schedules": {
+   "get": {
+    "summary": "List backup schedules",
+    "tags": [
+     "Backups"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "backups:read",
+    "parameters": []
+   },
+   "post": {
+    "summary": "Create backup schedule {type,website_id?,cron}",
+    "tags": [
+     "Backups"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "backups:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/backup-schedules/{schedule_id}": {
+   "delete": {
+    "summary": "Delete backup schedule",
+    "tags": [
+     "Backups"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "backups:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/servers/{server_id}/runtimes": {
+   "get": {
+    "summary": "List runtimes on server (billing+)",
+    "tags": [
+     "Runtimes & Applications"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "servers:read",
+    "parameters": []
+   },
+   "post": {
+    "summary": "Install runtime {type,version} -> job (admin+)",
+    "tags": [
+     "Runtimes & Applications"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "runtimes:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/servers/{server_id}/runtimes/{runtime_id}": {
+   "delete": {
+    "summary": "Remove runtime (refcount-guarded; admin+)",
+    "tags": [
+     "Runtimes & Applications"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "runtimes:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/servers/{server_id}/runtimes/{runtime_id}/extensions": {
+   "get": {
+    "summary": "List runtime extensions",
+    "tags": [
+     "Runtimes & Applications"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "runtimes:read",
+    "parameters": []
+   },
+   "post": {
+    "summary": "Install/remove extension -> job",
+    "tags": [
+     "Runtimes & Applications"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "runtimes:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/servers/{server_id}/detect-software": {
+   "post": {
+    "summary": "Detect installed software -> job (admin+)",
+    "tags": [
+     "Runtimes & Applications"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "runtimes:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/application": {
+   "get": {
+    "summary": "App process config (billing+)",
+    "tags": [
+     "Runtimes & Applications"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:read",
+    "parameters": []
+   },
+   "post": {
+    "summary": "Create app process -> build/start jobs",
+    "tags": [
+     "Runtimes & Applications"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
+    "parameters": []
+   },
+   "patch": {
+    "summary": "Update app + restart",
+    "tags": [
+     "Runtimes & Applications"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/application/start": {
+   "post": {
+    "summary": "Start app",
+    "tags": [
+     "Runtimes & Applications"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/application/stop": {
+   "post": {
+    "summary": "Stop app",
+    "tags": [
+     "Runtimes & Applications"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/application/restart": {
+   "post": {
+    "summary": "Restart app",
+    "tags": [
+     "Runtimes & Applications"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/application/status": {
+   "get": {
+    "summary": "App status -> job",
+    "tags": [
+     "Runtimes & Applications"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:read",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/application/logs": {
+   "get": {
+    "summary": "App logs -> job",
+    "tags": [
+     "Runtimes & Applications"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:read",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/crons": {
+   "get": {
+    "summary": "List cron jobs",
+    "tags": [
+     "Cron, FTP & SSH"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:read",
+    "parameters": []
+   },
+   "post": {
+    "summary": "Create cron {schedule,command} -> sync job",
+    "tags": [
+     "Cron, FTP & SSH"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/crons/{cron_id}": {
+   "patch": {
+    "summary": "Toggle pause/resume",
+    "tags": [
+     "Cron, FTP & SSH"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
+    "parameters": []
+   },
+   "delete": {
+    "summary": "Delete cron -> resync",
+    "tags": [
+     "Cron, FTP & SSH"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/ftp-accounts": {
+   "get": {
+    "summary": "List FTP/SFTP accounts",
+    "tags": [
+     "Cron, FTP & SSH"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:read",
+    "parameters": []
+   },
+   "post": {
+    "summary": "Create FTP account -> sync job",
+    "tags": [
+     "Cron, FTP & SSH"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/ftp-accounts/{account_id}/password": {
+   "post": {
+    "summary": "Change FTP password",
+    "tags": [
+     "Cron, FTP & SSH"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/ftp-accounts/{account_id}/reveal": {
+   "post": {
+    "summary": "Reveal FTP password (audited)",
+    "tags": [
+     "Cron, FTP & SSH"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:read",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/ftp-accounts/{account_id}": {
+   "delete": {
+    "summary": "Delete FTP account -> resync (admin+)",
+    "tags": [
+     "Cron, FTP & SSH"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/ssh-keys": {
+   "get": {
+    "summary": "List site SSH keys",
+    "tags": [
+     "Cron, FTP & SSH"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:read",
+    "parameters": []
+   },
+   "post": {
+    "summary": "Add SSH key -> sync job",
+    "tags": [
+     "Cron, FTP & SSH"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/ssh-keys/{key_id}": {
+   "delete": {
+    "summary": "Delete SSH key -> resync",
+    "tags": [
+     "Cron, FTP & SSH"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/terminal": {
+   "get": {
+    "summary": "Web terminal (WebSocket; interactive session only — API keys refused)",
+    "tags": [
+     "Cron, FTP & SSH"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/alerts": {
+   "get": {
+    "summary": "List alerts (billing+)",
+    "tags": [
+     "Monitoring & Alerts"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "alerts:read",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/health": {
+   "get": {
+    "summary": "Recent HTTP health checks (billing+)",
+    "tags": [
+     "Monitoring & Alerts"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "monitoring:read",
+    "parameters": []
+   }
+  },
+  "/v1/admin/alerts": {
+   "get": {
+    "summary": "All alerts (admin surface)",
+    "tags": [
+     "Admin Alerts & Observability"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:read"
+   }
+  },
+  "/v1/admin/alerts/{alert_id}/ack": {
+   "post": {
+    "summary": "Acknowledge alert",
+    "tags": [
+     "Admin Alerts & Observability"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:write"
+   }
+  },
+  "/v1/admin/alerts/{alert_id}/resolve": {
+   "post": {
+    "summary": "Resolve alert",
+    "tags": [
+     "Admin Alerts & Observability"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:write"
+   }
+  },
+  "/v1/admin/alert-rules": {
+   "get": {
+    "summary": "List alert rules",
+    "tags": [
+     "Admin Alerts & Observability"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:read"
+   },
+   "post": {
+    "summary": "Create alert rule",
+    "tags": [
+     "Admin Alerts & Observability"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:write"
+   }
+  },
+  "/v1/admin/alert-rules/{rule_id}": {
+   "patch": {
+    "summary": "Update alert rule",
+    "tags": [
+     "Admin Alerts & Observability"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:write"
+   },
+   "delete": {
+    "summary": "Delete alert rule",
+    "tags": [
+     "Admin Alerts & Observability"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:write"
+   }
+  },
+  "/v1/admin/observability/nodes": {
+   "get": {
+    "summary": "Node observability rollup",
+    "tags": [
+     "Admin Alerts & Observability"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:read"
+   }
+  },
+  "/v1/admin/observability/services": {
+   "get": {
+    "summary": "Service observability rollup",
+    "tags": [
+     "Admin Alerts & Observability"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:read"
+   }
+  },
+  "/v1/admin/observability/customers": {
+   "get": {
+    "summary": "Customer observability rollup",
+    "tags": [
+     "Admin Alerts & Observability"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:read"
+   }
+  },
+  "/v1/admin/observability/workloads": {
+   "get": {
+    "summary": "Workload observability rollup",
+    "tags": [
+     "Admin Alerts & Observability"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:read"
+   }
+  },
+  "/v1/organizations/{org_id}/api-tokens": {
+   "get": {
+    "summary": "List org API tokens (org admin+)",
+    "tags": [
+     "API Access (tokens, keys, service accounts)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "org:read",
+    "parameters": []
+   },
+   "post": {
+    "summary": "Create org API token (raw shown once)",
+    "tags": [
+     "API Access (tokens, keys, service accounts)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "org:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/api-tokens/{token_id}": {
+   "delete": {
+    "summary": "Revoke org API token",
+    "tags": [
+     "API Access (tokens, keys, service accounts)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "org:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/service-accounts": {
+   "get": {
+    "summary": "List service accounts (platform admin)",
+    "tags": [
+     "API Access (tokens, keys, service accounts)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "org:read",
+    "parameters": []
+   },
+   "post": {
+    "summary": "Create service account (platform admin)",
+    "tags": [
+     "API Access (tokens, keys, service accounts)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "org:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/service-accounts/{sa_id}": {
+   "delete": {
+    "summary": "Delete service account (platform admin)",
+    "tags": [
+     "API Access (tokens, keys, service accounts)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "org:write",
+    "parameters": []
+   }
+  },
+  "/v1/admin/api-keys": {
+   "get": {
+    "summary": "List platform admin API keys (epa_)",
+    "tags": [
+     "API Access (tokens, keys, service accounts)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:read"
+   },
+   "post": {
+    "summary": "Create platform admin API key (admin SESSION only; raw shown once; scope '*' = full control)",
+    "tags": [
+     "API Access (tokens, keys, service accounts)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:write"
+   }
+  },
+  "/v1/admin/api-keys/{key_id}": {
+   "delete": {
+    "summary": "Revoke platform admin API key (admin SESSION only)",
+    "tags": [
+     "API Access (tokens, keys, service accounts)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:write"
+   }
+  },
+  "/v1/admin/packages": {
+   "get": {
+    "summary": "List hosting packages",
+    "tags": [
+     "Hosting Packages & Users"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:read"
+   },
+   "post": {
+    "summary": "Create hosting package",
+    "tags": [
+     "Hosting Packages & Users"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:write"
+   }
+  },
+  "/v1/admin/packages/{pkg_id}": {
+   "patch": {
+    "summary": "Update hosting package (sites converge via enforce jobs)",
+    "tags": [
+     "Hosting Packages & Users"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:write"
+   },
+   "delete": {
+    "summary": "Delete hosting package",
+    "tags": [
+     "Hosting Packages & Users"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:write"
+   }
+  },
+  "/v1/admin/organizations/{org_id}/package": {
+   "post": {
+    "summary": "Assign package to organization",
+    "tags": [
+     "Hosting Packages & Users"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/package": {
+   "get": {
+    "summary": "Org package + usage (billing+)",
+    "tags": [
+     "Hosting Packages & Users"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "org:read",
+    "parameters": []
+   }
+  },
+  "/v1/admin/users": {
+   "get": {
+    "summary": "List platform users",
+    "tags": [
+     "Hosting Packages & Users"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:read"
+   },
+   "post": {
+    "summary": "Create user account (cPanel model: admins create customers)",
+    "tags": [
+     "Hosting Packages & Users"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:write"
+   }
+  },
+  "/v1/adminview/overview": {
+   "get": {
+    "summary": "Platform overview rollup",
+    "tags": [
+     "Admin WHM Console"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:read"
+   }
+  },
+  "/v1/adminview/servers": {
+   "get": {
+    "summary": "All servers view",
+    "tags": [
+     "Admin WHM Console"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:read"
+   }
+  },
+  "/v1/adminview/accounts": {
+   "get": {
+    "summary": "All hosting accounts view",
+    "tags": [
+     "Admin WHM Console"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:read"
+   }
+  },
+  "/v1/adminview/organizations": {
+   "get": {
+    "summary": "All organizations view",
+    "tags": [
+     "Admin WHM Console"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:read"
+   }
+  },
+  "/v1/adminview/domains": {
+   "get": {
+    "summary": "All domains view",
+    "tags": [
+     "Admin WHM Console"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:read"
+   }
+  },
+  "/v1/adminview/databases": {
+   "get": {
+    "summary": "All databases view",
+    "tags": [
+     "Admin WHM Console"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:read"
+   }
+  },
+  "/v1/adminview/backups": {
+   "get": {
+    "summary": "All backups view",
+    "tags": [
+     "Admin WHM Console"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:read"
+   }
+  },
+  "/v1/adminview/dns-zones": {
+   "get": {
+    "summary": "All DNS zones view",
+    "tags": [
+     "Admin WHM Console"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:read"
+   }
+  },
+  "/v1/adminview/ports": {
+   "get": {
+    "summary": "Backend port allocations view",
+    "tags": [
+     "Admin WHM Console"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:read"
+   }
+  },
+  "/v1/adminview/alerts": {
+   "get": {
+    "summary": "All alerts view",
+    "tags": [
+     "Admin WHM Console"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:read"
+   }
+  },
+  "/v1/adminview/users": {
+   "get": {
+    "summary": "All users view",
+    "tags": [
+     "Admin WHM Console"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:read"
+   }
+  },
+  "/v1/adminview/jobs": {
+   "get": {
+    "summary": "All jobs view",
+    "tags": [
+     "Admin WHM Console"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:read"
+   }
+  },
+  "/v1/adminview/jobs/dead-letter": {
+   "get": {
+    "summary": "Dead-letter jobs view",
+    "tags": [
+     "Admin WHM Console"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:read"
+   }
+  },
+  "/v1/adminview/live": {
+   "get": {
+    "summary": "Live metrics frames (in-memory store)",
+    "tags": [
+     "Admin WHM Console"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:read"
+   }
+  },
+  "/v1/adminview/accounts/{website_id}/suspend": {
+   "post": {
+    "summary": "Suspend any account (cross-org, audited)",
+    "tags": [
+     "Admin WHM Console"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:write",
+    "parameters": []
+   }
+  },
+  "/v1/adminview/accounts/{website_id}/resume": {
+   "post": {
+    "summary": "Resume any account (cross-org, audited)",
+    "tags": [
+     "Admin WHM Console"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:write",
+    "parameters": []
+   }
+  },
+  "/v1/adminview/jobs/{job_id}/retry": {
+   "post": {
+    "summary": "Retry job",
+    "tags": [
+     "Admin WHM Console"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:write"
+   }
+  },
+  "/v1/adminview/jobs/{job_id}/cancel": {
+   "post": {
+    "summary": "Cancel job",
+    "tags": [
+     "Admin WHM Console"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:write"
+   }
+  },
+  "/v1/jobs": {
+   "get": {
+    "summary": "Recent/dead-letter jobs (platform admin)",
+    "tags": [
+     "Admin WHM Console"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:read"
+   }
+  },
+  "/v1/organizations/{org_id}/billing/overview": {
+   "get": {
+    "summary": "Billing overview",
+    "tags": [
+     "Billing (org side)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "billing:read",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/billing/subscriptions": {
+   "get": {
+    "summary": "List subscriptions",
+    "tags": [
+     "Billing (org side)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "billing:read",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/billing/subscriptions/{subscription_id}": {
+   "get": {
+    "summary": "Subscription details",
+    "tags": [
+     "Billing (org side)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "billing:read",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/billing/subscriptions/{subscription_id}/cancel": {
+   "post": {
+    "summary": "Cancel subscription",
+    "tags": [
+     "Billing (org side)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "billing:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/billing/products": {
+   "get": {
+    "summary": "List purchasable products",
+    "tags": [
+     "Billing (org side)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "billing:read",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/billing/orders": {
+   "post": {
+    "summary": "Create order",
+    "tags": [
+     "Billing (org side)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "billing:write",
+    "parameters": []
+   },
+   "get": {
+    "summary": "List orders",
+    "tags": [
+     "Billing (org side)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "billing:read",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/billing/orders/{order_id}/pay": {
+   "post": {
+    "summary": "Pay order",
+    "tags": [
+     "Billing (org side)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "billing:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/billing/invoices": {
+   "get": {
+    "summary": "List invoices",
+    "tags": [
+     "Billing (org side)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "billing:read",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/billing/invoices/{invoice_id}": {
+   "get": {
+    "summary": "Invoice details",
+    "tags": [
+     "Billing (org side)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "billing:read",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/billing/invoices/{invoice_id}/pay": {
+   "post": {
+    "summary": "Pay invoice",
+    "tags": [
+     "Billing (org side)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "billing:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/billing/payment-method": {
+   "get": {
+    "summary": "Get payment method",
+    "tags": [
+     "Billing (org side)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "billing:read",
+    "parameters": []
+   },
+   "put": {
+    "summary": "Set payment method",
+    "tags": [
+     "Billing (org side)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "billing:write",
+    "parameters": []
+   }
+  },
+  "/v1/admin/billing/plans": {
+   "get": {
+    "summary": "List billing plans",
+    "tags": [
+     "Billing (admin side)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:read"
+   }
+  },
+  "/v1/admin/billing/products": {
+   "get": {
+    "summary": "List all products",
+    "tags": [
+     "Billing (admin side)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:read"
+   },
+   "post": {
+    "summary": "Create product",
+    "tags": [
+     "Billing (admin side)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:write"
+   }
+  },
+  "/v1/admin/billing/products/{product_id}": {
+   "patch": {
+    "summary": "Update product",
+    "tags": [
+     "Billing (admin side)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:write"
+   }
+  },
+  "/v1/admin/billing/invoices": {
+   "get": {
+    "summary": "List all invoices",
+    "tags": [
+     "Billing (admin side)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:read"
+   },
+   "post": {
+    "summary": "Issue invoice",
+    "tags": [
+     "Billing (admin side)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:write"
+   }
+  },
+  "/v1/admin/billing/invoices/{invoice_id}/void": {
+   "post": {
+    "summary": "Void invoice",
+    "tags": [
+     "Billing (admin side)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:write"
+   }
+  },
+  "/v1/admin/billing/settings": {
+   "get": {
+    "summary": "Billing settings",
+    "tags": [
+     "Billing (admin side)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:read"
+   },
+   "patch": {
+    "summary": "Update billing settings",
+    "tags": [
+     "Billing (admin side)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:write"
+   }
+  },
+  "/v1/admin/billing/subscriptions": {
+   "get": {
+    "summary": "List all subscriptions",
+    "tags": [
+     "Billing (admin side)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:read"
+   }
+  },
+  "/v1/admin/billing/subscriptions/{subscription_id}/retry": {
+   "post": {
+    "summary": "Retry subscription billing",
+    "tags": [
+     "Billing (admin side)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:write"
+   }
+  },
+  "/v1/admin/billing/subscriptions/{subscription_id}/terminate": {
+   "post": {
+    "summary": "Terminate subscription",
+    "tags": [
+     "Billing (admin side)"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:write"
+   }
+  },
+  "/v1/billing/webhook/{provider}": {
+   "post": {
+    "summary": "Provider webhook (signature-authenticated)",
+    "tags": [
+     "Billing (admin side)"
+    ],
+    "security": [],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/audit-logs": {
+   "get": {
+    "summary": "Audit trail (org members billing+; all orgs for platform admin)",
+    "tags": [
+     "Audit, Setup & Settings"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "audit:read"
+   }
+  },
+  "/v1/setup/status": {
+   "get": {
+    "summary": "First-boot setup status",
+    "tags": [
+     "Audit, Setup & Settings"
+    ],
+    "security": [],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/setup": {
+   "post": {
+    "summary": "Complete first-boot setup",
+    "tags": [
+     "Audit, Setup & Settings"
+    ],
+    "security": [],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/setup/verify-hostname": {
+   "post": {
+    "summary": "Verify panel hostname",
+    "tags": [
+     "Audit, Setup & Settings"
+    ],
+    "security": [],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/setup/software": {
+   "get": {
+    "summary": "Installable software catalog",
+    "tags": [
+     "Audit, Setup & Settings"
+    ],
+    "security": [],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   },
+   "post": {
+    "summary": "Install software -> job",
+    "tags": [
+     "Audit, Setup & Settings"
+    ],
+    "security": [],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/setup/jobs": {
+   "get": {
+    "summary": "Setup job feed",
+    "tags": [
+     "Audit, Setup & Settings"
+    ],
+    "security": [],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/settings": {
+   "get": {
+    "summary": "Panel settings (platform admin)",
+    "tags": [
+     "Audit, Setup & Settings"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:read"
+   }
+  },
+  "/v1/settings/hostname": {
+   "patch": {
+    "summary": "Set panel hostname",
+    "tags": [
+     "Audit, Setup & Settings"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:write"
+   }
+  },
+  "/v1/ws": {
+   "get": {
+    "summary": "WebSocket event stream (session or org token; org-scoped frames)",
+    "tags": [
+     "System"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/openapi.json": {
+   "get": {
+    "summary": "This spec",
+    "tags": [
+     "System"
+    ],
+    "security": [],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/healthz": {
+   "get": {
+    "summary": "Liveness (DB ping)",
+    "tags": [
+     "System"
+    ],
+    "security": [],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/readyz": {
+   "get": {
+    "summary": "Readiness gate",
+    "tags": [
+     "System"
+    ],
+    "security": [],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ "components": {
+  "securitySchemes": {
+   "bearer": {
+    "type": "http",
+    "scheme": "bearer",
+    "description": "Session token, epk_ org token, epa_ platform key, or agt_ agent token"
+   }
+  },
+  "schemas": {
+   "Error": {
+    "type": "object",
+    "properties": {
+     "error": {
+      "type": "object",
+      "properties": {
+       "code": {
+        "type": "string"
+       },
+       "message": {
+        "type": "string"
+       },
+       "details": {}
+      }
+     }
+    }
+   }
+  }
+ }
 }

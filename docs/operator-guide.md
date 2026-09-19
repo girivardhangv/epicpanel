@@ -94,6 +94,26 @@ Changing the env file requires `systemctl restart epicpanel-api`
   `/opt/epicpanel/db_password` must be backed up out-of-band (they are
   NOT in the pg_dump).
 
+## 4b. API automation (admin keys)
+
+Everything the panel does is scriptable. Principal types: browser session,
+`epk_` org tokens (org-confined, scoped), and `epa_` **platform admin API
+keys** — the machine counterpart of your admin login (any organization plus
+the `/v1/admin*` surface, always scope-gated).
+
+```bash
+# create a full-control key (admin session; raw shown once):
+curl -X POST https://panel/api/v1/admin/api-keys -b cookies.txt \
+  -H "Content-Type: application/json" -d '{"name":"automation","scopes":["*"]}'
+# then:  Authorization: Bearer epa_...
+```
+
+Rules worth knowing: keys/tokens are hashed at rest and revocable
+(`/api-keys` page in the admin UI); create/revoke of platform keys requires
+an interactive admin session (a stolen key cannot mint keys); the OpenAPI
+contract lives at `GET /api/v1/openapi.json`; the full walkthrough is
+`docs/api-reference.md`.
+
 ## 5. Service management
 
 ```bash

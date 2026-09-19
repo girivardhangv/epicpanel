@@ -397,21 +397,11 @@ func (h *billingHandler) wrapOrg(min organizations.Role, next http.HandlerFunc) 
 	}
 }
 
-// requireAdmin gates the WHM billing surface to platform-admin sessions
-// (API tokens never inherit platform admin — RBAC v2).
+// requireAdmin delegates to the shared httpapi.RequireAdmin gate:
+// platform-admin session or epa_ platform admin API key; org tokens never
+// inherit platform admin (RBAC v2).
 func (h *billingHandler) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		user, ok := httpapi.UserFrom(r.Context())
-		if !ok {
-			httpapi.RespondError(w, httpapi.ErrUnauthorized("authentication required"))
-			return
-		}
-		if user.Role != "admin" || httpapi.IsAPIToken(r.Context()) {
-			httpapi.RespondError(w, httpapi.ErrForbidden("platform administrator session required"))
-			return
-		}
-		next(w, r)
-	}
+	return httpapi.RequireAdmin(next)
 }
 
 func (h *billingHandler) org(r *http.Request) uuid.UUID {

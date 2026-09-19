@@ -4,3 +4,8 @@ frontend/node_modules/.vite*/
 *dist-old/
 backend/.wrangler/
 .wrangler/
+frontend/node_modules/.vite*/
+*dist-old/
+frontend/apps/*/dist/
+frontend/dist/
+frontend/*.tsbuildinfo

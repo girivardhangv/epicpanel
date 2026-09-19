@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -328,4 +329,69 @@ func isUniqueViolation(err error) bool {
 		return pgErr.SQLState() == "23505"
 	}
 	return false
+}
+
+// ErrNoMembership reports that a user belongs to no organization.
+var ErrNoMembership = errors.New("user belongs to no organization")
+
+// PrimaryOrgForUser returns the user's primary organization: the earliest
+// created membership, deterministic when a user belongs to several orgs
+// (ADR-060 active-org resolution). ErrNoMembership when the user has none.
+func (s *Store) PrimaryOrgForUser(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) {
+	var orgID uuid.UUID
+	err := s.Pool.QueryRow(ctx, `
+		SELECT om.organization_id
+		FROM organization_members om
+		JOIN organizations o ON o.id = om.organization_id
+		WHERE om.user_id = $1
+		ORDER BY o.created_at ASC, om.organization_id ASC
+		LIMIT 1
+	`, userID).Scan(&orgID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, ErrNoMembership
+	}
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return orgID, nil
+}
+
+// EnsurePersonalOrg gives the user their own organization, idempotently:
+// the invisible-tenancy model (ADR-060) — every account starts as a member
+// of its own org so neither the UI nor the API ever needs an explicit
+// "create organization" step. Returns the primary org when one already
+// exists; otherwise derives slug/name from the display name and creates the
+// org with the user as owner, retrying slug collisions with -N suffixes.
+func (s *Store) EnsurePersonalOrg(ctx context.Context, userID uuid.UUID, displayName string) (*Organization, error) {
+	if orgID, err := s.PrimaryOrgForUser(ctx, userID); err == nil {
+		return s.GetByID(ctx, orgID)
+	} else if !errors.Is(err, ErrNoMembership) {
+		return nil, err
+	}
+
+	base := Slugify(displayName)
+	if !ValidSlug(base) {
+		base = "account"
+	}
+	name := strings.TrimSpace(displayName)
+	if name == "" {
+		name = "My account"
+	}
+
+	for attempt := 0; attempt < 60; attempt++ {
+		slug := base
+		if attempt > 0 {
+			slug = base + "-" + strconv.Itoa(attempt+1)
+		}
+		org, err := s.Create(ctx, name, slug, userID)
+		if errors.Is(err, ErrSlugTaken) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		return org, nil
+	}
+	// 60 collisions is effectively impossible; fall back to a random suffix.
+	return s.Create(ctx, name, base+"-"+uuid.NewString()[:8], userID)
 }

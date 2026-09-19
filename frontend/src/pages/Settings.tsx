@@ -106,7 +106,7 @@ export function SettingsPage() {
           <Row label="Name" value={user?.name ?? ''} />
           <Row label="Email" value={user?.email ?? ''} />
           <Row label="Role" value={user?.is_platform_admin ? 'Platform Administrator' : 'Member'} />
-          <Row label="Organization" value={org?.name ?? '—'} />
+          <Row label="Account" value={org?.name ?? '—'} />
         </div>
       </Card>
 

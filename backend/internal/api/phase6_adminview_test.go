@@ -440,7 +440,10 @@ func TestPhase6SecondaryViews(t *testing.T) {
 	check("/v1/adminview/dns-zones", "zones", 1)
 	check("/v1/adminview/backups", "backups", 1)
 	check("/v1/adminview/alerts", "alerts", 1)
-	check("/v1/adminview/organizations", "organizations", 1)
+	// Invisible tenancy (ADR-060): the two registered users (admin + member)
+	// each carry an auto-created personal org alongside the explicit FleetCo
+	// org — 3 rows total.
+	check("/v1/adminview/organizations", "organizations", 3)
 
 	// Ports audit view: allocated backend ports + honest scope note.
 	ports := e.adm.do("GET", "/v1/adminview/ports", nil)

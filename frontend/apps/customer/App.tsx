@@ -180,7 +180,9 @@ function Shell({ children }: { children: ReactNode }) {
         collapsed={collapsed}
         onToggleCollapsed={setCollapsed}
         top={
-          orgs.length > 0 && (
+          // Invisible tenancy (ADR-060): a customer lives in exactly one
+          // auto-created org — the picker only exists for multi-org members.
+          orgs.length > 1 && (
             <div className="px-4 pt-2">
               <select
                 value={org?.id ?? ''}

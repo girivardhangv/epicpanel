@@ -6,6 +6,7 @@ import { api, useAuth, domainsApi, redirectsApi, fmtBytes, timeAgo } from '@epic
 import type { Website, Domain, Redirect } from '@epicpanel/core'
 import { Card, CardHeader, StatusBadge, EmptyState, SkeletonRows, MiniItem, Breadcrumbs, RowActions, pushToast, UsageCard } from '@epicpanel/ui'
 import { Modal, Field, ErrorNote, ConfirmDialog } from '@epicpanel/forms'
+import { SiteAppsSection } from './SiteApps'
 
 interface Usage {
   cpu_percent: number
@@ -161,6 +162,10 @@ export function SiteDetailPage() {
           />
         </div>
       )}
+
+      {/* Apps & tools: node/python/go app manager, one-click WordPress +
+          Laravel, allowlisted command runner (composer/npm/artisan). */}
+      {site && <SiteAppsSection site={site} canManage={canManage} />}
 
       {/* Domains */}
       <Card className="mb-4 overflow-hidden !p-0">

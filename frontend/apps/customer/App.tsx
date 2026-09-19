@@ -21,6 +21,7 @@ import { routes as backupsRoutes } from './routes.backups'
 // never wait on a chunk download; only page bodies suspend.
 const DashboardPage = lazy(() => import('./pages/Dashboard').then((m) => ({ default: m.DashboardPage })))
 const WebsitesPage = lazy(() => import('./pages/Websites').then((m) => ({ default: m.WebsitesPage })))
+const SiteDetailPage = lazy(() => import('./pages/SiteDetail').then((m) => ({ default: m.SiteDetailPage })))
 const DomainsPage = lazy(() => import('./pages/Domains').then((m) => ({ default: m.DomainsPage })))
 const DnsZonePage = lazy(() => import('./pages/DnsZone').then((m) => ({ default: m.DnsZonePage })))
 const FileManagerPage = lazy(() => import('./pages/FileManager').then((m) => ({ default: m.FileManagerPage })))
@@ -278,6 +279,7 @@ function Guarded() {
         <Routes>
           <Route path="/" element={<DashboardPage />} />
           <Route path="/websites" element={<WebsitesPage />} />
+          <Route path="/websites/:website_id" element={<SiteDetailPage />} />
           <Route path="/domains" element={<DomainsPage />} />
           <Route path="/dns" element={<DnsZonePage />} />
           <Route path="/dns/:website_id" element={<DnsZonePage />} />

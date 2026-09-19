@@ -168,6 +168,13 @@ func (s *Server) Handler() http.Handler {
 			}
 			return &websites.PackageRef{MemoryLimitMB: p.MemoryLimitMB, CPUCores: p.CPUCores}, nil
 		},
+		AppPortLookup: func(ctx context.Context, websiteID uuid.UUID) (int, bool) {
+			app, err := s.Apps.GetByWebsite(ctx, websiteID)
+			if err != nil {
+				return 0, false
+			}
+			return app.Port, true
+		},
 		RequireOrg: srvH.ResolveOrg,
 	}
 	wsH.Register(mux, srvH.RequireAgent)
@@ -373,6 +380,12 @@ func (s *Server) Handler() http.Handler {
 		Websites:   s.Websites,
 		Audit:      s.Audit,
 		RequireOrg: srvH.ResolveOrg,
+		OnAppChanged: func(ctx context.Context, websiteID uuid.UUID) {
+			// App config created/changed: converge the reverse-proxy vhost.
+			if ws, err := s.Websites.GetByIDAny(ctx, websiteID); err == nil && ws != nil {
+				s.reconcileWebsiteServing(ctx, websiteID, ws.Organization, ws.ServerID)
+			}
+		},
 	}
 	appH.Register(mux)
 
@@ -404,10 +417,39 @@ func (s *Server) Handler() http.Handler {
 		wsH.InstallWordPress(w, r.WithContext(context.WithValue(r.Context(), websites.OrgKeyType{}, orgID)))
 	}))
 
+	// One-click Laravel (org-scoped, developer+): composer create-project
+	// with the site's selected PHP version; serving re-points to app/public.
+	mux.HandleFunc("POST /v1/organizations/{org_id}/websites/{website_id}/laravel", httpapi.RequireUser(func(w http.ResponseWriter, r *http.Request) {
+		orgID, apiErr := srvH.ResolveOrg(r, r.PathValue("org_id"), organizations.RoleDeveloper)
+		if apiErr != nil {
+			httpapi.RespondError(w, apiErr)
+			return
+		}
+		wsH.InstallLaravel(w, r.WithContext(context.WithValue(r.Context(), websites.OrgKeyType{}, orgID)))
+	}))
+
+	// Allowlisted site commands (composer/npm/artisan/node...; org-scoped,
+	// developer+) — run agent-side as the site user, output in the job result.
+	mux.HandleFunc("POST /v1/organizations/{org_id}/websites/{website_id}/commands", httpapi.RequireUser(func(w http.ResponseWriter, r *http.Request) {
+		orgID, apiErr := srvH.ResolveOrg(r, r.PathValue("org_id"), organizations.RoleDeveloper)
+		if apiErr != nil {
+			httpapi.RespondError(w, apiErr)
+			return
+		}
+		wsH.RunSiteCommand(w, r.WithContext(context.WithValue(r.Context(), websites.OrgKeyType{}, orgID)))
+	}))
+
 	// Fanout: every finished job is routed to the subsystems that own its
 	// state machine (websites lifecycle, runtime registry, databases).
 	wsH.OnJobFinished = func(ctx context.Context, job *jobs.Job, result json.RawMessage) {
 		wsH.ApplyWebsiteTransition(job, result)
+		// One-click Laravel moved serving to app/public: converge the vhost
+		// AFTER the docroot transition above has been applied.
+		if job.Type == jobs.TypeInstallLaravel && job.Status == jobs.StatusSuccess && job.WebsiteID != nil {
+			if ws, err := s.Websites.GetByIDAny(ctx, *job.WebsiteID); err == nil && ws != nil {
+				s.reconcileWebsiteServing(ctx, ws.ID, ws.Organization, ws.ServerID)
+			}
+		}
 		s.Runtimes.ApplyJobOutcome(ctx, job, job.Error)
 		dbH.ApplyJobOutcome(ctx, job, result)
 		depH.ApplyJobOutcome(job, result)
@@ -717,6 +759,11 @@ func (s *Server) reconcileWebsiteServing(ctx context.Context, websiteID, orgID, 
 	}
 	if cfg, err := (&websites.ConfigStore{Pool: s.Pool}).Get(ctx, ws.ID); err == nil {
 		payload.RewriteRules = cfg.RewriteRules
+	}
+	// Application process port (node/python/go): keep the proxy vhost
+	// converged whenever serving is reconciled.
+	if app, err := s.Apps.GetByWebsite(ctx, ws.ID); err == nil {
+		payload.AppPort = app.Port
 	}
 	if list, err := s.Domains.ListForWebsiteServing(ctx, ws.ID); err == nil {
 		for _, d := range list {

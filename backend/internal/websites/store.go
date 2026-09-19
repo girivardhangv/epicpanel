@@ -91,6 +91,10 @@ type DesiredPayload struct {
 	PHPSettings map[string]string `json:"php_settings,omitempty"`
 	// RequestTerminateTimeout caps a single PHP request (seconds; 0 = default).
 	RequestTerminateTimeout int `json:"request_terminate_timeout,omitempty"`
+	// AppPort is the loopback port of the site's application process
+	// (node/python/go). When set, the web server reverse-proxies traffic to
+	// 127.0.0.1:<port> instead of serving files from the docroot.
+	AppPort int `json:"app_port,omitempty"`
 }
 
 // DesiredRedirect is one rewrite-style redirect (from -> to) served by the
@@ -327,6 +331,22 @@ func (s *Store) SetDocrootSuffix(ctx context.Context, websiteID uuid.UUID, suffi
 	tag, err := s.Pool.Exec(ctx, `
 		UPDATE websites SET docroot_suffix = $2, updated_at = now() WHERE id = $1
 	`, websiteID, suffix)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetServingDocroot persists a docroot override together with the resolved
+// absolute path (actual state reported by the agent, e.g. after a one-click
+// Laravel install moves serving to <site>/app/public).
+func (s *Store) SetServingDocroot(ctx context.Context, websiteID uuid.UUID, suffix, documentRoot string) error {
+	tag, err := s.Pool.Exec(ctx, `
+		UPDATE websites SET docroot_suffix = $2, document_root = $3, updated_at = now() WHERE id = $1
+	`, websiteID, suffix, documentRoot)
 	if err != nil {
 		return err
 	}

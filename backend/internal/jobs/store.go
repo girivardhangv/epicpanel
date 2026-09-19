@@ -33,6 +33,8 @@ const (
 	TypeRestoreBackup    Type = "restore_backup"
 	TypeDBTools          Type = "install_database_tools"
 	TypeInstallWP        Type = "install_wordpress"
+	TypeInstallLaravel   Type = "install_laravel"
+	TypeSiteCommand      Type = "site_command"
 	TypeSyncCrontab      Type = "sync_crontab"
 	TypeBuildApp         Type = "build_app"
 	TypeStartApp         Type = "start_app"
@@ -164,9 +166,9 @@ func (s *Store) ClaimNext(ctx context.Context, serverID uuid.UUID) (*Job, error)
 	row := s.Pool.QueryRow(ctx, `
 		UPDATE jobs SET status = 'running', claimed_at = now(), attempts = attempts + 1, updated_at = now(),
 			lease_expires_at = now() + (CASE
-				WHEN type IN ('install_runtime','remove_runtime','install_extension','remove_extension',
-				              'install_wordpress','install_database_tools','create_backup','restore_backup',
-				              'build_app','clone_staging','promote_staging') THEN interval '30 minutes'
+			WHEN type IN ('install_runtime','remove_runtime','install_extension','remove_extension',
+			              'install_wordpress','install_laravel','install_database_tools','create_backup','restore_backup',
+			              'build_app','site_command','clone_staging','promote_staging') THEN interval '30 minutes'
 				ELSE interval '10 minutes' END)
 		WHERE id = (
 			SELECT j.id FROM jobs j

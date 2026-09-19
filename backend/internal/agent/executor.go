@@ -54,6 +54,10 @@ type ProvisionPayload struct {
 	PHPSettings map[string]string `json:"php_settings,omitempty"`
 	// RequestTerminateTimeout caps a single PHP request (seconds; 0 = default).
 	RequestTerminateTimeout int `json:"request_terminate_timeout,omitempty"`
+	// AppPort is the loopback port of the site's application process
+	// (node/python/go systemd unit). When set, nginx reverse-proxies traffic
+	// to it (websocket-aware) instead of serving files from the docroot.
+	AppPort int `json:"app_port,omitempty"`
 }
 
 // effectiveDocroot resolves the serving directory: siteBase/public, or
@@ -270,6 +274,10 @@ func (e *Executor) ProvisionWebsite(ctx context.Context, payload ProvisionPayloa
 			vhost.ProxyPass = fmt.Sprintf("http://127.0.0.1:%d", apachePort(payload))
 		} else if hasOLS {
 			vhost.ProxyPass = fmt.Sprintf("http://127.0.0.1:%d", olsPort(payload))
+		} else if payload.AppPort > 0 && isAppRuntime(payload.Runtime) {
+			// Process-model sites (node/python/go): the systemd-supervised
+			// app listens on its loopback port; nginx is the edge.
+			vhost.ProxyPass = fmt.Sprintf("http://127.0.0.1:%d", payload.AppPort)
 		}
 		ng := &NginxProvider{}
 		if err := ng.Ensure(ctx, vhost); err != nil {
@@ -297,6 +305,16 @@ func (e *Executor) ProvisionWebsite(ctx context.Context, payload ProvisionPayloa
 
 	slog.Info("website provisioned", "website", payload.WebsiteID, "user", payload.UnixUser, "uid", uid, "docroot", docRoot, "runtime", payload.Runtime, "runtime_version", payload.RuntimeVersion, "web_servers", payload.WebServer)
 	return &ProvisionOutcome{UnixUser: payload.UnixUser, DocumentRoot: docRoot}, nil
+}
+
+// isAppRuntime reports whether a runtime uses the process model (its traffic
+// is reverse-proxied to an application port rather than served from files).
+func isAppRuntime(rt string) bool {
+	switch rt {
+	case "node", "python", "go":
+		return true
+	}
+	return false
 }
 
 // DeleteWebsite removes the site directory tree and any FPM pool config for

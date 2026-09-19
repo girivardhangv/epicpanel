@@ -516,7 +516,37 @@ Known Bugs:             See §21 (Phase 1 audit; several items fixed in Phase 2
 [x] Web terminal (xterm.js over WebSocket — ADR-035: RequestLog's statusRecorder now implements Hijack/Flush or WS upgrades 500; vite dev proxy needs ws:true; live-verified full round-trip as site user, pty via creack/pty; runs the restricted shell as the site user in the site docroot via setpriv; limits: developer+ interactive sessions only (no API tokens), 2 sessions/site, 32 global, 16KB message cap, 10-minute idle timeout, audited open/close/timeout)
 [x] Cron jobs (per-site scheduled commands; 5-field cron validation + shell-injection guards — no chaining/pipes/backticks/sudo; agent renders the site user's crontab atomically from desired state (ADR-033); hourly re-sync safety net; UI: presets, pause/resume, delete)
 [x] Site management hub (cPanel-style): /sites/:id page per site — quick stats, domains list with SSL state, tool grid (Files/Cron/SSH/Terminal/Backups/SSL), attached databases, WordPress install, admin-only delete; site name click from Sites list opens hub
-[x] WordPress one-click (wp-cli download, core download + config + install as site user via sudo, admin password returned in job result; auto-creates fresh MariaDB DB through the pipeline; refuses double-install; UI: WordPress button on ready PHP sites)
+[x] WordPress one-click (wp-cli download, core download + config + install as site user via sudo, admin password returned in job result; auto-creates fresh MariaDB DB through the pipeline; refuses double-install; UI: WordPress button on ready PHP sites; customer-app card on the site hub with one-time credential reveal)
+[x] App stack (ADR-059, 2026-09-19, worktree feat/app-stack): (1) HARDENED
+    REVERSE PROXY — every proxy vhost (nginx-edge AND node/python/go app
+    sites) renders websocket upgrade support via a per-site http-context
+    map, forwarded headers (incl. X-Forwarded-Host), 300s read/send + 15s
+    connect timeouts, 100m body cap, proxy_buffering off; app sites proxy to
+    127.0.0.1:<app_port> carried in DesiredPayload.AppPort (api wires the
+    lookup over the applications store; AppPortLookup dep) and converge via
+    reconcileWebsiteServing on app create/update (apps.Handler.OnAppChanged)
+    and every desired-state build. (2) ONE-CLICK LARAVEL — POST
+    /websites/{id}/laravel enqueues install_laravel: agent ensures
+    composer+unzip idempotently, runs `composer create-project
+    laravel/laravel <site>/app` as the SITE USER with the site's SELECTED
+    PHP version (COMPOSER_HOME under site tmp), patches APP_URL; success
+    re-points serving to app/public (SetServingDocroot) + vhost reconcile;
+    refuses double-install; PATCH /application with env_vars omitted now
+    KEEPS stored env (GET returns key names only — values are secrets).
+    (3) SITE COMMANDS — POST /websites/{id}/commands validates an allowlist
+    (composer/php/artisan/wp/node/npm/npx/yarn/pnpm/python3/pip3/pip/python/
+    git/go/grep/cat/ls) + token charset (no shell metacharacters, no
+    multi-line); agent re-validates and execs argv DIRECTLY (setpriv, no
+    shell) in the docroot (app dir for node apps); composer/php/artisan/wp
+    pinned to the site's PHP binary; output rides the job result (30-min
+    lease, 10-min exec cap, non-zero exits still deliver output). (4)
+    CUSTOMER UI — /websites/:website_id route (SiteDetail was orphaned in
+    the customer app — no route existed) now mounts the Apps section:
+    Application manager (configure/start/stop/restart/logs/env pairs),
+    WordPress + Laravel cards, Commands runner with runtime presets and live
+    output; create form gained a dynamic runtime_version select (PHP
+    8.1-8.4, Node 20/22/24). Migration 0047 (install_laravel, site_command
+    job types).
 [ ] PostgreSQL database-engine live smoke (implemented; MariaDB verified live)
 [ ] Let's Encrypt live issuance (needs internet-reachable server; code path complete, ACME staging via EPICPANEL_ACME_DIRECTORY)
 [ ] Remote backup storage (S3/SFTP via BackupProvider abstraction)
@@ -1611,6 +1641,26 @@ API→Job→Queue→Agent→Event→WS→UI holds in all 12 areas. deploy/ ships
 units (the LIVE services already run from this pattern), env template, logrotate, chaos
 drills; install.sh enforces backup-before-migrate. v1.0.0 ships with two owner-approved
 security exceptions and honest [est] scale markers.
+
+ADR-059 — App stack: real proxying + framework installers + user tooling (2026-09-19).
+(1) The web server is the EDGE for process-model sites: DesiredPayload.AppPort (filled
+from the applications store via an injected AppPortLookup — no package cycle) makes the
+agent render proxy vhosts for node/python/go sites; reconcile hooks fire on app
+create/update (OnAppChanged) and every desired-state build, so the proxy converges like
+every other serving config. Proxy blocks are HARDENED uniformly (websocket upgrade map
+per site — http-context, dash-free var names; forwarded headers; 300s/15s timeouts;
+100m body cap; buffering off) — node HMR, sockets and SSE work through the panel edge.
+(2) One-click Laravel reuses the WP pattern without a DB chain (v1: attach a DB from the
+Databases page and edit .env): agent runs composer create-project AS THE SITE USER with
+the site's own PHP binary — version parity with the FPM pool by construction; serving
+re-points to app/public only on SUCCESS (SetServingDocroot + reconcile), so a failed
+install never leaves a half-proxied site. (3) User commands are a TYPED op, not a shell:
+control-plane allowlist + token charset, agent-side re-validation, direct argv exec via
+setpriv as the site user, output through the job result (the jobs table stays the single
+audit surface). Composer/artisan/wp are pinned to the site's PHP version. (4) The
+customer site-detail page finally exists (route was missing entirely) and hosts the app
+manager + installers + command runner; env secrets stay write-only (PATCH with env_vars
+omitted preserves stored values).
 
 Coordinator notes (wave execution): subagents ran with exclusive file ownership
 (phases/wave-contract.md); shared files (server.go routes, worker dispatch, App.tsx) were

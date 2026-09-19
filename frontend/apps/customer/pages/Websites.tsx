@@ -13,9 +13,24 @@ export function WebsitesPage() {
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [show, setShow] = useState(false)
-  const [form, setForm] = useState({ name: '', primary_domain: '', runtime: 'php' })
+  const [form, setForm] = useState({ name: '', primary_domain: '', runtime: 'php', runtime_version: '8.3' })
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+
+  const versionOptions = form.runtime === 'php'
+    ? [
+        { value: '8.1', label: 'PHP 8.1' },
+        { value: '8.2', label: 'PHP 8.2' },
+        { value: '8.3', label: 'PHP 8.3' },
+        { value: '8.4', label: 'PHP 8.4' },
+      ]
+    : form.runtime === 'node'
+      ? [
+          { value: '20', label: 'Node.js 20 (LTS)' },
+          { value: '22', label: 'Node.js 22 (LTS)' },
+          { value: '24', label: 'Node.js 24' },
+        ]
+      : []
 
   const load = () => {
     if (!org) return
@@ -36,9 +51,10 @@ export function WebsitesPage() {
     try {
       const body: Record<string, unknown> = { name: form.name.toLowerCase(), runtime: form.runtime }
       if (form.primary_domain) body.primary_domain = form.primary_domain.toLowerCase()
+      if (form.runtime === 'php' || form.runtime === 'node') body.runtime_version = form.runtime_version
       await api.post(`/v1/organizations/${org.id}/websites`, body)
       setShow(false)
-      setForm({ name: '', primary_domain: '', runtime: 'php' })
+      setForm({ name: '', primary_domain: '', runtime: 'php', runtime_version: '8.3' })
       pushToast('success', 'Website created — provisioning is running.')
       load()
     } catch (ex: any) {
@@ -138,14 +154,27 @@ export function WebsitesPage() {
         <Field label="Runtime">
           <Select
             value={form.runtime}
-            onChange={(v) => setForm({ ...form, runtime: v })}
+            onChange={(v) => setForm({
+              ...form,
+              runtime: v,
+              runtime_version: v === 'php' ? '8.3' : v === 'node' ? '22' : form.runtime_version,
+            })}
             options={[
               { value: 'php', label: 'PHP' },
               { value: 'static', label: 'Static site (HTML)' },
-              { value: 'node', label: 'Node.js' },
+              { value: 'node', label: 'Node.js app (process + reverse proxy)' },
             ]}
           />
         </Field>
+        {versionOptions.length > 0 && (
+          <Field label="Version" hint="Dynamically selected — your app runs on this version.">
+            <Select
+              value={form.runtime_version}
+              onChange={(v) => setForm({ ...form, runtime_version: v })}
+              options={versionOptions}
+            />
+          </Field>
+        )}
         <button className="btn-brand w-full justify-center" onClick={create} disabled={busy || !form.name}>
           {busy ? (<><Spinner size={13} /> Creating…</>) : 'Create Website'}
         </button>

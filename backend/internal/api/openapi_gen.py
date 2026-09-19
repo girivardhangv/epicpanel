@@ -84,6 +84,8 @@ R("post", "/v1/organizations/{org_id}/websites/{website_id}/resume", "Resume sit
 R("post", "/v1/organizations/{org_id}/websites/{website_id}/staging", "Create staging clone (admin+)", t, x_scope="deployments:write")
 R("post", "/v1/organizations/{org_id}/websites/{website_id}/promote", "Promote staging -> production (admin+)", t, x_scope="deployments:write")
 R("post", "/v1/organizations/{org_id}/websites/{website_id}/wordpress", "WordPress one-click install (developer+)", t, x_scope="websites:write")
+R("post", "/v1/organizations/{org_id}/websites/{website_id}/laravel", "One-click Laravel (composer create-project as site user) -> job", t, x_scope="websites:write")
+R("post", "/v1/organizations/{org_id}/websites/{website_id}/commands", "Run allowlisted site command (composer/npm/artisan/...) -> job with output", t, x_scope="websites:write")
 
 t = "File manager"
 R("get", "/v1/organizations/{org_id}/websites/{website_id}/files", "List directory (path query)", t, x_scope="websites:read")

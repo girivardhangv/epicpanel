@@ -1,6 +1,7 @@
 package apps
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"sort"
@@ -22,6 +23,9 @@ type Handler struct {
 	Websites   *websites.Store
 	Audit      *audit.Store
 	RequireOrg func(r *http.Request, orgIDParam string, min organizations.Role) (uuid.UUID, *httpapi.APIError)
+	// OnAppChanged fires after the desired app state is created or updated so
+	// the api layer can converge the reverse-proxy vhost (nil-safe).
+	OnAppChanged func(ctx context.Context, websiteID uuid.UUID)
 }
 
 // Register mounts application routes. appSites are websites whose runtime is
@@ -187,6 +191,9 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.audit(r, orgID, "application.created", app.ID.String(), map[string]any{"runtime": string(ws.Runtime)})
+	if h.OnAppChanged != nil {
+		h.OnAppChanged(r.Context(), ws.ID)
+	}
 	httpapi.WriteJSON(w, http.StatusCreated, app)
 }
 
@@ -281,6 +288,12 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	envJSON, _ := json.Marshal(req.Env)
+	if req.Env == nil {
+		// env_vars omitted from the PATCH: keep the stored values. The GET
+		// endpoint only exposes key NAMES (values are secrets), so a config
+		// edit that doesn't touch env must never wipe the stored env.
+		envJSON = app.Env
+	}
 	if _, err := h.Apps.Update(r.Context(), app, strings.TrimSpace(req.StartupCommand),
 		strings.TrimSpace(req.BuildCommand), strings.TrimSpace(req.StartupFile), req.Port, envJSON); err != nil {
 		httpapi.RespondError(w, httpapi.ErrInternal(err))
@@ -291,13 +304,20 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	payload.StartupCommand = req.StartupCommand
 	payload.StartupFile = req.StartupFile
 	payload.BuildCommand = req.BuildCommand
-	payload.InternalPort = req.Port
-	payload.Env = req.Env
+	if req.Port > 0 {
+		payload.InternalPort = req.Port
+	} // else keep the stored port resolved by buildPayload
+	if req.Env != nil {
+		payload.Env = req.Env
+	} // else keep the stored env resolved by buildPayload
 	if _, err := h.Jobs.Enqueue(r.Context(), ws.ServerID, &ws.ID, jobs.TypeRestartApp, payload); err != nil {
 		httpapi.RespondError(w, httpapi.ErrInternal(err))
 		return
 	}
 	h.audit(r, orgID, "application.updated", app.ID.String(), nil)
+	if h.OnAppChanged != nil {
+		h.OnAppChanged(r.Context(), ws.ID)
+	}
 	httpapi.WriteJSON(w, http.StatusAccepted, map[string]any{"status": "restart queued"})
 }
 

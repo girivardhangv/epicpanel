@@ -298,6 +298,30 @@ func PollAndExecute(ctx context.Context, c *Client, e *Executor, cfg Config) (bo
 				resultJSON = b
 			}
 		}
+	case "install_laravel":
+		var p LaravelPayload
+		if err := json.Unmarshal(job.Payload, &p); err != nil {
+			execErr = err
+		} else {
+			outcome, err := e.InstallLaravel(ctx, p)
+			if err != nil {
+				execErr = err
+			} else if b, err := json.Marshal(outcome); err == nil {
+				resultJSON = b
+			}
+		}
+	case "site_command":
+		var p CommandPayload
+		if err := json.Unmarshal(job.Payload, &p); err != nil {
+			execErr = err
+		} else {
+			outcome, err := e.RunSiteCommand(ctx, p)
+			if err != nil {
+				execErr = err
+			} else if b, err := json.Marshal(outcome); err == nil {
+				resultJSON = b
+			}
+		}
 	case "sync_ssh_keys":
 		var p struct {
 			WebsiteID string   `json:"website_id"`

@@ -1510,6 +1510,66 @@
     "parameters": []
    }
   },
+  "/v1/organizations/{org_id}/websites/{website_id}/laravel": {
+   "post": {
+    "summary": "One-click Laravel (composer create-project as site user) -> job",
+    "tags": [
+     "Websites"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/commands": {
+   "post": {
+    "summary": "Run allowlisted site command (composer/npm/artisan/...) -> job with output",
+    "tags": [
+     "Websites"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
+    "parameters": []
+   }
+  },
   "/v1/organizations/{org_id}/websites/{website_id}/files": {
    "get": {
     "summary": "List directory (path query)",

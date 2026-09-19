@@ -144,6 +144,22 @@ export interface Job {
   type: string
   status: string
   error?: string
+  result?: Record<string, unknown> | null
+  created_at: string
+}
+
+// Application process model (node/python/go sites): a supervised systemd unit
+// the web server reverse-proxies to.
+export interface Application {
+  id: string
+  website_id: string
+  startup_command: string
+  build_command: string
+  startup_file: string
+  internal_port: number
+  env_vars: Record<string, string> | { keys: string[] }
+  process_name?: string
+  health: string
   created_at: string
 }
 
@@ -858,4 +874,36 @@ export const lifecycleApi = {
     req<{ job_id: string }>('POST', `/v1/organizations/${orgId}/websites/${websiteId}/suspend`),
   resume: (orgId: string, websiteId: string) =>
     req<{ job_id: string }>('POST', `/v1/organizations/${orgId}/websites/${websiteId}/resume`),
+}
+
+// ------------------------------------------------------------- app stack
+
+export const applicationApi = {
+  get: (orgId: string, websiteId: string) =>
+    req<Application>('GET', `/v1/organizations/${orgId}/websites/${websiteId}/application`),
+  create: (orgId: string, websiteId: string, body: { startup_command?: string; startup_file?: string; build_command?: string; internal_port?: number; env_vars?: Record<string, string> }) =>
+    req<Application>('POST', `/v1/organizations/${orgId}/websites/${websiteId}/application`, body),
+  update: (orgId: string, websiteId: string, body: { startup_command?: string; startup_file?: string; build_command?: string; internal_port?: number; env_vars?: Record<string, string> }) =>
+    req<{ status: string }>('PATCH', `/v1/organizations/${orgId}/websites/${websiteId}/application`, body),
+  start: (orgId: string, websiteId: string) =>
+    req<{ status: string }>('POST', `/v1/organizations/${orgId}/websites/${websiteId}/application/start`),
+  stop: (orgId: string, websiteId: string) =>
+    req<{ status: string }>('POST', `/v1/organizations/${orgId}/websites/${websiteId}/application/stop`),
+  restart: (orgId: string, websiteId: string) =>
+    req<{ status: string }>('POST', `/v1/organizations/${orgId}/websites/${websiteId}/application/restart`),
+}
+
+export const appsApi = {
+  /** POST .../wordpress — one-click WordPress (auto-creates the MariaDB). */
+  installWordPress: (orgId: string, websiteId: string, body: { admin_user: string; admin_email: string; title?: string }) =>
+    req<{ note: string }>('POST', `/v1/organizations/${orgId}/websites/${websiteId}/wordpress`, body),
+  /** POST .../laravel — composer create-project with the site's PHP version. */
+  installLaravel: (orgId: string, websiteId: string) =>
+    req<{ job_id: string; php: string; note: string }>('POST', `/v1/organizations/${orgId}/websites/${websiteId}/laravel`),
+  /** POST .../commands — allowlisted composer/npm/artisan run as the site user. */
+  runCommand: (orgId: string, websiteId: string, command: string) =>
+    req<{ job_id: string; argv: string[] }>('POST', `/v1/organizations/${orgId}/websites/${websiteId}/commands`, { command }),
+  /** GET .../jobs — job history incl. results (poll for command output). */
+  jobs: (orgId: string, websiteId: string) =>
+    req<{ jobs: Job[] }>('GET', `/v1/organizations/${orgId}/websites/${websiteId}/jobs`),
 }

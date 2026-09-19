@@ -234,6 +234,8 @@ var phase12Routes = []string{
 	"POST /v1/organizations/{org_id}/websites/{website_id}/dns-zone",
 	"POST /v1/organizations/{org_id}/websites/{website_id}/domains",
 	"POST /v1/organizations/{org_id}/websites/{website_id}/files",
+	"POST /v1/organizations/{org_id}/websites/{website_id}/laravel",
+	"POST /v1/organizations/{org_id}/websites/{website_id}/commands",
 	"POST /v1/organizations/{org_id}/websites/{website_id}/files/upload",
 	"POST /v1/organizations/{org_id}/websites/{website_id}/ftp-accounts",
 	"POST /v1/organizations/{org_id}/websites/{website_id}/promote",

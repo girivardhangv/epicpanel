@@ -71,6 +71,20 @@ func (v VhostSpec) SecuredDomains() []DomainSpec {
 	return out
 }
 
+// wsMapVar is the per-site nginx variable carrying the Connection header
+// value for websocket upgrades. The map lives in the vhost file's top level
+// (http context); the per-site name keeps coexisting vhosts collision-free.
+func wsMapVar(websiteID string) string {
+	return "ep_ws_" + strings.ReplaceAll(websiteID, "-", "_")
+}
+
+// renderWSMap emits the http-context map used for websocket-aware proxying.
+// Without it, websocket upgrades die at the edge (Connection header is not
+// forwarded by default).
+func renderWSMap(websiteID string) string {
+	return fmt.Sprintf("map $http_upgrade $%s {\n\tdefault upgrade;\n\t''      close;\n}\n\n", wsMapVar(websiteID))
+}
+
 // RenderVhost produces the nginx configuration: one 80-block for unsecured
 // domains, a redirect block for secured domains, and a 443 block serving
 // them. Includes the ACME webroot location for HTTP-01 challenges.
@@ -80,6 +94,11 @@ func RenderVhost(v VhostSpec) string {
 	}
 	if v.QuotaExceeded {
 		return renderVhostQuotaExceeded(v)
+	}
+	var b strings.Builder
+	b.WriteString("# managed by EpicPanel — website " + v.WebsiteID + " — DO NOT EDIT\n")
+	if v.ProxyPass != "" {
+		b.WriteString(renderWSMap(v.WebsiteID))
 	}
 	redirects := normalizeRedirects(v.WebsiteID, v.Redirects)
 	redirectSet := map[string]bool{}
@@ -133,9 +152,6 @@ func RenderVhost(v VhostSpec) string {
 			}
 		}
 	}
-
-	var b strings.Builder
-	b.WriteString("# managed by EpicPanel — website " + v.WebsiteID + " — DO NOT EDIT\n")
 
 	// Dedicated redirect-only :80 server blocks. A redirected domain is
 	// excluded from every other plain :80 server_name, so the redirect block
@@ -211,10 +227,13 @@ func (v VhostSpec) commonLocations() string {
 	}
 
 	// nginx-edge mode: everything (except ACME challenges) goes to the
-	// backend web server (Apache/OpenLiteSpeed) or the site's app process.
-	// Upgrade/Connection headers keep WebSockets working through the proxy
+	// backend web server (Apache/OpenLiteSpeed) on its internal port — or to
+	// the site's application process (node/python/go systemd unit) on its
+	// loopback port. Upgrade/Connection headers keep WebSockets working
 	// ($epicpanel_connection_upgrade is the http-level map written by
-	// InstallNginx; the namespaced variable never collides with user maps).
+	// InstallNginx; the namespaced variable never collides with user maps);
+	// generous timeouts for long-poll/SSE workloads and a request-body cap
+	// are part of the proxy contract.
 	rootSection := fmt.Sprintf("	root %s;\n	index index.php index.html index.htm;\n\n	location / {\n		try_files $uri $uri/ =404;\n	}\n\n", v.DocumentRoot)
 	phpHeader := ""
 	if v.ProxyPass != "" {
@@ -224,15 +243,20 @@ func (v VhostSpec) commonLocations() string {
 	location / {
 		proxy_pass %s;
 		proxy_http_version 1.1;
+		proxy_set_header Upgrade $http_upgrade;
+		proxy_set_header Connection $%s;
 		proxy_set_header Host $host;
 		proxy_set_header X-Real-IP $remote_addr;
 		proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 		proxy_set_header X-Forwarded-Proto $scheme;
-		proxy_set_header Upgrade $http_upgrade;
-		proxy_set_header Connection $epicpanel_connection_upgrade;
+		proxy_set_header X-Forwarded-Host $host;
+		proxy_connect_timeout 15s;
+		proxy_send_timeout 300s;
 		proxy_read_timeout 300s;
+		proxy_buffering off;
+		client_max_body_size 100m;
 	}
-`, v.ProxyPass)
+`, v.ProxyPass, wsMapVar(v.WebsiteID))
 	}
 
 	return fmt.Sprintf(`	%s

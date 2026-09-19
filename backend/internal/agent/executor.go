@@ -71,6 +71,9 @@ type ProvisionPayload struct {
 	RequestTerminateTimeout int `json:"request_terminate_timeout,omitempty"`
 	// App-platform serving mode (node/python/go): nginx reverse-proxies to
 	// the site's app process on this loopback port (0 = docroot serving).
+	// AppPort is the loopback port of the site's application process
+	// (node/python/go systemd unit). When set, nginx reverse-proxies traffic
+	// to it (websocket-aware) instead of serving files from the docroot.
 	AppStartupCommand string `json:"app_startup_command,omitempty"`
 	AppBuildCommand   string `json:"app_build_command,omitempty"`
 	AppPort           int    `json:"app_port,omitempty"`
@@ -313,8 +316,10 @@ func (e *Executor) ProvisionWebsite(ctx context.Context, payload ProvisionPayloa
 			vhost.ProxyPass = fmt.Sprintf("http://127.0.0.1:%d", apachePort(payload))
 		} else if hasOLS {
 			vhost.ProxyPass = fmt.Sprintf("http://127.0.0.1:%d", olsPort(payload))
-		} else if appPort := payload.AppPort; isAppRuntime(payload.Runtime) && appPort > 0 {
-			vhost.ProxyPass = fmt.Sprintf("http://127.0.0.1:%d", appPort)
+		} else if payload.AppPort > 0 && isAppRuntime(payload.Runtime) {
+			// Process-model sites (node/python/go): the systemd-supervised
+			// app listens on its loopback port; nginx is the edge.
+			vhost.ProxyPass = fmt.Sprintf("http://127.0.0.1:%d", payload.AppPort)
 		}
 		ng := &NginxProvider{}
 		if err := ng.Ensure(ctx, vhost); err != nil {

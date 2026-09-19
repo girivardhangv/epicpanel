@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -296,6 +297,19 @@ func (h *Handler) ApplyWebsiteTransition(job *jobs.Job, resultJSON json.RawMessa
 			// the site suspended (the error is recorded on the job).
 			if err := h.Websites.MarkResumed(ctx, *job.WebsiteID); err != nil && !errors.Is(err, ErrNotFound) {
 				slog.Error("website mark resumed failed", "website", job.WebsiteID, "err", err)
+			}
+		}
+	case jobs.TypeInstallLaravel:
+		// One-click Laravel: the agent reports the new serving docroot
+		// (<site>/app/public). Persist it so every later desired-state build
+		// (and the api-layer vhost reconcile) serves the framework layout.
+		if job.Status != jobs.StatusSuccess {
+			return
+		}
+		var lr laravelResult
+		if err := json.Unmarshal(resultJSON, &lr); err == nil && strings.HasPrefix(lr.DocumentRoot, "/srv/epicpanel/websites/") {
+			if err := h.Websites.SetServingDocroot(ctx, *job.WebsiteID, "app/public", lr.DocumentRoot); err != nil && !errors.Is(err, ErrNotFound) {
+				slog.Error("laravel docroot update failed", "website", job.WebsiteID, "err", err)
 			}
 		}
 	}

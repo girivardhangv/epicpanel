@@ -110,6 +110,13 @@ func TestApplicationLifecycle(t *testing.T) {
 	}
 	agent.do("POST", "/v1/agent/jobs/"+job["id"].(string)+"/result", map[string]any{"success": true})
 
+	// App creation also converges the reverse-proxy vhost via a
+	// desired-state reconcile; drain it before continuing the lifecycle.
+	claim = agent.do("POST", "/v1/agent/jobs/claim", nil)
+	if job, _ := claim.body["job"].(map[string]any); job != nil && job["type"] == "provision_website" {
+		agent.do("POST", "/v1/agent/jobs/"+job["id"].(string)+"/result", map[string]any{"success": true})
+	}
+
 	// start job
 	resp = dev.do("POST", "/v1/organizations/"+orgID+"/websites/"+websiteID+"/application/start", nil)
 	if resp.status != http.StatusAccepted {

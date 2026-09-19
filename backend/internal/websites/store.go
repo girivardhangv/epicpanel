@@ -454,6 +454,22 @@ func (s *Store) SetDocrootSuffix(ctx context.Context, websiteID uuid.UUID, suffi
 	return nil
 }
 
+// SetServingDocroot persists a docroot override together with the resolved
+// absolute path (actual state reported by the agent, e.g. after a one-click
+// Laravel install moves serving to <site>/app/public).
+func (s *Store) SetServingDocroot(ctx context.Context, websiteID uuid.UUID, suffix, documentRoot string) error {
+	tag, err := s.Pool.Exec(ctx, `
+		UPDATE websites SET docroot_suffix = $2, document_root = $3, updated_at = now() WHERE id = $1
+	`, websiteID, suffix, documentRoot)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // UsedBackendPorts returns all backend ports currently allocated on a server
 // (any mode/port value > 0). The caller excludes its own website when
 // re-allocating.

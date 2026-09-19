@@ -58,6 +58,10 @@ type Handler struct {
 	// PackageForOrg resolves the org's effective hosting package (nil = no
 	// quota information; agent defaults apply).
 	PackageForOrg PackageForOrgFunc
+	// AppPortLookup reports the loopback port of the site's configured
+	// application process (node/python/go), if any (nil-safe; implemented by
+	// the api layer over the applications store to avoid a package cycle).
+	AppPortLookup func(ctx context.Context, websiteID uuid.UUID) (int, bool)
 	// RegisterPrimaryDomain creates the primary domain row after website
 	// creation (implemented by the api layer to avoid package cycles).
 	RegisterPrimaryDomain func(ctx context.Context, orgID, websiteID uuid.UUID, domain string) error
@@ -873,6 +877,14 @@ func (h *Handler) buildDesiredPayload(ctx context.Context, ws *Website, orgID uu
 			pl := limitsForPackage(pkg)
 			payload.FpmMemoryLimitMB = pl.MemoryLimitMB
 			payload.FpmMaxChildren = pl.MaxChildren
+		}
+	}
+	// Application process port (node/python/go): when the site has an
+	// application configured, the web server proxies to it. Filled on every
+	// desired-state build so any reconcile converges the proxy vhost.
+	if h.AppPortLookup != nil {
+		if port, ok := h.AppPortLookup(ctx, ws.ID); ok {
+			payload.AppPort = port
 		}
 	}
 	// Per-site PHP INI overrides (MultiPHP INI Editor). The FPM request

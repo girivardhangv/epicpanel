@@ -169,10 +169,16 @@ func TestBuildArgsRuntimeMounts(t *testing.T) {
 func TestWrapRlimits(t *testing.T) {
 	s := validSpec()
 	out := wrapRlimits(s, "echo hi")
-	for _, want := range []string{"ulimit -u 256", "ulimit -n 1024", "ulimit -v", "echo hi"} {
+	for _, want := range []string{"ulimit -u 256", "ulimit -n 1024", "echo hi"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("wrapRlimits missing %q: %s", want, out)
 		}
+	}
+	// No `ulimit -v` (RLIMIT_AS) by design: it breaks VM-based runtimes
+	// (V8, Go) inside the sandbox; memory is enforced via cgroup MemoryMax
+	// (spec.Rlimits.MaxMemMB -> systemd-run scope) instead.
+	if strings.Contains(out, "ulimit -v") {
+		t.Errorf("wrapRlimits must not emit ulimit -v (breaks V8/Go; memory is cgroup-enforced): %s", out)
 	}
 }
 

@@ -27,6 +27,11 @@ func sysProcAttrFor(spec Spec) *syscall.SysProcAttr {
 // wrapRlimits prepends ulimit builtins so the kernel applies the limits
 // before user code runs (ulimit is enforced by the shell, and inherited by
 // everything the user spawns inside the sandbox).
+//
+// Deliberately NO `ulimit -v` (RLIMIT_AS): a virtual-memory cap breaks
+// VM-based runtimes (V8, Go) that reserve large address space up front.
+// Memory is enforced via cgroup MemoryMax instead (spec.Rlimits.MaxMemMB
+// -> systemd-run scope / agent user slice).
 func wrapRlimits(spec Spec, cmdline string) string {
 	limits := []string{
 		"ulimit -u " + strconv.Itoa(spec.Rlimits.MaxProc),

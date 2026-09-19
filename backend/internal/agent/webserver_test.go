@@ -165,7 +165,7 @@ func TestRenderMatrix(t *testing.T) {
 			[]string{"server {\n\tlisten 80;\n\tserver_name old.example.test;\n", "return 301 https://new.example.test;"},
 			[]string{"server_name site.example.test old.example.test"}},
 		{"nginx", "suspended", RenderVhost(suspendedSpec),
-			[]string{"return 503", "Account suspended", "nginx-access.log"},
+			[]string{"return 503", "error_page 503 /suspended.html", "nginx-access.log"},
 			[]string{"fastcgi_pass", "proxy_pass", "try_files"}},
 		{"apache", "static", RenderApacheSite(staticSpec, 6600),
 			[]string{"DocumentRoot " + docroot, "Listen 127.0.0.1:6600", "apache-access.log"},
@@ -177,7 +177,7 @@ func TestRenderMatrix(t *testing.T) {
 			[]string{"Redirect 301 / https://new.example.test"},
 			nil},
 		{"apache", "suspended", RenderApacheSite(suspendedSpec, 6600),
-			[]string{"R=503", "Account suspended", "apache-error.log"},
+			[]string{"R=503", "/srv/epicpanel/default_pages/suspended.html", "apache-error.log"},
 			[]string{"SetHandler", "proxy:unix"}},
 		{"ols", "static", RenderOLSVhconf(staticSpec, 7100),
 			[]string{"docRoot", "ols-access.log"},
@@ -189,7 +189,7 @@ func TestRenderMatrix(t *testing.T) {
 			[]string{"rewriteCond  %{HTTP_HOST}  ^old\\.example\\.test$  [NC]", "rewriteRule  ^/.*$  https://new.example.test  [R=301,L]"},
 			nil},
 		{"ols", "suspended", RenderOLSVhconf(suspendedSpec, 7100),
-			[]string{"503", "Account suspended", "ols-error.log"},
+			[]string{"503", "/srv/epicpanel/default_pages/suspended.html", "ols-error.log"},
 			[]string{"extProcessor", "fcgi"}},
 	}
 

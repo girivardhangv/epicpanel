@@ -152,7 +152,10 @@ func TestRenderVhostSuspended(t *testing.T) {
 	})
 	for _, want := range []string{
 		"return 503",
-		"Account suspended",
+		"error_page 503 /suspended.html;",
+		// The stub page lives in the shared default_pages dir (deployed by
+		// InstallNginx, see pages.SuspendedHTML) — the vhost only points at it.
+		"root /srv/epicpanel/default_pages;",
 		"server_name app.example.test www.app.example.test;",
 		"logs/nginx-access.log",
 		"logs/nginx-error.log",
@@ -161,7 +164,9 @@ func TestRenderVhostSuspended(t *testing.T) {
 			t.Errorf("suspended vhost missing %q:\n%s", want, out)
 		}
 	}
-	for _, banned := range []string{"fastcgi_pass", "proxy_pass", "try_files", "root "} {
+	// The site's own docroot must never be served while suspended (the only
+	// root directive allowed is the default_pages stub location above).
+	for _, banned := range []string{"fastcgi_pass", "proxy_pass", "try_files", "/srv/epicpanel/websites/" + id + "/public"} {
 		if strings.Contains(out, banned) {
 			t.Errorf("suspended vhost must not contain %q:\n%s", banned, out)
 		}

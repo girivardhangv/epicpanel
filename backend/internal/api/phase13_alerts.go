@@ -98,18 +98,7 @@ type alertsHandler struct {
 }
 
 func (h *alertsHandler) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		user, ok := httpapi.UserFrom(r.Context())
-		if !ok {
-			httpapi.RespondError(w, httpapi.ErrUnauthorized("authentication required"))
-			return
-		}
-		if user.Role != "admin" || httpapi.IsAPIToken(r.Context()) {
-			httpapi.RespondError(w, httpapi.ErrForbidden("platform admin session required"))
-			return
-		}
-		next(w, r)
-	}
+	return httpapi.RequireAdmin(next)
 }
 
 func (h *alertsHandler) listAlerts(w http.ResponseWriter, r *http.Request) {

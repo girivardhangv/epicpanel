@@ -21,23 +21,8 @@ type AdminHandler struct {
 }
 
 func (h *AdminHandler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("GET /v1/admin/users", h.requireAdmin(h.List))
-	mux.HandleFunc("POST /v1/admin/users", h.requireAdmin(h.Create))
-}
-
-func (h *AdminHandler) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		user, ok := httpapi.UserFrom(r.Context())
-		if !ok {
-			httpapi.RespondError(w, httpapi.ErrUnauthorized("authentication required"))
-			return
-		}
-		if user.Role != "admin" {
-			httpapi.RespondError(w, httpapi.ErrForbidden("platform administrator access required"))
-			return
-		}
-		next(w, r)
-	}
+	mux.HandleFunc("GET /v1/admin/users", httpapi.RequireAdmin(h.List))
+	mux.HandleFunc("POST /v1/admin/users", httpapi.RequireAdmin(h.Create))
 }
 
 // GET /v1/admin/users

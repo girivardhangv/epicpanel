@@ -36,6 +36,7 @@ import (
 // it fails the registration probe.
 var phase12Routes = []string{
 	"DELETE /v1/admin/alert-rules/{rule_id}",
+	"DELETE /v1/admin/api-keys/{key_id}",
 	"DELETE /v1/admin/packages/{pkg_id}",
 	"DELETE /v1/organizations/{org_id}/api-tokens/{token_id}",
 	"DELETE /v1/organizations/{org_id}/backup-schedules/{schedule_id}",
@@ -58,6 +59,7 @@ var phase12Routes = []string{
 	"GET /metrics",
 	"GET /readyz",
 	"GET /v1/admin/alert-rules",
+	"GET /v1/admin/api-keys",
 	"GET /v1/admin/alerts",
 	"GET /v1/admin/billing/invoices",
 	"GET /v1/admin/billing/plans",
@@ -166,6 +168,7 @@ var phase12Routes = []string{
 	"PATCH /v1/organizations/{org_id}/websites/{website_id}/files",
 	"PATCH /v1/settings/hostname",
 	"POST /v1/admin/alert-rules",
+	"POST /v1/admin/api-keys",
 	"POST /v1/admin/alerts/{alert_id}/ack",
 	"POST /v1/admin/alerts/{alert_id}/resolve",
 	"POST /v1/admin/billing/invoices",
@@ -522,6 +525,10 @@ func TestPhase12AuthzMatrix(t *testing.T) {
 		resp = tokenClient.do("GET", "/v1/jobs", nil)
 		if resp.status != http.StatusForbidden {
 			t.Errorf("admin jobs as API token: %d want 403", resp.status)
+		}
+		resp = tokenClient.do("GET", "/v1/admin/api-keys", nil)
+		if resp.status != http.StatusForbidden {
+			t.Errorf("admin api-keys as org token: %d want 403", resp.status)
 		}
 		resp = admin.do("GET", "/v1/admin/users", nil)
 		if resp.status != http.StatusOK {

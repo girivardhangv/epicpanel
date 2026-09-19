@@ -3,7 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes, useRoutes } from 'react-router-
 import {
   LayoutGrid, Server, ServerCog, Users, Globe2, Package, Network, Database, HardDrive,
   Globe, Layers, ServerOff, History, ShieldCheck, Activity, ScrollText, ListChecks,
-  Wallet, LifeBuoy, Settings as SettingsIcon, CloudCog, Menu, ShieldAlert,
+  Wallet, LifeBuoy, Settings as SettingsIcon, CloudCog, Menu, ShieldAlert, KeyRound,
 } from 'lucide-react'
 import { AuthProvider, useAuth, useMetrics, seedFrames, normalizeBatch } from '@epicpanel/core'
 import { AppSidebar, Toaster, FreshnessBadge } from '@epicpanel/ui'
@@ -63,6 +63,7 @@ const NAV: SidebarGroup[] = [
     items: [
       { to: '/billing', label: 'Billing', icon: Wallet },
       { to: '/support', label: 'Support', icon: LifeBuoy },
+      { to: '/api-keys', label: 'API Keys', icon: KeyRound },
       { to: '/settings', label: 'Settings', icon: SettingsIcon },
     ],
   },
@@ -89,6 +90,7 @@ const TITLES: { match: (p: string) => boolean; title: string; sub: string }[] = 
   { match: (p) => p.startsWith('/jobs'), title: 'Jobs', sub: 'Queue, retries and dead-letter' },
   { match: (p) => p.startsWith('/billing'), title: 'Billing', sub: 'Plans, invoices and payments' },
   { match: (p) => p.startsWith('/support'), title: 'Support', sub: 'Customer support queue' },
+  { match: (p) => p.startsWith('/api-keys'), title: 'API Keys', sub: 'Platform keys for full-panel automation' },
   { match: (p) => p.startsWith('/settings'), title: 'WHM settings', sub: 'Panel configuration' },
 ]
 

@@ -25,12 +25,24 @@ func (h *Handler) RequireMinimumRole(min Role, next http.HandlerFunc) http.Handl
 			return
 		}
 
-		// Platform admins operate across all organizations (cPanel root model).
-		// API tokens never inherit platform-admin — they are org-confined
-		// automation identities (RBAC v2).
-		if user.Role == "admin" && !httpapi.IsAPIToken(r.Context()) {
+		// Platform admins operate across all organizations (cPanel root model):
+		// admin sessions and platform admin API keys (epa_) alike.
+		if user.Role == "admin" &&
+			(!httpapi.IsAPIToken(r.Context()) || httpapi.IsPlatformKey(r.Context())) {
 			next(w, r)
 			return
+		}
+
+		// Org tokens (epk_) are confined to their issuing organization
+		// regardless of the creator's memberships (Phase 11 tenant
+		// confinement; ADR-027). Without this check a token issued in org A
+		// could reach every other org its creator belongs to through these
+		// routes (org details, member management).
+		if httpapi.IsAPIToken(r.Context()) {
+			if bound := httpapi.TokenOrgID(r.Context()); bound != r.PathValue("org_id") {
+				httpapi.RespondError(w, httpapi.ErrNotFound("organization not found"))
+				return
+			}
 		}
 
 		uid, err := uuid.Parse(user.ID)

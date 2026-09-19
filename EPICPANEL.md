@@ -496,7 +496,8 @@ Known Bugs:             See §21 (Phase 1 audit; several items fixed in Phase 2
 [x] Monitoring (60s HTTP health checks on primary domains, alerts on down/up transitions w/ auto-resolve, unresolved-alert dedupe unique index, metrics history endpoint)
 [x] API tokens (epk_ prefix, SHA-256 hashed, scopes read/write per resource group, expiry, revocation, audited; org-confinement regardless of creator memberships)
 [x] Rate limiting (token-bucket: 10/min burst 20 on auth, 300/min burst 600 on API, per client IP / per org+token)
-[x] OpenAPI 3.0.3 spec served at /v1/openapi.json (42 paths, embedded)
+[x] Platform admin API keys (epa_): cross-org machine principals with admin:read/admin:write for the /v1/admin* surface + org scopes elsewhere; key create/revoke session-only; full API automation guide docs/api-reference.md; organizations-route token confinement fixed (RequireMinimumRole)
+[x] OpenAPI 3.0.3 spec served at /v1/openapi.json (168 paths / 215 ops; regenerated via internal/api/openapi_gen.py — edit the route table, run the script)
 [x] Auto-placement (websites may omit server_id; least-loaded online non-maintenance server, runtime-version-aware, CPU 60%/memory 40% weighted score)
 [x] Server maintenance mode (blocks job claims + placement; PATCH endpoint, audited)
 [x] Capacity API (per-server status/loads/site counts/eligibility for admin+)
@@ -640,6 +641,14 @@ GET  /v1/organizations/{org_id}/servers/capacity                       placement
 PATCH /v1/organizations/{org_id}/servers/{server_id}/maintenance       {enabled} (admin+)
 
 API tokens: `epk_`-prefixed, SHA-256 hashed at rest, scopes enforced per method+path (GET->read, mutations->write; deployments/backups/domains/monitoring refinements under /websites). Tokens are CONFINED to their issuing organization even if the creator belongs to others (creator losing membership also kills org access). Rate limits: auth 10/min (burst 20) per IP; API 300/min (burst 600) per client — in-memory buckets, single-instance; front with a shared limiter for multi-instance control planes.
+
+Platform admin API keys (full-panel automation):
+
+POST /v1/admin/api-keys                                               create key {name, scopes["*"|...], expires_in_days?} (admin SESSION only) — raw epa_ shown once
+GET  /v1/admin/api-keys                                               list keys (admin session or epa_ with admin:read)
+DELETE /v1/admin/api-keys/{key_id}                                    revoke (admin SESSION only)
+
+epa_ keys act as the platform admin: any org's routes (with the matching org scope) and the /v1/admin* + /v1/jobs + /v1/settings surface (with admin:read/admin:write). Org tokens epk_ remain org-confined; tokens can never mint or revoke epa_ keys. Scope map: deny-by-default per method+path (x-scope in openapi.json); org:read/org:write now also cover /v1/organizations (list/create) and /v1/organizations/{org} (details/rename); billing:read/billing:write cover the org-side billing surface.
 
 Agent protocol (current): agent enrolls once with a one-time `reg_...` token → receives a persistent `agt_...` token (only its SHA-256 hash is stored) → sends heartbeats with `Authorization: Bearer agt_...` including optional metrics. Servers show `pending` (registered, not enrolled), `online` (heartbeat within 2 minutes), or `offline` (stale).
 
@@ -1611,6 +1620,25 @@ API→Job→Queue→Agent→Event→WS→UI holds in all 12 areas. deploy/ ships
 units (the LIVE services already run from this pattern), env template, logrotate, chaos
 drills; install.sh enforces backup-before-migrate. v1.0.0 ships with two owner-approved
 security exceptions and honest [est] scale markers.
+
+ADR-059
+Decision: Platform admin API keys (epa_, admin_api_keys table) are the machine
+          counterpart of an admin session: cross-organization reach plus the
+          /v1/admin* surface, scope-gated end to end (admin:read/admin:write on
+          the admin surface; org resource scopes on /v1/organizations/...
+          routes; scope "*" expands at creation). Key create/revoke stay
+          session-only — a leaked key cannot mint or revoke keys. The six
+          duplicated requireAdminSession/requirePlatformAdmin gates collapse
+          into httpapi.RequireAdmin; RequireMinimumRole now enforces org-token
+          confinement (a token could previously read every org its creator
+          belonged to through the organizations routes — leak fixed);
+          openapi.json regenerated from openapi_gen.py (ADR-041 tooling debt).
+Reason:   "Admin controls everything via API" was impossible: platform-admin
+          routes refused every token (ADR-027/043 made epk_ org-confined) and
+          the spec had drifted (55 of ~150 paths). epa_ is a separate principal
+          table, not a flag on api_tokens, so ADR-027's boundary holds; the
+          shared gate keeps admin-route policy from drifting per feature.
+Status:   Accepted
 
 Coordinator notes (wave execution): subagents ran with exclusive file ownership
 (phases/wave-contract.md); shared files (server.go routes, worker dispatch, App.tsx) were

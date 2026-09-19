@@ -60,21 +60,10 @@ func registerPhase6(s *Server, mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/adminview/jobs/{job_id}/cancel", h.requireAdmin(h.cancelJob))
 }
 
-// requireAdminSession mirrors users.AdminHandler.requireAdmin and the
-// /v1/jobs platform gate: a platform-admin SESSION, never an API token.
+// requireAdminSession delegates to the shared httpapi.RequireAdmin gate:
+// platform-admin session or epa_ platform admin API key; org tokens never.
 func requireAdminSession(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		user, ok := httpapi.UserFrom(r.Context())
-		if !ok {
-			httpapi.RespondError(w, httpapi.ErrUnauthorized("authentication required"))
-			return
-		}
-		if user.Role != "admin" || httpapi.IsAPIToken(r.Context()) {
-			httpapi.RespondError(w, httpapi.ErrForbidden("platform administrator session required"))
-			return
-		}
-		next(w, r)
-	}
+	return httpapi.RequireAdmin(next)
 }
 
 type adminViewHandler struct {

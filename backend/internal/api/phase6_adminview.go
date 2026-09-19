@@ -55,6 +55,9 @@ func registerPhase6(s *Server, mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/adminview/accounts/{website_id}/suspend", h.requireAdmin(h.suspendAccount))
 	mux.HandleFunc("POST /v1/adminview/accounts/{website_id}/resume", h.requireAdmin(h.resumeAccount))
 
+	// Package assignment (plan changes converge sites via the Phase 9 engine).
+	mux.HandleFunc("PATCH /v1/adminview/organizations/{org_id}/package", h.requireAdmin(h.setOrgPackage))
+
 	// Jobs console (retry / cancel; dead-letter read-only above).
 	mux.HandleFunc("POST /v1/adminview/jobs/{job_id}/retry", h.requireAdmin(h.retryJob))
 	mux.HandleFunc("POST /v1/adminview/jobs/{job_id}/cancel", h.requireAdmin(h.cancelJob))
@@ -387,6 +390,50 @@ func (h *adminViewHandler) lifecycleAccount(w http.ResponseWriter, r *http.Reque
 		"name": ws.Name, "organization_id": ws.Organization, "job_id": job.ID, verb: true,
 	})
 	httpapi.WriteJSON(w, http.StatusAccepted, map[string]any{"job_id": job.ID})
+}
+
+// setOrgPackage assigns a hosting package (plan) to an organization.
+// The Phase 9 engine reads the plan row directly, so the next enforce_limits
+// convergence applies the new limits without any extra bookkeeping here.
+func (h *adminViewHandler) setOrgPackage(w http.ResponseWriter, r *http.Request) {
+	orgID, err := uuid.Parse(r.PathValue("org_id"))
+	if err != nil {
+		httpapi.RespondError(w, httpapi.ErrValidation("invalid organization id"))
+		return
+	}
+	var req struct {
+		PackageID string `json:"package_id"`
+	}
+	if apiErr := httpapi.Read(r, &req); apiErr != nil {
+		httpapi.RespondError(w, apiErr)
+		return
+	}
+	pkgID, err := uuid.Parse(req.PackageID)
+	if err != nil {
+		httpapi.RespondError(w, httpapi.ErrValidation("package_id must be a UUID"))
+		return
+	}
+	var exists bool
+	if err := h.srv.Pool.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM hosting_packages WHERE id = $1)`, pkgID).Scan(&exists); err != nil {
+		httpapi.RespondError(w, httpapi.ErrInternal(err))
+		return
+	}
+	if !exists {
+		httpapi.RespondError(w, httpapi.ErrNotFound("package not found"))
+		return
+	}
+	tag, err := h.srv.Pool.Exec(r.Context(), `UPDATE organizations SET package_id = $2, updated_at = now() WHERE id = $1`, orgID, pkgID)
+	if err != nil {
+		httpapi.RespondError(w, httpapi.ErrInternal(err))
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		httpapi.RespondError(w, httpapi.ErrNotFound("organization not found"))
+		return
+	}
+	h.audit(r, "adminview.organization.package", "organization", orgID.String(), map[string]any{"package_id": pkgID.String()})
+	h.publish("admin.organization_package_changed", &orgID, "organization", orgID.String(), map[string]any{"package_id": pkgID.String()})
+	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"organization_id": orgID, "package_id": pkgID})
 }
 
 // retryJob gives a terminal job another run.

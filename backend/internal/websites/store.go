@@ -45,6 +45,12 @@ type Website struct {
 	WebServer        string     `json:"web_server"`
 	BackendPort      int        `json:"backend_port"`
 	DocrootSuffix    string     `json:"docroot_suffix"`
+	// App-platform serving mode (node/python/go): nginx proxies to the app
+	// process on AppPort; lifecycle is desired-state driven.
+	AppStartupCommand string    `json:"app_startup_command"`
+	AppBuildCommand   string    `json:"app_build_command"`
+	AppPort           int       `json:"app_port"`
+	AppDesiredState   string    `json:"app_desired_state"`
 	UsageCPUPercent  float64    `json:"usage_cpu_percent"`
 	UsageMemoryBytes int64      `json:"usage_memory_bytes"`
 	UsageDiskMB      int64      `json:"usage_disk_mb"`
@@ -86,6 +92,13 @@ type DesiredPayload struct {
 	// limits seam; zero = agent defaults.
 	FpmMemoryLimitMB int `json:"fpm_memory_limit_mb,omitempty"`
 	FpmMaxChildren   int `json:"fpm_max_children,omitempty"`
+	// App-platform serving mode (node/python/go): nginx reverse-proxies to
+	// the site's app process on AppPort. Empty commands mean agent defaults.
+	AppStartupCommand string            `json:"app_startup_command,omitempty"`
+	AppBuildCommand   string            `json:"app_build_command,omitempty"`
+	AppPort           int               `json:"app_port,omitempty"`
+	AppEnvEnc         string            `json:"app_env_enc,omitempty"` // base64 secretbox of the JSON env map
+	AppEnv            map[string]string `json:"app_env,omitempty"`     // plaintext alternative (tests)
 	// PHPSettings are validated per-site php.ini overrides rendered into the
 	// FPM pool (MultiPHP INI Editor equivalent).
 	PHPSettings map[string]string `json:"php_settings,omitempty"`
@@ -114,11 +127,12 @@ type Store struct {
 	Pool *pgxpool.Pool
 }
 
-const cols = `id, organization_id, server_id, name, primary_domain, runtime, runtime_version, web_server, backend_port, docroot_suffix, usage_cpu_percent, usage_memory_bytes, usage_disk_mb, usage_processes, usage_sampled_at, status, unix_user, document_root, error_message, is_staging, staging_of, backup_schedule, backup_retention, deploy_repo_url, deploy_branch, last_backup_at, provisioned_at, created_at, created_by`
+const cols = `id, organization_id, server_id, name, primary_domain, runtime, runtime_version, web_server, backend_port, docroot_suffix, app_startup_command, app_build_command, app_port, app_desired_state, usage_cpu_percent, usage_memory_bytes, usage_disk_mb, usage_processes, usage_sampled_at, status, unix_user, document_root, error_message, is_staging, staging_of, backup_schedule, backup_retention, deploy_repo_url, deploy_branch, last_backup_at, provisioned_at, created_at, created_by`
 
 func scanRow(row pgx.Row) (*Website, error) {
 	var w Website
 	err := row.Scan(&w.ID, &w.Organization, &w.ServerID, &w.Name, &w.PrimaryDomain, &w.Runtime, &w.RuntimeVersion, &w.WebServer, &w.BackendPort, &w.DocrootSuffix,
+		&w.AppStartupCommand, &w.AppBuildCommand, &w.AppPort, &w.AppDesiredState,
 		&w.UsageCPUPercent, &w.UsageMemoryBytes, &w.UsageDiskMB, &w.UsageProcesses, &w.UsageSampledAt,
 		&w.Status, &w.UnixUser, &w.DocumentRoot, &w.ErrorMessage, &w.IsStaging, &w.StagingOf, &w.BackupSchedule, &w.BackupRetention,
 		&w.DeployRepoURL, &w.DeployBranch, &w.LastBackupAt, &w.ProvisionedAt, &w.CreatedAt, &w.CreatedBy)
@@ -303,6 +317,110 @@ func (s *Store) SetBackendPort(ctx context.Context, websiteID uuid.UUID, port in
 		return ErrNotFound
 	}
 	return nil
+}
+
+// SetAppConfig persists the app-platform desired state (node/python/go
+// websites): startup/build commands and the desired process state.
+func (s *Store) SetAppConfig(ctx context.Context, websiteID uuid.UUID, startup, build, desiredState string) error {
+	tag, err := s.Pool.Exec(ctx, `
+		UPDATE websites SET app_startup_command = $2, app_build_command = $3,
+		       app_desired_state = $4, updated_at = now()
+		WHERE id = $1
+	`, websiteID, startup, build, desiredState)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetAppPort persists the allocated private app port (0 = none).
+func (s *Store) SetAppPort(ctx context.Context, websiteID uuid.UUID, port int) error {
+	tag, err := s.Pool.Exec(ctx, `
+		UPDATE websites SET app_port = $2, updated_at = now() WHERE id = $1
+	`, websiteID, port)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetAppEnv stores the site's env vars encrypted at rest (nil leaves the
+// existing blob untouched, mirroring SetDeployConfig).
+func (s *Store) SetAppEnv(ctx context.Context, websiteID uuid.UUID, envEncrypted []byte) error {
+	if envEncrypted == nil {
+		return nil
+	}
+	tag, err := s.Pool.Exec(ctx, `
+		UPDATE websites SET app_env_encrypted = $2, updated_at = now() WHERE id = $1
+	`, websiteID, envEncrypted)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// GetAppEnv returns the encrypted env blob for a website (nil = none).
+func (s *Store) GetAppEnv(ctx context.Context, websiteID uuid.UUID) ([]byte, error) {
+	var blob []byte
+	err := s.Pool.QueryRow(ctx, `SELECT app_env_encrypted FROM websites WHERE id = $1`, websiteID).Scan(&blob)
+	if err != nil {
+		return nil, err
+	}
+	return blob, nil
+}
+
+// UsedAppPorts returns all app ports currently allocated on a server.
+func (s *Store) UsedAppPorts(ctx context.Context, serverID uuid.UUID) (map[int]bool, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT app_port FROM websites
+		WHERE server_id = $1 AND app_port > 0 AND status NOT IN ('deleted', 'deleting')
+	`, serverID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	used := map[int]bool{}
+	for rows.Next() {
+		var p int
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		used[p] = true
+	}
+	return used, rows.Err()
+}
+
+// ListPendingForRuntime returns pending websites on a server waiting for the
+// given runtime/version — created with install_if_missing; they provision
+// once the runtime install lands (job chaining).
+func (s *Store) ListPendingForRuntime(ctx context.Context, serverID uuid.UUID, rt Runtime, version string) ([]Website, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT `+cols+` FROM websites
+		WHERE server_id = $1 AND runtime = $2 AND runtime_version = $3 AND status = 'pending'
+		ORDER BY created_at ASC
+	`, serverID, rt, version)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Website
+	for rows.Next() {
+		w, err := scanRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *w)
+	}
+	return out, rows.Err()
 }
 
 // StoreUsage persists a resource-usage snapshot returned by the agent.

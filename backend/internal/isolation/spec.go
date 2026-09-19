@@ -44,9 +44,10 @@ type Mount struct {
 type Rlimits struct {
 	MaxProc    int `json:"max_proc"`              // RLIMIT_NPROC
 	MaxFiles   int `json:"max_files"`             // RLIMIT_NOFILE
-	MaxMemMB   int `json:"max_mem_mb"`            // RLIMIT_AS
+	MaxMemMB   int `json:"max_mem_mb"`            // cgroup MemoryMax: web-terminal via systemd-run scope, SSH login shells via agent user-<uid>.slice convergence (no RLIMIT_AS — breaks VM-based runtimes)
 	MaxFileMB  int `json:"max_file_mb"`           // RLIMIT_FSIZE
 	CPUSeconds int `json:"cpu_seconds,omitempty"` // RLIMIT_CPU (0 = unlimited)
+	CPUQuota   int `json:"cpu_quota,omitempty"`   // cgroup CPUQuota in percentage (e.g., 20 for 20%)
 }
 
 // NetworkPolicy is a hook for future network isolation. SharedHostNetwork is
@@ -58,7 +59,7 @@ type NetworkPolicy struct {
 
 // DefaultRlimits are safe for normal hosting workloads.
 func DefaultRlimits() Rlimits {
-	return Rlimits{MaxProc: 256, MaxFiles: 1024, MaxMemMB: 2048, MaxFileMB: 2048, CPUSeconds: 0}
+	return Rlimits{MaxProc: 256, MaxFiles: 1024, MaxMemMB: 2048, MaxFileMB: 2048, CPUSeconds: 0, CPUQuota: 0}
 }
 
 // DefaultNetwork returns the documented default: shared host network.

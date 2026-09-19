@@ -51,16 +51,16 @@ const ENGINE_LABELS: Record<string, string> = {
 }
 
 const CATALOG: { type: string; label: string; versions: string[] }[] = [
-  { type: 'php', label: 'PHP (FPM + common extensions)', versions: ['8.3', '8.4', '8.5', '8.2'] },
-  { type: 'node', label: 'Node.js (NodeSource)', versions: ['22', '20', '24'] },
-  { type: 'python', label: 'Python', versions: ['3.12', '3.11', '3.13'] },
-  { type: 'go', label: 'Go (official toolchain)', versions: ['1.22', '1.23'] },
+  { type: 'php', label: 'PHP (FPM + common extensions)', versions: ['8.1', '8.2', '8.3', '8.4', '8.5'] },
+  { type: 'node', label: 'Node.js (NodeSource)', versions: ['20', '21', '22', '23', '24'] },
+  { type: 'python', label: 'Python (standalone)', versions: ['latest'] },
+  { type: 'go', label: 'Go (official toolchain)', versions: ['1.24', '1.26'] },
   { type: 'apache', label: 'Apache HTTP Server 2.4', versions: ['2.4'] },
   { type: 'openlitespeed', label: 'OpenLiteSpeed 1.8', versions: ['1.8'] },
-  { type: 'java', label: 'Java (OpenJDK / Temurin)', versions: ['21', '17', '8'] },
+  { type: 'java', label: 'Java (OpenJDK / Temurin)', versions: ['21', '25'] },
 ]
 
-const DEFAULTS: Record<string, string> = { php: '8.3', node: '22', python: '3.12', go: '1.22', apache: '2.4', openlitespeed: '1.8', java: '21' }
+const DEFAULTS: Record<string, string> = { php: '8.3', node: '22', python: 'latest', go: '1.24', apache: '2.4', openlitespeed: '1.8', java: '21' }
 
 // Live job progress pill for one install job.
 function JobProgress({ job }: { job: SetupJob }) {
@@ -387,8 +387,13 @@ export function SoftwarePage() {
             options={CATALOG.map((c) => ({ value: c.type, label: c.label }))}
           />
         </Field>
-        <Field label="Version" hint="PHP/Python: major.minor (e.g. 8.3). Node/Go: major (e.g. 22). Missing PHP extensions are skipped gracefully.">
-          <input className="input" value={form.version} onChange={(e) => setForm({ ...form, version: e.target.value })} placeholder="8.3" />
+        <Field label="Version">
+          <Select
+            key={form.type}
+            value={form.version}
+            onChange={(v) => setForm({ ...form, version: v })}
+            options={(CATALOG.find((c) => c.type === form.type)?.versions ?? []).map((v) => ({ value: v, label: v }))}
+          />
         </Field>
         <button className="btn-brand w-full justify-center" onClick={install} disabled={busy || !form.server_id || !form.version}>
           {busy ? 'Requesting...' : 'Install'}

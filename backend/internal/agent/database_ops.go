@@ -175,15 +175,31 @@ func (e *Executor) DeleteDatabase(ctx context.Context, engine, dbName, dbUser st
 func (e *Executor) InstallDatabaseEngine(ctx context.Context, engine string) error {
 	switch engine {
 	case "mysql", "mariadb":
-		if _, err := exec.LookPath("mariadb"); err == nil || execExists("mysql") {
+		// Both halves must be present: on rpm distros the client can exist
+		// alone (el9 ships `mariadb` client / `mariadb-server` separately),
+		// and a client-only box would pass the old probe with no server to
+		// create databases in.
+		client := execExists("mariadb") || execExists("mysql")
+		server := execExists("mariadbd") || execExists("mysqld")
+		if client && server {
 			return nil
 		}
-		return e.aptInstall(ctx, []string{"mariadb-server", "mariadb-client"}, "", engine)
+		pkgs := []string{"mariadb-server", "mariadb-client"}
+		if e.pm.Name() != "apt" {
+			pkgs = []string{"mariadb-server"}
+		}
+		return e.aptInstall(ctx, pkgs, "", engine)
 	case "postgresql":
-		if execExists("psql") {
+		if execExists("psql") && execExists("postgres") {
 			return nil
 		}
-		return e.aptInstall(ctx, []string{"postgresql", "postgresql-contrib"}, "", engine)
+		// postgresql-contrib is Debian packaging; rpm distros bundle the
+		// contrib modules into the server package (postgresql-server).
+		pkgs := []string{"postgresql", "postgresql-contrib"}
+		if e.pm.Name() != "apt" {
+			pkgs = []string{"postgresql-server"}
+		}
+		return e.aptInstall(ctx, pkgs, "", engine)
 	default:
 		return fmt.Errorf("unsupported engine %q", engine)
 	}

@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from 'react'
-import { api } from './api'
+import { api, reconnect } from './api'
 import type { User, Organization } from './api'
 
 export interface AuthState {
@@ -31,6 +31,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const me = await api.get<User>('/v1/auth/me')
       setUser(me)
+      reconnect()
       const orgsRes = await api.get<{ organizations: Organization[] }>('/v1/organizations')
       setOrgs(orgsRes.organizations ?? [])
       setOrgState((prev) => {

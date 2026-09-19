@@ -1,5 +1,6 @@
 backend/bin/
 
-frontend/node_modules/.vite/
+frontend/node_modules/.vite*/
+*dist-old/
 backend/.wrangler/
 .wrangler/

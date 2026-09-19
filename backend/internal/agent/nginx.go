@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/epicbyte/epicpanel/backend/internal/agent/pages"
 )
 
 // VhostSpec describes the serving configuration for one website across all
@@ -34,6 +36,8 @@ type VhostSpec struct {
 	Redirects []RedirectRule
 	// Suspended serves a plain 503 stub for every domain (no PHP, no proxy).
 	Suspended bool
+	// QuotaExceeded serves a 509 stub when bandwidth is exceeded.
+	QuotaExceeded bool
 	// Path overrides for tests (empty = production locations).
 	AcmeWebroot string
 	LogsBase    string
@@ -73,6 +77,9 @@ func (v VhostSpec) SecuredDomains() []DomainSpec {
 func RenderVhost(v VhostSpec) string {
 	if v.Suspended {
 		return renderVhostSuspended(v)
+	}
+	if v.QuotaExceeded {
+		return renderVhostQuotaExceeded(v)
 	}
 	redirects := normalizeRedirects(v.WebsiteID, v.Redirects)
 	redirectSet := map[string]bool{}
@@ -204,7 +211,10 @@ func (v VhostSpec) commonLocations() string {
 	}
 
 	// nginx-edge mode: everything (except ACME challenges) goes to the
-	// backend web server (Apache/OpenLiteSpeed) on its internal port.
+	// backend web server (Apache/OpenLiteSpeed) or the site's app process.
+	// Upgrade/Connection headers keep WebSockets working through the proxy
+	// ($epicpanel_connection_upgrade is the http-level map written by
+	// InstallNginx; the namespaced variable never collides with user maps).
 	rootSection := fmt.Sprintf("	root %s;\n	index index.php index.html index.htm;\n\n	location / {\n		try_files $uri $uri/ =404;\n	}\n\n", v.DocumentRoot)
 	phpHeader := ""
 	if v.ProxyPass != "" {
@@ -218,6 +228,9 @@ func (v VhostSpec) commonLocations() string {
 		proxy_set_header X-Real-IP $remote_addr;
 		proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 		proxy_set_header X-Forwarded-Proto $scheme;
+		proxy_set_header Upgrade $http_upgrade;
+		proxy_set_header Connection $epicpanel_connection_upgrade;
+		proxy_read_timeout 300s;
 	}
 `, v.ProxyPass)
 	}
@@ -272,8 +285,42 @@ server {
 	access_log %s/nginx-access.log;
 	error_log %s/nginx-error.log;
 
-	return 503 "Account suspended\n";
+		return 503;
+		error_page 503 /suspended.html;
+		location = /suspended.html {
+			root /srv/epicpanel/default_pages;
+			internal;
+		}
 }
+`, v.WebsiteID, strings.Join(names, " "), logsDir, logsDir)
+}
+
+// renderVhostQuotaExceeded renders the quota exceeded stub: every domain answers 509
+// (Bandwidth Limit Exceeded) immediately.
+func renderVhostQuotaExceeded(v VhostSpec) string {
+	var names []string
+	for _, d := range v.Domains {
+		names = append(names, d.Domain)
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	logsDir := filepath.Join("/srv/epicpanel/websites", v.WebsiteID, "logs")
+	return fmt.Sprintf(`	# managed by EpicPanel — website %s (quota exceeded) — DO NOT EDIT
+	server {
+		listen 80;
+		server_name %s;
+
+		access_log %s/nginx-access.log;
+		error_log %s/nginx-error.log;
+
+		return 509;
+		error_page 509 /quota_exceeded.html;
+		location = /quota_exceeded.html {
+			root /srv/epicpanel/default_pages;
+			internal;
+		}
+	}
 `, v.WebsiteID, strings.Join(names, " "), logsDir, logsDir)
 }
 
@@ -384,13 +431,60 @@ func (n *NginxProvider) Remove(ctx context.Context, websiteID string) error {
 	return nil
 }
 
-// InstallNginx ensures nginx itself is present (idempotent).
+// InstallNginx ensures nginx itself is present (idempotent), and provisions
+// the global default/suspended pages.
 func (e *Executor) InstallNginx(ctx context.Context) error {
-	if _, err := exec.LookPath("nginx"); err == nil {
-		slog.Info("nginx already installed")
-		return nil
+	if _, err := exec.LookPath("nginx"); err != nil {
+		if err := e.aptInstall(ctx, []string{"nginx"}, "", "nginx"); err != nil {
+			return err
+		}
 	}
-	return e.aptInstall(ctx, []string{"nginx"}, "", "nginx")
+
+	pagesDir := "/srv/epicpanel/default_pages"
+	if err := os.MkdirAll(pagesDir, 0o755); err != nil {
+		return fmt.Errorf("mkdir pages: %w", err)
+	}
+	_ = os.WriteFile(filepath.Join(pagesDir, "default.html"), []byte(pages.DefaultHTML), 0o644)
+	_ = os.WriteFile(filepath.Join(pagesDir, "suspended.html"), []byte(pages.SuspendedHTML), 0o644)
+	_ = os.WriteFile(filepath.Join(pagesDir, "quota_exceeded.html"), []byte(pages.QuotaExceededHTML), 0o644)
+
+	// WebSocket upgrade map for proxied vhosts (app sites + Apache/OLS
+	// edge mode). conf.d/*.conf is included by nginx.conf's http block on
+	// every supported distro. Idempotent: identical content is never
+	// rewritten (nginx -t validates on every vhost converge anyway).
+	mapFile := "/etc/nginx/conf.d/epicpanel-websocket-map.conf"
+	mapContent := `# managed by EpicPanel — do not edit
+map $http_upgrade $epicpanel_connection_upgrade {
+	default upgrade;
+	''      close;
+}
+`
+	if existing, err := os.ReadFile(mapFile); err != nil || string(existing) != mapContent {
+		_ = os.MkdirAll(filepath.Dir(mapFile), 0o755)
+		if err := AtomicWriteFile(mapFile, []byte(mapContent), 0o644); err != nil {
+			return fmt.Errorf("write websocket map: %w", err)
+		}
+	}
+
+	defaultVhost := fmt.Sprintf(`server {
+	listen 80 default_server;
+	server_name _;
+	root %s;
+	index default.html;
+	location / {
+		try_files $uri /default.html;
+	}
+	error_page 503 /suspended.html;
+	error_page 509 /quota_exceeded.html;
+}
+`, pagesDir)
+	
+	if err := os.WriteFile("/etc/nginx/sites-available/default", []byte(defaultVhost), 0o644); err != nil {
+		return fmt.Errorf("write default vhost: %w", err)
+	}
+	_ = runCmd(ctx, "ln", "-sf", "/etc/nginx/sites-available/default", "/etc/nginx/sites-enabled/default")
+
+	return nil
 }
 
 func reloadNginx(ctx context.Context) error {

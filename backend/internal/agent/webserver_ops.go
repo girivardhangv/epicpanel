@@ -85,6 +85,9 @@ func RenderApacheSite(v VhostSpec, internalPort int) string {
 	if v.Suspended {
 		return renderApacheSuspended(v, internalPort)
 	}
+	if v.QuotaExceeded {
+		return renderApacheQuotaExceeded(v, internalPort)
+	}
 	serverNames := make([]string, 0, len(v.Domains))
 	for _, d := range v.Domains {
 		serverNames = append(serverNames, d.Domain)
@@ -161,7 +164,37 @@ func renderApacheSuspended(v VhostSpec, internalPort int) string {
 		RewriteEngine On
 		RewriteRule ^ - [R=503,L]
 	</IfModule>
-	ErrorDocument 503 "Account suspended"
+	Alias /epicpanel_suspended.html /srv/epicpanel/default_pages/suspended.html
+	ErrorDocument 503 /epicpanel_suspended.html
+
+	ErrorLog /srv/epicpanel/websites/%s/logs/apache-error.log
+	CustomLog /srv/epicpanel/websites/%s/logs/apache-access.log combined
+</VirtualHost>
+`, v.WebsiteID, listen, internalPort, strings.Join(serverNames, " "), v.DocumentRoot, v.DocumentRoot, v.WebsiteID, v.WebsiteID)
+}
+
+func renderApacheQuotaExceeded(v VhostSpec, internalPort int) string {
+	serverNames := make([]string, 0, len(v.Domains))
+	for _, d := range v.Domains {
+		serverNames = append(serverNames, d.Domain)
+	}
+	listen := fmt.Sprintf("Listen 127.0.0.1:%d\n", internalPort)
+	return fmt.Sprintf(`# managed by EpicPanel — website %s (quota exceeded) — DO NOT EDIT
+%s<VirtualHost 127.0.0.1:%d>
+	ServerName %s
+	DocumentRoot %s
+
+	<Directory %s>
+		Options -Indexes
+		Require all granted
+	</Directory>
+
+	<IfModule mod_rewrite.c>
+		RewriteEngine On
+		RewriteRule ^ - [R=508,L]
+	</IfModule>
+	Alias /epicpanel_quota.html /srv/epicpanel/default_pages/quota_exceeded.html
+	ErrorDocument 508 /epicpanel_quota.html
 
 	ErrorLog /srv/epicpanel/websites/%s/logs/apache-error.log
 	CustomLog /srv/epicpanel/websites/%s/logs/apache-access.log combined
@@ -366,6 +399,9 @@ func RenderOLSVhconf(v VhostSpec, internalPort int) string {
 	if v.Suspended {
 		return renderOLSSuspended(v)
 	}
+	if v.QuotaExceeded {
+		return renderOLSQuotaExceeded(v)
+	}
 	docRoot := v.DocumentRoot
 	var php string
 	if v.FpmSocket != "" {
@@ -455,13 +491,50 @@ accesslog $VH_ROOT/logs/ols-access.log {
   rollingSize             10M
 }
 
-# suspended: plain 503 "Account suspended" for every request (no PHP, no proxy)
+errorpage 503 {
+  url                     /srv/epicpanel/default_pages/suspended.html
+}
+
+# suspended: 503 "Account suspended" for every request (no PHP, no proxy)
 context / {
   location                $VH_ROOT
   allowBrowse             0
   rewrite  {
     enable                1
     rewriteRule  ^/.*$  -  [R=503,L]
+  }
+}
+}
+`, v.WebsiteID)
+}
+
+func renderOLSQuotaExceeded(v VhostSpec) string {
+	return fmt.Sprintf(`# managed by EpicPanel — website %s (quota exceeded) — DO NOT EDIT
+docRoot                   $VH_ROOT
+vhDomain                  $VH_NAME
+adminEmails               admin@epicpanel.local
+enableGzip                1
+enableIpGeo               0
+errorlog $VH_ROOT/logs/ols-error.log {
+  useServer               1
+  logLevel                ERROR
+}
+accesslog $VH_ROOT/logs/ols-access.log {
+  useServer               1
+  rollingSize             10M
+}
+
+errorpage 508 {
+  url                     /srv/epicpanel/default_pages/quota_exceeded.html
+}
+
+# quota: 508 "Limit Exceeded" for every request
+context / {
+  location                $VH_ROOT
+  allowBrowse             0
+  rewrite  {
+    enable                1
+    rewriteRule  ^/.*$  -  [R=508,L]
   }
 }
 `, v.WebsiteID)

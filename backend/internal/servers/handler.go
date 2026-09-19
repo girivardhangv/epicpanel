@@ -28,6 +28,11 @@ type Handler struct {
 	// OnStreamEvent fans agent connection transitions out to the WS hub.
 	// Optional; set by the api wiring.
 	OnStreamEvent func(serverID uuid.UUID, online bool)
+	// OnMetrics fans live metrics frames to browser WS clients.
+	// Optional; set by the api wiring.
+	OnMetrics func(frame any)
+	// OnSample is called by LiveStore after every successful metrics ingest.
+	OnSample func(serverID uuid.UUID, snap *metrics.SnapshotFrame)
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {

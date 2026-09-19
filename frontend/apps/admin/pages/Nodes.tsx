@@ -234,8 +234,8 @@ export function NodeDetailPage() {
 }
 
 function NodeFreshness({ frame }: { frame: SnapshotFrame }) {
-  const fresh = useFreshness(frame)
-  return <FreshnessBadge state={fresh.state} ageMs={fresh.ageMs} label="Metrics" />
+  const isOnline = frame.node_state !== 'OFFLINE'
+  return <span className={`status-chip ${isOnline ? 'status-live' : 'status-down'}`}>{isOnline ? 'Live' : 'Offline'}</span>
 }
 
 /** Servers: enrollment + maintenance mode (platform-admin mutations). */

@@ -13,9 +13,31 @@ export function WebsitesPage() {
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [show, setShow] = useState(false)
-  const [form, setForm] = useState({ name: '', primary_domain: '', runtime: 'php' })
+  const [form, setForm] = useState({ name: '', primary_domain: '', runtime: 'php', runtime_version: '8.3', startup_command: '', build_command: '' })
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+
+  const appRuntime = form.runtime === 'node' || form.runtime === 'python' || form.runtime === 'go'
+  const versionOptions: Record<string, { value: string; label: string }[]> = {
+    php: [
+      { value: '8.5', label: 'PHP 8.5' },
+      { value: '8.4', label: 'PHP 8.4' },
+      { value: '8.3', label: 'PHP 8.3' },
+      { value: '8.2', label: 'PHP 8.2' },
+    ],
+    node: [
+      { value: '24', label: 'Node.js 24 (LTS)' },
+      { value: '22', label: 'Node.js 22 (LTS)' },
+    ],
+    python: [
+      { value: '3.13', label: 'Python 3.13' },
+      { value: '3.12', label: 'Python 3.12' },
+    ],
+    go: [
+      { value: '1.27', label: 'Go 1.27' },
+      { value: '1.26', label: 'Go 1.26' },
+    ],
+  }
 
   const load = () => {
     if (!org) return
@@ -34,11 +56,20 @@ export function WebsitesPage() {
     setErr('')
     setBusy(true)
     try {
-      const body: Record<string, unknown> = { name: form.name.toLowerCase(), runtime: form.runtime }
+      const body: Record<string, unknown> = {
+        name: form.name.toLowerCase(),
+        runtime: form.runtime,
+        // Missing runtimes are installed on the picked server first; the site
+        // provisions automatically when the install lands (job chaining).
+        install_if_missing: form.runtime !== 'static',
+      }
       if (form.primary_domain) body.primary_domain = form.primary_domain.toLowerCase()
+      if (form.runtime !== 'static') body.runtime_version = form.runtime_version
+      if (appRuntime && form.startup_command) body.startup_command = form.startup_command
+      if (appRuntime && form.build_command) body.build_command = form.build_command
       await api.post(`/v1/organizations/${org.id}/websites`, body)
       setShow(false)
-      setForm({ name: '', primary_domain: '', runtime: 'php' })
+      setForm({ name: '', primary_domain: '', runtime: 'php', runtime_version: '8.3', startup_command: '', build_command: '' })
       pushToast('success', 'Website created — provisioning is running.')
       load()
     } catch (ex: any) {
@@ -138,14 +169,38 @@ export function WebsitesPage() {
         <Field label="Runtime">
           <Select
             value={form.runtime}
-            onChange={(v) => setForm({ ...form, runtime: v })}
+            onChange={(v) => {
+              const opts = versionOptions[v]
+              setForm({ ...form, runtime: v, runtime_version: opts ? opts[0].value : '' })
+            }}
             options={[
               { value: 'php', label: 'PHP' },
               { value: 'static', label: 'Static site (HTML)' },
-              { value: 'node', label: 'Node.js' },
+              { value: 'node', label: 'Node.js app' },
+              { value: 'python', label: 'Python app' },
+              { value: 'go', label: 'Go app' },
             ]}
           />
         </Field>
+        {form.runtime !== 'static' && versionOptions[form.runtime] && (
+          <Field label="Version" hint="Installed automatically on the chosen server if missing.">
+            <Select
+              value={form.runtime_version}
+              onChange={(v) => setForm({ ...form, runtime_version: v })}
+              options={versionOptions[form.runtime]}
+            />
+          </Field>
+        )}
+        {appRuntime && (
+          <>
+            <Field label="Start command (optional)" hint="Defaults: node server.js · gunicorn/uvicorn autodetect · ./bin/app">
+              <input className="input" value={form.startup_command} onChange={(e) => setForm({ ...form, startup_command: e.target.value })} placeholder="e.g. node dist/main.js" />
+            </Field>
+            <Field label="Build command (optional)" hint="Ran on every deploy, before the site goes live.">
+              <input className="input" value={form.build_command} onChange={(e) => setForm({ ...form, build_command: e.target.value })} placeholder="e.g. npm run build" />
+            </Field>
+          </>
+        )}
         <button className="btn-brand w-full justify-center" onClick={create} disabled={busy || !form.name}>
           {busy ? (<><Spinner size={13} /> Creating…</>) : 'Create Website'}
         </button>

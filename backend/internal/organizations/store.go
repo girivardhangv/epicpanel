@@ -97,8 +97,8 @@ func (s *Store) Create(ctx context.Context, name, slug string, creatorID uuid.UU
 
 	var org Organization
 	err = tx.QueryRow(ctx, `
-		INSERT INTO organizations (name, slug, created_by)
-		VALUES ($1, $2, $3)
+		INSERT INTO organizations (name, slug, created_by, package_id)
+		VALUES ($1, $2, $3, (SELECT id FROM hosting_packages WHERE is_default = TRUE LIMIT 1))
 		RETURNING id, name, slug, created_by
 	`, name, slug, creatorID).Scan(&org.ID, &org.Name, &org.Slug, &org.CreatedBy)
 	if err != nil {

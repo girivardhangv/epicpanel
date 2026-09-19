@@ -277,9 +277,6 @@ export function DashboardPage() {
             subtitle="Live resource pressure"
             right={
               <div className="flex items-center gap-2">
-                {!loading && servers.length > 0 && (
-                  <FreshnessBadge state={primaryFresh.state} ageMs={primaryFresh.ageMs} label="Metrics" />
-                )}
                 {user?.is_platform_admin && <Link to="/servers" className="icon-btn" title="Manage servers" aria-label="Manage servers"><ServerIcon size={14} /></Link>}
               </div>
             }
@@ -294,7 +291,7 @@ export function DashboardPage() {
               />
           ) : (
             <div>
-              {primaryLive && node && (
+              {node && (
                 <div className="mb-4 space-y-3.5">
                   <ResourceBar label="CPU usage" value={`${Math.round(node.cpu_percent)}%`} pct={node.cpu_percent} color="#2563eb" />
                   <ResourceBar

@@ -114,10 +114,12 @@ func (h *Handler) AgentStream(w http.ResponseWriter, r *http.Request) {
 		switch frame.Type {
 		case agentproto.TypeMetrics, agentproto.TypeHeartbeat, agentproto.TypeHello, agentproto.TypeResume, agentproto.TypePong:
 			if ok := live.Ingest(srv.ID, frame); ok {
-				// Keep the DB liveness fresh without a write storm: the
-				// scheduler fast-loop derives ONLINE/STALE/OFFLINE from the
-				// live store; last_seen_at is updated at most every 15s.
 				touchAgentSeen(h, srv.ID, frame)
+				if h.OnSample != nil {
+					if snap := live.Frame(srv.ID); snap != nil {
+						h.OnSample(srv.ID, snap)
+					}
+				}
 				select {
 				case ackCh <- frame.Seq:
 				default:

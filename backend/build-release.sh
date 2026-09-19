@@ -2,7 +2,7 @@
 # build-release.sh — build release binaries and (optionally) upload to R2.
 #
 #   ./build-release.sh                 # build bin/ artifacts
-#   ./build-release.sh upload v1.0.0   # build + wrangler r2 put to epicpanel-releases
+#   ./build-release.sh upload v1.0.0   # build + gh release create v1.0.0
 #
 # Output names: <binary>-linux-<amd64|arm64>
 set -Eeuo pipefail
@@ -39,14 +39,14 @@ echo "built:"
 ls -1 "$OUT"
 
 if [ "$UPLOAD" = 1 ]; then
-  command -v wrangler >/dev/null || { echo "wrangler not installed: npm i -g wrangler"; exit 1; }
+  command -v gh >/dev/null || { echo "gh not installed: install GitHub CLI"; exit 1; }
+  
+  # Ensure the tag exists or will be created by this command
+  gh release view "$VERSION" >/dev/null 2>&1 || gh release create "$VERSION" --title "$VERSION" --notes "Release $VERSION"
+  
   for f in "$OUT"/*linux-* "$OUT"/web-dist.tar.gz; do
     [ -f "$f" ] || continue
-    base="$(basename "$f")"
-    wrangler r2 object put "epicpanel-releases/releases/$VERSION/$base" --file "$f" --remote
+    gh release upload "$VERSION" "$f" --clobber
   done
-  tmp="$(mktemp)"; printf '{"version":"%s"}\n' "$VERSION" >"$tmp"
-  wrangler r2 object put "epicpanel-releases/releases/latest.json" --file "$tmp" --remote
-  rm -f "$tmp"
-  echo "uploaded $VERSION + latest.json — users get it via epicpanel-update"
+  echo "uploaded $VERSION — users get it via epicpanel-update"
 fi

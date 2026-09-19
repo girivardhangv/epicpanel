@@ -231,13 +231,11 @@ func (e *Executor) EnsurePool(ctx context.Context, p PoolSpec) error {
 		return fmt.Errorf("write pool tmp: %w", err)
 	}
 
-	// Validate BEFORE swapping in.
+	// validateFPMConfig renames tmp onto poolFile and restores the previous
+	// content on failure, so success leaves poolFile already in place.
 	if err := e.validateFPMConfig(ctx, major, tmp, poolFile); err != nil {
 		_ = os.Remove(tmp)
 		return err
-	}
-	if err := os.Rename(tmp, poolFile); err != nil {
-		return fmt.Errorf("swap pool config: %w", err)
 	}
 
 	return e.reloadFPM(ctx, major)
@@ -350,7 +348,14 @@ func (e *Executor) reloadFPM(ctx context.Context, major string) error {
 	// start-if-stopped; ignore error if already running
 	_ = e.run(ctx, "systemctl", "start", svc)
 	if err := e.run(ctx, "systemctl", "reload", svc); err != nil {
-		// Some minimal systems lack systemd; try direct reload signal via binary.
+		// A unit that just left "inactive" can cancel its first reload —
+		// systemd races the start transition (caught live after a reboot:
+		// "Job for php8.3-fpm.service canceled"). A restart applies the same
+		// config; only if that fails too, surface the original error.
+		if rerr := e.run(ctx, "systemctl", "restart", svc); rerr == nil {
+			slog.Info("php-fpm restarted (reload was canceled)", "version", major)
+			return nil
+		}
 		return fmt.Errorf("reload %s: %w", svc, err)
 	}
 	slog.Info("php-fpm reloaded", "version", major)

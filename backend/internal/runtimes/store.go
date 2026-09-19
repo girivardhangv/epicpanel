@@ -36,6 +36,8 @@ func ValidVersionForType(t Type, v string) bool {
 	switch t {
 	case TypeNode, TypeJava:
 		return versionMajorRe.MatchString(v)
+	case TypePhpMyAdmin, TypeAdminer, TypeRedis:
+		return v == "latest"
 	default:
 		return versionRe.MatchString(v)
 	}
@@ -51,6 +53,9 @@ const (
 	TypeApache      Type = "apache"
 	TypeOpenLiteSpd Type = "openlitespeed"
 	TypeJava        Type = "java"
+	TypePhpMyAdmin  Type = "phpmyadmin"
+	TypeAdminer     Type = "adminer"
+	TypeRedis       Type = "redis"
 )
 
 type Status string
@@ -95,7 +100,7 @@ func scanRow(row pgx.Row) (*Runtime, error) {
 
 func ValidType(t string) bool {
 	switch Type(t) {
-	case TypePHP, TypeNode, TypePython, TypeGo, TypeApache, TypeOpenLiteSpd, TypeJava:
+	case TypePHP, TypeNode, TypePython, TypeGo, TypeApache, TypeOpenLiteSpd, TypeJava, TypePhpMyAdmin, TypeAdminer, TypeRedis:
 		return true
 	}
 	return false

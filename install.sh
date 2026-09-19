@@ -3,7 +3,7 @@
 # EpicPanel installer / updater / uninstaller — one script for the lifecycle.
 #
 #   Install (fresh VPS):
-#     curl -fsSL https://get.epichostly.in | bash
+#     curl -fsSL https://raw.githubusercontent.com/epicbyte/epicpanel/main/install.sh | bash
 #     (or: bash install.sh)
 #
 #   Update (same script, explicit):
@@ -195,7 +195,7 @@ EOF
 
   # --- 3. Binaries -----------------------------------------------------------
   ARCH="$(uname -m)"; case "$ARCH" in x86_64) ARCH=amd64;; aarch64) ARCH=arm64;; esac
-  RELEASE_BASE="${EPICPANEL_DOWNLOAD_BASE:-https://downloads.epichostly.in/latest}"
+  RELEASE_BASE="${EPICPANEL_DOWNLOAD_BASE:-https://github.com/epicbyte/epicpanel/releases/latest/download}"
   log "Downloading EpicPanel binaries ($ARCH)…"
   tmp="$(mktemp -d)"
   for f in epicpanel-api epicpanel-agent; do
@@ -227,7 +227,7 @@ EOF
   # --- 3b. One-command updater -----------------------------------------------
   # The installer URL is captured at install time so the box can self-update:
   #   sudo epicpanel-update
-  INSTALL_URL="${EPICPANEL_INSTALL_URL:-https://get.epichostly.in}"
+  INSTALL_URL="${EPICPANEL_INSTALL_URL:-https://raw.githubusercontent.com/epicbyte/epicpanel/main/install.sh}"
   if [ -n "$INSTALL_URL" ]; then
     cat >"$UPDATE_HELPER" <<EOF
 #!/usr/bin/env bash
@@ -276,6 +276,10 @@ EOF
   # Keep the FPM socket dir across reboots (tmpfs).
   echo 'd /run/epicpanel/php-fpm 0755 root root -' >/etc/tmpfiles.d/epicpanel-fpm.conf
   systemd-tmpfiles --create /etc/tmpfiles.d/epicpanel-fpm.conf
+
+  # Ensure base directories exist with world-traversal permissions for web servers (0755).
+  mkdir -p /srv/epicpanel/websites /srv/epicpanel/releases
+  chmod 0755 /srv /srv/epicpanel /srv/epicpanel/websites /srv/epicpanel/releases
 
   systemctl daemon-reload
   # enable --now alone does NOT restart an already-running service — upgrades
@@ -510,6 +514,10 @@ RestartSec=3
 [Install]
 WantedBy=multi-user.target
 EOF
+  # Ensure base directories exist with world-traversal permissions for web servers (0755).
+  mkdir -p /srv/epicpanel/websites /srv/epicpanel/releases
+  chmod 0755 /srv /srv/epicpanel /srv/epicpanel/websites /srv/epicpanel/releases
+
   systemctl daemon-reload
   systemctl enable --now epicpanel-agent
 

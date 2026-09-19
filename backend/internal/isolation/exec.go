@@ -21,14 +21,7 @@ import (
 // command line with the shell's ulimit builtin (runs as the site user before
 // any user code).
 func sysProcAttrFor(spec Spec) *syscall.SysProcAttr {
-	attr := &syscall.SysProcAttr{Setsid: true}
-	if spec.UID > 0 && spec.GID > 0 {
-		attr.Credential = &syscall.Credential{
-			Uid: uint32(spec.UID),
-			Gid: uint32(spec.GID),
-		}
-	}
-	return attr
+	return &syscall.SysProcAttr{Setsid: true}
 }
 
 // wrapRlimits prepends ulimit builtins so the kernel applies the limits
@@ -38,9 +31,6 @@ func wrapRlimits(spec Spec, cmdline string) string {
 	limits := []string{
 		"ulimit -u " + strconv.Itoa(spec.Rlimits.MaxProc),
 		"ulimit -n " + strconv.Itoa(spec.Rlimits.MaxFiles),
-	}
-	if spec.Rlimits.MaxMemMB > 0 {
-		limits = append(limits, "ulimit -v "+strconv.Itoa(spec.Rlimits.MaxMemMB*1024)) // KB
 	}
 	if spec.Rlimits.MaxFileMB > 0 {
 		limits = append(limits, "ulimit -f "+strconv.Itoa(spec.Rlimits.MaxFileMB*1024)) // KB blocks
@@ -64,7 +54,26 @@ func Command(spec Spec, cmdline string) (*exec.Cmd, error) {
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.Command(sandbox.BwrapBin, args...)
+	
+	// Wrap bwrap in systemd-run for cgroup limits
+	sdArgs := []string{
+		"--scope",
+		"--quiet",
+		fmt.Sprintf("--slice=epicpanel-%s.slice", spec.HostUsername),
+	}
+	if spec.UID > 0 && spec.GID > 0 {
+		sdArgs = append(sdArgs, fmt.Sprintf("--uid=%d", spec.UID), fmt.Sprintf("--gid=%d", spec.GID))
+	}
+	if spec.Rlimits.MaxMemMB > 0 {
+		sdArgs = append(sdArgs, fmt.Sprintf("-p"), fmt.Sprintf("MemoryMax=%dM", spec.Rlimits.MaxMemMB))
+	}
+	if spec.Rlimits.CPUQuota > 0 {
+		sdArgs = append(sdArgs, fmt.Sprintf("-p"), fmt.Sprintf("CPUQuota=%d%%", spec.Rlimits.CPUQuota))
+	}
+	sdArgs = append(sdArgs, sandbox.BwrapBin)
+	sdArgs = append(sdArgs, args...)
+
+	cmd := exec.Command("systemd-run", sdArgs...)
 	cmd.SysProcAttr = sysProcAttrFor(spec)
 	return cmd, nil
 }

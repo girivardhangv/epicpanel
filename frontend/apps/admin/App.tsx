@@ -3,7 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes, useRoutes } from 'react-router-
 import {
   LayoutGrid, Server, ServerCog, Users, Globe2, Package, Network, Database, HardDrive,
   Globe, Layers, ServerOff, History, ShieldCheck, Activity, ScrollText, ListChecks,
-  Wallet, LifeBuoy, Settings as SettingsIcon, CloudCog, Menu, ShieldAlert,
+  Wallet, LifeBuoy, Settings as SettingsIcon, CloudCog, Menu, ShieldAlert, HardDriveDownload,
 } from 'lucide-react'
 import { AuthProvider, useAuth, useMetrics, seedFrames, normalizeBatch } from '@epicpanel/core'
 import { AppSidebar, Toaster, FreshnessBadge } from '@epicpanel/ui'
@@ -34,6 +34,7 @@ const NAV: SidebarGroup[] = [
       { to: '/servers', label: 'Servers', icon: ServerCog },
       { to: '/ip-addresses', label: 'IP Addresses', icon: HardDrive },
       { to: '/web-servers', label: 'Web Servers', icon: ServerOff },
+      { to: '/software', label: 'Software', icon: HardDriveDownload },
     ],
   },
   {
@@ -209,7 +210,6 @@ function AdminHeader({ fresh, wsConnected, onMenu }: {
           </span>
         </div>
         <div className="flex-1" />
-        <FreshnessBadge state={fresh.state} ageMs={fresh.ageMs} label="Fleet" />
         <div className="flex cursor-pointer items-center gap-[9px] pl-[7px]">
           <span className="grid h-[34px] w-[34px] place-items-center rounded-full bg-brand-soft text-[11px] font-extrabold text-brand">
             {(user?.name ?? 'A').charAt(0).toUpperCase()}

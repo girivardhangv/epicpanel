@@ -2,6 +2,7 @@ package websites
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"regexp"
@@ -63,6 +64,10 @@ type Handler struct {
 	// PickServer auto-selects a server for placement (Phase 12 scheduler);
 	// implemented by the api layer.
 	PickServer func(ctx context.Context, orgID uuid.UUID, runtime, runtimeVersion string) (uuid.UUID, error)
+	// InstallRuntime requests a runtime install on a server (runtimes
+	// subsystem seam, implemented by the api layer) — used by website
+	// creation with install_if_missing.
+	InstallRuntime func(ctx context.Context, serverID, createdBy uuid.UUID, rtType, version string) error
 	RequireOrg func(r *http.Request, orgIDParam string, min organizations.Role) (uuid.UUID, *httpapi.APIError)
 	// OnJobFinished is invoked for every finished job so other subsystems
 	// (e.g. runtimes) can react to install/remove outcomes.
@@ -134,6 +139,13 @@ func (h *Handler) Register(mux *http.ServeMux, requireAgent func(http.HandlerFun
 	mux.HandleFunc("GET /v1/organizations/{org_id}/websites/{website_id}/config", h.requireOrg(organizations.RoleBilling, h.GetConfig))
 	mux.HandleFunc("GET /v1/organizations/{org_id}/websites/{website_id}/usage", h.requireOrg(organizations.RoleBilling, h.GetUsage))
 	mux.HandleFunc("PUT /v1/organizations/{org_id}/websites/{website_id}/config/rewrite", h.requireOrg(organizations.RoleDeveloper, h.SetRewriteRules))
+	mux.HandleFunc("GET /v1/organizations/{org_id}/websites/{website_id}/app", h.requireOrg(organizations.RoleBilling, h.GetApp))
+	mux.HandleFunc("PUT /v1/organizations/{org_id}/websites/{website_id}/app", h.requireOrg(organizations.RoleDeveloper, h.SetApp))
+	mux.HandleFunc("POST /v1/organizations/{org_id}/websites/{website_id}/app/build", h.requireOrg(organizations.RoleDeveloper, h.BuildApp))
+	mux.HandleFunc("POST /v1/organizations/{org_id}/websites/{website_id}/app/start", h.requireOrg(organizations.RoleDeveloper, h.StartApp))
+	mux.HandleFunc("POST /v1/organizations/{org_id}/websites/{website_id}/app/stop", h.requireOrg(organizations.RoleAdmin, h.StopApp))
+	mux.HandleFunc("POST /v1/organizations/{org_id}/websites/{website_id}/app/restart", h.requireOrg(organizations.RoleDeveloper, h.RestartApp))
+	mux.HandleFunc("POST /v1/organizations/{org_id}/websites/{website_id}/app/logs", h.requireOrg(organizations.RoleDeveloper, h.AppLogs))
 	mux.HandleFunc("GET /v1/organizations/{org_id}/websites/{website_id}/php-settings", h.requireOrg(organizations.RoleBilling, h.GetPHPSettings))
 	mux.HandleFunc("PUT /v1/organizations/{org_id}/websites/{website_id}/php-settings", h.requireOrg(organizations.RoleDeveloper, h.SetPHPSettings))
 	mux.HandleFunc("POST /v1/organizations/{org_id}/websites/{website_id}/suspend", h.requireOrg(organizations.RoleAdmin, h.Suspend))
@@ -213,12 +225,15 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Name           string `json:"name"`
-		ServerID       string `json:"server_id"`
-		Runtime        string `json:"runtime"`
-		RuntimeVersion string `json:"runtime_version"`
-		WebServer      string `json:"web_server"`
-		PrimaryDomain  string `json:"primary_domain"`
+		Name             string `json:"name"`
+		ServerID         string `json:"server_id"`
+		Runtime          string `json:"runtime"`
+		RuntimeVersion   string `json:"runtime_version"`
+		WebServer        string `json:"web_server"`
+		PrimaryDomain    string `json:"primary_domain"`
+		InstallIfMissing bool   `json:"install_if_missing"`
+		StartupCommand   string `json:"startup_command"`
+		BuildCommand     string `json:"build_command"`
 	}
 	if apiErr := httpapi.Read(r, &req); apiErr != nil {
 		httpapi.RespondError(w, apiErr)
@@ -297,23 +312,31 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// A dynamic runtime must already be installed on the target server.
-	if rt != RuntimeStatic {
-		ref, err := h.Runtimes.GetByTypeVersion(r.Context(), serverID, string(rt), req.RuntimeVersion)
-		if err != nil {
-			httpapi.RespondError(w, httpapi.ErrValidation("runtime "+string(rt)+" "+req.RuntimeVersion+" is not installed on this server"))
-			return
-		}
-		if ref.Status != "available" {
-			httpapi.RespondError(w, httpapi.ErrValidation("runtime "+string(rt)+" "+req.RuntimeVersion+" is not available (status: "+ref.Status+")"))
-			return
-		}
-	}
-
+	// A dynamic runtime must be installed (or installing) on the target
+	// server. With install_if_missing, a missing runtime is requested first
+	// and the site provisions automatically once it lands (job chaining on
+	// the install_runtime outcome) — one-click create, no pre-install trip.
 	createdBy, parseErr := uuid.Parse(user.ID)
 	if parseErr != nil {
 		httpapi.RespondError(w, httpapi.ErrInternal(parseErr))
 		return
+	}
+	if rt != RuntimeStatic {
+		ref, rtErr := h.Runtimes.GetByTypeVersion(r.Context(), serverID, string(rt), req.RuntimeVersion)
+		switch {
+		case rtErr != nil:
+			if !req.InstallIfMissing || h.InstallRuntime == nil {
+				httpapi.RespondError(w, httpapi.ErrValidation("runtime "+string(rt)+" "+req.RuntimeVersion+" is not installed on this server (pass install_if_missing to install it first)"))
+				return
+			}
+			if iErr := h.InstallRuntime(r.Context(), serverID, createdBy, string(rt), req.RuntimeVersion); iErr != nil {
+				httpapi.RespondError(w, httpapi.ErrValidation("runtime install request failed: "+iErr.Error()))
+				return
+			}
+		case ref.Status != "available" && ref.Status != "installing":
+			httpapi.RespondError(w, httpapi.ErrValidation("runtime "+string(rt)+" "+req.RuntimeVersion+" is not available (status: "+ref.Status+")"))
+			return
+		}
 	}
 
 	ws, unixUser, err := h.Websites.Create(r.Context(), orgID, serverID, createdBy, req.Name, req.PrimaryDomain, rt, req.RuntimeVersion, req.WebServer)
@@ -337,13 +360,35 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		ws.BackendPort = port
 	}
 
+	// App runtimes: allocate the private loopback app port and seed any
+	// app config that came with the create request. Desired state stays
+	// "stopped" until the user asks for a start — the site is empty at
+	// create time, and start jobs on missing builds would only fail.
+	if isAppRuntime(rt) {
+		if req.StartupCommand != "" || req.BuildCommand != "" {
+			if err := h.Websites.SetAppConfig(r.Context(), ws.ID, strings.TrimSpace(req.StartupCommand), strings.TrimSpace(req.BuildCommand), "stopped"); err != nil {
+				httpapi.RespondError(w, httpapi.ErrInternal(err))
+				return
+			}
+			ws.AppStartupCommand, ws.AppBuildCommand, ws.AppDesiredState = strings.TrimSpace(req.StartupCommand), strings.TrimSpace(req.BuildCommand), "stopped"
+		}
+		if h.Ports != nil {
+			port, err := h.Ports.AllocateFor(r.Context(), ws.ServerID.String(), ws.ID.String(), "app", 0)
+			if err != nil {
+				httpapi.RespondError(w, httpapi.ErrConflict(err.Error()))
+				return
+			}
+			ws.AppPort = port
+		}
+	}
+
 	// Desired state -> provisioning job for the agent.
 	payload, apiErr := h.buildDesiredPayload(r.Context(), ws, orgID, unixUser, ws.RuntimeVersion)
 	if apiErr != nil {
 		httpapi.RespondError(w, apiErr)
 		return
 	}
-	job, err := h.Jobs.Enqueue(r.Context(), serverID, &ws.ID, jobs.TypeProvisionWebsite, payload)
+	job, err := h.Jobs.EnqueueIdempotent(r.Context(), serverID, &ws.ID, jobs.TypeProvisionWebsite, payload, "provision_website_"+ws.ID.String())
 	if err != nil {
 		httpapi.RespondError(w, httpapi.ErrInternal(err))
 		return
@@ -579,7 +624,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		httpapi.RespondError(w, apiErr)
 		return
 	}
-	job, err := h.Jobs.Enqueue(r.Context(), ws.ServerID, &ws.ID, jobs.TypeProvisionWebsite, payload)
+	job, err := h.Jobs.EnqueueIdempotent(r.Context(), ws.ServerID, &ws.ID, jobs.TypeProvisionWebsite, payload, "provision_website_"+ws.ID.String())
 	if err != nil {
 		httpapi.RespondError(w, httpapi.ErrInternal(err))
 		return
@@ -788,6 +833,16 @@ func (h *Handler) buildDesiredPayload(ctx context.Context, ws *Website, orgID uu
 		BackendPort:    ws.BackendPort,
 		DocrootSuffix:  ws.DocrootSuffix,
 		PrimaryDomain:  ws.PrimaryDomain,
+	}
+	// App-platform serving mode: the agent renders a reverse-proxy vhost to
+	// the app port and (via chaining) builds + starts the process.
+	if isAppRuntime(ws.Runtime) {
+		payload.AppStartupCommand = ws.AppStartupCommand
+		payload.AppBuildCommand = ws.AppBuildCommand
+		payload.AppPort = ws.AppPort
+		if blob, err := h.Websites.GetAppEnv(ctx, ws.ID); err == nil && len(blob) > 0 {
+			payload.AppEnvEnc = base64.StdEncoding.EncodeToString(blob)
+		}
 	}
 	if h.Configs != nil {
 		if cfg, err := h.Configs.Get(ctx, ws.ID); err == nil {

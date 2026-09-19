@@ -148,7 +148,7 @@ func (s *Store) EnqueueIdempotent(ctx context.Context, serverID uuid.UUID, websi
 		INSERT INTO jobs (server_id, website_id, type, payload, idempotency_key)
 		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL AND status IN ('pending', 'running')
-		DO UPDATE SET updated_at = now()
+		DO UPDATE SET payload = EXCLUDED.payload, updated_at = now()
 		RETURNING `+jobCols,
 		serverID, websiteID, jobType, payloadJSON, key,
 	)

@@ -225,9 +225,47 @@ func (h *Handler) ApplyWebsiteTransition(job *jobs.Job, resultJSON json.RawMessa
 				!errors.Is(err, ErrNotFound) && !errors.Is(err, ErrMarkReadyBlocked) {
 				slog.Error("website mark ready failed", "website", job.WebsiteID, "err", err)
 			}
+			// App-platform chaining: a provisioned app site whose desired
+			// state is running converges to built + started with no further
+			// user action (build_app success chains start_app below).
+			if ws, err := h.Websites.GetByIDAny(ctx, *job.WebsiteID); err == nil && ws != nil &&
+				isAppRuntime(ws.Runtime) && ws.AppDesiredState == "running" {
+				if err := h.enqueueBuildApp(ctx, ws); err != nil {
+					slog.Error("app build enqueue failed", "website", ws.ID, "err", err)
+				}
+			}
 		case jobs.StatusFailed:
 			if err := h.Websites.SetStatus(ctx, *job.WebsiteID, StatusFailed, job.Error); err != nil && err != ErrNotFound {
 				slog.Error("website mark failed", "website", job.WebsiteID, "err", err)
+			}
+		}
+	case jobs.TypeBuildApp:
+		if job.Status == jobs.StatusSuccess {
+			if ws, err := h.Websites.GetByIDAny(ctx, *job.WebsiteID); err == nil && ws != nil &&
+				isAppRuntime(ws.Runtime) && ws.AppDesiredState == "running" {
+				if err := h.enqueueStartApp(ctx, ws); err != nil {
+					slog.Error("app start enqueue failed", "website", ws.ID, "err", err)
+				}
+			}
+		}
+	case jobs.TypeInstallRuntime:
+		if job.Status == jobs.StatusSuccess {
+			// Sites created with install_if_missing converge now that the
+			// runtime landed: provision every pending site waiting on it.
+			var p struct {
+				Type    string `json:"type"`
+				Version string `json:"version"`
+			}
+			if err := json.Unmarshal(job.Payload, &p); err == nil && p.Type != "" {
+				pending, err := h.Websites.ListPendingForRuntime(ctx, job.ServerID, Runtime(p.Type), p.Version)
+				if err != nil {
+					slog.Error("pending sites lookup failed", "server", job.ServerID, "err", err)
+				}
+				for i := range pending {
+					if apiErr := h.provisionPendingSite(ctx, &pending[i]); apiErr != nil {
+						slog.Error("post-install provision enqueue failed", "website", pending[i].ID, "err", apiErr)
+					}
+				}
 			}
 		}
 	case jobs.TypeDeleteWebsite:
@@ -261,6 +299,19 @@ func (h *Handler) ApplyWebsiteTransition(job *jobs.Job, resultJSON json.RawMessa
 			}
 		}
 	}
+}
+
+// provisionPendingSite enqueues the provision job for a site that was
+// created with install_if_missing and is now unblocked (runtime available).
+func (h *Handler) provisionPendingSite(ctx context.Context, ws *Website) *httpapi.APIError {
+	payload, apiErr := h.buildDesiredPayload(ctx, ws, ws.Organization, ws.UnixUser, ws.RuntimeVersion)
+	if apiErr != nil {
+		return apiErr
+	}
+	if _, err := h.Jobs.EnqueueIdempotent(ctx, ws.ServerID, &ws.ID, jobs.TypeProvisionWebsite, payload, "provision_website_"+ws.ID.String()); err != nil {
+		return httpapi.ErrInternal(err)
+	}
+	return nil
 }
 
 // JobOutcomeSubscriber receives finished jobs so other subsystems (runtimes)

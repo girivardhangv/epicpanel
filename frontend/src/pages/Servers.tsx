@@ -141,7 +141,6 @@ export function ServersPage() {
                       {s.hostname || '—'} · {s.os_info || 'unknown OS'} · agent {s.agent_version || '?'} · last seen {timeAgo(s.last_seen_at)}
                     </div>
                   </div>
-                  {frame && <ServerFreshnessBadge frame={frame} />}
                   <button className="btn-ghost !min-h-[30px] !px-2.5 !text-[10.5px]" onClick={() => toggleMaintenance(s)} title="Blocks new jobs and placement">
                     <Power size={12} /> Maintenance
                   </button>
@@ -222,10 +221,6 @@ systemctl daemon-reload && systemctl enable --now epicpanel-agent`}
   )
 }
 
-function ServerFreshnessBadge({ frame }: { frame: SnapshotFrame }) {
-  const fresh = useFreshness(frame)
-  return <FreshnessBadge state={fresh.state} ageMs={fresh.ageMs} />
-}
 
 function ServerMetrics({ frame }: { frame: SnapshotFrame | null }) {
   const fresh = useFreshness(frame)
@@ -257,14 +252,13 @@ function ServerMetrics({ frame }: { frame: SnapshotFrame | null }) {
 
   return (
     <div>
-      <div className="mb-3.5 flex flex-wrap items-center gap-2">
-        <FreshnessBadge state={fresh.state} ageMs={fresh.ageMs} label="Metrics" />
-        {frame.degraded && (
+      {frame.degraded && (
+        <div className="mb-3.5 flex flex-wrap items-center gap-2">
           <span className="status-chip status-warning" title={frame.degraded_reason ?? undefined}>
             Degraded collection
           </span>
-        )}
-      </div>
+        </div>
+      )}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <ResBar label="CPU" value={`${Math.round(node?.cpu_percent ?? 0)}%`} pct={node?.cpu_percent ?? 0} color="#2563eb" />
         <ResBar

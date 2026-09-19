@@ -141,6 +141,12 @@ func (e *Executor) EnforceLimits(ctx context.Context, p EnforceJobPayload) (*Enf
 	bwMech, rxBytes, txBytes := e.enforceBandwidth(ctx, p, user)
 	out.Mechanisms = append(out.Mechanisms, bwMech)
 
+	// ---- Network — per-uid egress guard (shared-host-network hardening) ----
+	out.Mechanisms = append(out.Mechanisms, e.enforceNetworkGuard(ctx, user))
+
+	// ---- Session caps — plan limits mirrored onto the login shell slice ----
+	out.Mechanisms = append(out.Mechanisms, e.enforceSessionCaps(ctx, user, p))
+
 	// ---- PHP workers — FPM pool bound to the plan ----
 	if p.FpmMaxChildren > 0 {
 		if n, err := e.applyFPMBound(ctx, p.WebsiteID, p.FpmMaxChildren); err != nil {

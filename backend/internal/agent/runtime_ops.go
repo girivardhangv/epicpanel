@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -49,9 +50,57 @@ func (e *Executor) InstallRuntime(ctx context.Context, runtimeID, rtType, versio
 		return e.installOpenLiteSpeed(ctx, p)
 	case "java":
 		return e.installJava(ctx, runtimeID, version, p)
+	case "phpmyadmin":
+		return e.installPhpMyAdmin(ctx, p)
+	case "adminer":
+		return e.installAdminer(ctx, p)
+	case "redis":
+		return e.installRedis(ctx, runtimeID, version, p)
 	default:
 		return fmt.Errorf("unsupported runtime type %q", rtType)
 	}
+}
+
+func (e *Executor) installPhpMyAdmin(ctx context.Context, p ProgressFunc) error {
+	dest := "/opt/epicpanel/phpmyadmin"
+	if _, err := os.Stat(dest); err == nil {
+		p(100, "phpMyAdmin already installed")
+		return nil
+	}
+	p(20, "Downloading phpMyAdmin…")
+	tmp := "/tmp/phpmyadmin.tar.gz"
+	// Download latest english version
+	if err := e.downloadFile(ctx, "https://www.phpmyadmin.net/downloads/phpMyAdmin-latest-english.tar.gz", tmp, 5*time.Minute); err != nil {
+		return err
+	}
+	p(60, "Extracting phpMyAdmin…")
+	_ = os.MkdirAll("/opt/epicpanel", 0755)
+	if err := e.run(ctx, "tar", "-xzf", tmp, "-C", "/opt/epicpanel"); err != nil {
+		return err
+	}
+	_ = os.Remove(tmp)
+	// Rename extracted folder
+	_ = e.run(ctx, "bash", "-c", "mv /opt/epicpanel/phpMyAdmin-*-english " + dest)
+	p(100, "phpMyAdmin installed")
+	return nil
+}
+
+func (e *Executor) installAdminer(ctx context.Context, p ProgressFunc) error {
+	dest := "/opt/epicpanel/adminer"
+	if _, err := os.Stat(dest); err == nil {
+		p(100, "Adminer already installed")
+		return nil
+	}
+	p(20, "Downloading Adminer…")
+	_ = os.MkdirAll(dest, 0755)
+	// adminer.org/latest.php 302-redirects to the current versioned file;
+	// GitHub release asset names changed with Adminer 5 (caught live: the
+	// old asset 404s).
+	if err := e.run(ctx, "curl", "-fsSL", "-o", dest+"/adminer.php", "https://www.adminer.org/latest.php"); err != nil {
+		return err
+	}
+	p(100, "Adminer installed")
+	return nil
 }
 
 func (e *Executor) installApache(ctx context.Context, p ProgressFunc) error {
@@ -71,6 +120,8 @@ func (e *Executor) installApache(ctx context.Context, p ProgressFunc) error {
 	}
 	// Do not bind port 80 while nginx owns it; panel sites choose the web
 	// server explicitly. Keep apache installed but stopped unless used.
+	_ = e.run(ctx, "a2dissite", "000-default")
+	_ = os.WriteFile("/etc/apache2/ports.conf", []byte("# managed by EpicPanel — do not edit\n"), 0o644)
 	_ = e.run(ctx, "systemctl", "stop", "apache2")
 	_ = e.run(ctx, "systemctl", "disable", "apache2")
 	p(100, "Apache 2.4 installed")
@@ -84,7 +135,7 @@ func (e *Executor) installOpenLiteSpeed(ctx context.Context, p ProgressFunc) err
 	}
 	p(10, "Adding the OpenLiteSpeed repository…")
 	key := "/etc/apt/trusted.gpg.d/litespeed.gpg"
-	if err := e.run(ctx, "sh", "-c", "curl -fsSL https://rpms.litespeedtech.com/debian/lst_repo.gpg | gpg --dearmor -o "+key); err != nil {
+	if err := e.run(ctx, "sh", "-c", "curl -fsSL https://rpms.litespeedtech.com/debian/lst_repo.gpg | gpg --yes --dearmor -o "+key); err != nil {
 		return fmt.Errorf("litespeed repo key: %w", err)
 	}
 	codename := distroCodename()
@@ -154,6 +205,30 @@ func (e *Executor) installPHP(ctx context.Context, runtimeID, version string, p 
 		p(100, "PHP "+major+" already installed")
 		return nil
 	}
+	// RPM distros ship ONE unversioned PHP (`php-fpm` binary, /etc/php-fpm.d
+	// pools) — when its major matches the request it satisfies us. A mismatch
+	// cannot be honored from distro repos at all, so the non-apt branch below
+	// goes straight to the managed static build (versioned binary, pools and
+	// unit on any distro).
+	if e.pm.Name() != "apt" {
+		if out, err := exec.CommandContext(ctx, "php-fpm", "-v").CombinedOutput(); err == nil &&
+			strings.Contains(string(out), "PHP "+major+".") {
+			slog.Info("distro php already installed", "version", major)
+			p(100, "PHP "+major+" already installed (distro)")
+			return nil
+		}
+		// No matching distro PHP on this RPM family — compile from source
+		// (php.net), same as the apt path's source fallback.
+		p(30, "Compiling PHP "+major+" from source…")
+		if err := e.installPHPSource(ctx, major, p); err != nil {
+			return fmt.Errorf("source PHP install: %w", err)
+		}
+		if err := e.EnsureComposer(ctx); err != nil {
+			slog.Warn("composer install failed; skipping", "err", err)
+		}
+		p(100, "PHP "+major+" ready (compiled from source)")
+		return nil
+	}
 
 	install := func() error {
 		p(20, "Installing PHP "+major+" core (fpm, cli)…")
@@ -177,15 +252,24 @@ func (e *Executor) installPHP(ctx context.Context, runtimeID, version string, p 
 
 	if err := install(); err != nil {
 		// Distro repos may not carry this version. Strategy:
-		//  1. ondrej PPA — but ONLY when the PPA publishes THIS distro's own
-		//     suite (native builds; deps resolve). Field-proven: pinning noble
-		//     packages on a newer distro deadlocks on libxml2 Depends.
+		//  1. the distro's version repository — but ONLY when it publishes
+		//     THIS distro's own suite (native builds; deps resolve). Ubuntu
+		//     and derivatives: ondrej/php. Debian: deb.sury.org/php (the
+		//     Debian PHP authority; the ondrej PPA never publishes Debian
+		//     suites). Field-proven: pinning foreign suites deadlocks on
+		//     Depends (libxml2 et al).
 		//  2. otherwise: static PHP build (self-contained binary, zero system
 		//     library dependencies) — always installable.
-		p(15, "Version not in distro repos — trying ondrej/php PPA…")
-		slog.Warn("distro install failed, trying PPA fallback", "err", err)
-		ppaErr := e.addOndrejPPA(ctx) // skips cleanly when suite not published
-		if ppaErr == nil {
+		p(15, "Version not in distro repos — trying the distro version repository…")
+		slog.Warn("distro install failed, trying version repo fallback", "err", err)
+		distroErr := err
+		var repoErr error
+		if osReleaseID() == "debian" {
+			repoErr = e.addSuryPHP(ctx) // skips cleanly when suite not published
+		} else {
+			repoErr = e.addOndrejPPA(ctx) // skips cleanly when suite not published
+		}
+		if repoErr == nil {
 			if verr := e.aptPackagesVisible(ctx, core); verr == nil {
 				if ierr := install(); ierr == nil {
 					if err := e.verifyPHPFPM(ctx, major); err != nil {
@@ -194,22 +278,24 @@ func (e *Executor) installPHP(ctx context.Context, runtimeID, version string, p 
 					p(100, "PHP "+major+" ready (FPM + extensions)")
 					return nil
 				} else {
-					slog.Warn("PPA packages visible but install failed; falling to static build", "err", ierr)
+					slog.Warn("repo packages visible but install failed; falling to static build", "err", ierr)
 				}
 			} else {
-				slog.Warn("PPA packages not visible; falling to static build", "err", verr)
+				slog.Warn("repo packages not visible; falling to static build", "err", verr)
 			}
 		} else {
-			slog.Warn("PPA path unavailable for this distro; using static PHP build", "err", ppaErr)
+			slog.Warn("version repo path unavailable for this distro; compiling from source", "err", repoErr)
 		}
-		p(30, "Installing static PHP "+major+" build (self-contained)…")
-		if err := e.installStaticPHP(ctx, major, p); err != nil {
-			return fmt.Errorf("static PHP install: %w (ppa: %v; apt: %v)", err, ppaErr, err)
-		}
+	// Neither distro nor a version repository ships this version — compile
+	// it from php.net source (full extension set, pecl/phpize included).
+	p(30, "Compiling PHP "+major+" from source…")
+	if serr := e.installPHPSource(ctx, major, p); serr != nil {
+		return fmt.Errorf("source PHP install: %w (repo: %v; apt: %v)", serr, repoErr, distroErr)
+	}
 		if err := e.EnsureComposer(ctx); err != nil {
 			slog.Warn("composer install failed; skipping", "err", err)
 		}
-		p(100, "PHP "+major+" ready (static build)")
+		p(100, "PHP "+major+" ready (compiled from source)")
 		return nil
 	}
 	if err := e.verifyPHPFPM(ctx, major); err != nil {
@@ -314,6 +400,85 @@ func (e *Executor) addOndrejPPA(ctx context.Context) error {
 		return err
 	}
 	return e.aptUpdateTolerant(ctx)
+}
+
+// addSuryPHP enables deb.sury.org/php — the Debian counterpart of the
+// ondrej PPA (same maintainer, native Debian builds of every supported PHP
+// version). Same safety rules: probe the repo's dists/ index for THIS
+// distro's suite and refuse foreign pins (Debian testing/unstable suites are
+// not always published; that must fall through to the static build, never
+// poison apt). The signing key comes over HTTPS from packages.sury.org and
+// lands in a dedicated keyring — no apt-key, no third-party trust.
+func (e *Executor) addSuryPHP(ctx context.Context) error {
+	// Clean previous sury state first (same poisoning rules as ondrej:
+	// stale 404 entries and conflicting Signed-By keyrings break apt).
+	c0, cancel0 := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel0()
+	if err := e.run(c0, "bash", "-c",
+		"rm -f /etc/apt/sources.list.d/sury-php*.list /etc/apt/sources.list.d/sury-php*.list.save 2>/dev/null || true; true"); err != nil {
+		return err
+	}
+
+	codename, err := e.distroCodename(ctx)
+	if err != nil {
+		return err
+	}
+	if !suryHasSuite(ctx, codename) {
+		slog.Warn("sury.org does not publish this Debian suite; refusing foreign-suite pin",
+			"distro", codename)
+		return errSuiteUnsupported
+	}
+
+	if err := e.run(ctx, "mkdir", "-p", "/etc/apt/keyrings"); err != nil {
+		return err
+	}
+	c, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	if err := e.run(c, "bash", "-c",
+		"curl -fsSL --max-time 60 https://packages.sury.org/php/apt.gpg | gpg --batch --yes --no-tty --dearmor -o /etc/apt/keyrings/sury-php.gpg"); err != nil {
+		return fmt.Errorf("fetch sury signing key: %w", err)
+	}
+
+	c2, cancel2 := context.WithTimeout(ctx, 1*time.Minute)
+	defer cancel2()
+	if err := e.run(c2, "bash", "-c",
+		"echo 'deb [signed-by=/etc/apt/keyrings/sury-php.gpg] https://packages.sury.org/php/ "+codename+" main' > /etc/apt/sources.list.d/sury-php.list"); err != nil {
+		return err
+	}
+	return e.aptUpdateTolerant(ctx)
+}
+
+// suryHasSuite probes packages.sury.org's dists/ index for a published
+// suite (bookworm, trixie, …) — the authoritative source, same pattern as
+// ppaHasSuiteGeneral.
+func suryHasSuite(ctx context.Context, suite string) bool {
+	c, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(c, "bash", "-c",
+		`[ "$(curl -fsSL --max-time 20 -o /dev/null -w '%{http_code}' 'https://packages.sury.org/php/dists/`+suite+`/Release')" = 200 ]`)
+	return cmd.Run() == nil
+}
+
+// osReleaseID returns the ID field from /etc/os-release ("" when absent).
+func osReleaseID() string {
+	b, err := os.ReadFile("/etc/os-release")
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.HasPrefix(line, "ID=") {
+			return strings.Trim(strings.TrimPrefix(line, "ID="), `"`)
+		}
+	}
+	return ""
+}
+
+// staticPHPEnabled reports whether frozen-extension static PHP builds may be
+// used as a fallback (EPICPANEL_STATIC_PHP=1). Off by default: a PHP without
+// add-on extension support is worse than a clear "not installable here".
+func staticPHPEnabled() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("EPICPANEL_STATIC_PHP")))
+	return v == "1" || v == "true" || v == "yes"
 }
 
 // addDeadsnakesPPA enables ppa:deadsnakes/ppa for the suite ppaCodename
@@ -467,6 +632,14 @@ func (e *Executor) aptInstall(ctx context.Context, packages []string, runtimeID,
 
 func (e *Executor) installPython(ctx context.Context, runtimeID, version string, p ProgressFunc) error {
 	major := versionMajorDot(version)
+	if major == "" && version == "latest" {
+		// Legacy catalog payloads carry "latest"; the installer needs a
+		// concrete minor (the catalog now offers 3.12/3.13 directly).
+		version, major = "3.13", "3.13"
+	}
+	if major == "" {
+		return fmt.Errorf("invalid Python version %q (want major.minor)", version)
+	}
 	// Already satisfied (distro python, previous install, or standalone)?
 	if _, err := exec.LookPath("python" + major); err == nil {
 		if out, err := exec.CommandContext(ctx, "python"+major, "--version").CombinedOutput(); err == nil {
@@ -476,13 +649,17 @@ func (e *Executor) installPython(ctx context.Context, runtimeID, version string,
 		}
 	}
 	p(40, "Installing Python "+major+"…")
-	// 1. Distro packages (only the distro's own suite has matching deps —
-	//    same rule as PHP; python3.12 exists on noble, 3.13 on newer).
-	c5, cancel5 := context.WithTimeout(ctx, 8*time.Minute)
-	defer cancel5()
-	if err := e.run(c5, "apt-get", "install", "-y", "python"+major, "python"+major+"-venv"); err == nil {
-		p(100, "Python "+major+" installed")
-		return nil
+	// 1. Distro packages, via the detected package manager — versioned
+	//    names exist on both the apt and dnf families (python3.12 on
+	//    noble/el9, 3.13 on newer; only the distro's own suite has matching
+	//    deps — same rule as PHP). The venv subpackage is Debian-only
+	//    naming: best-effort everywhere else.
+	if err := e.aptInstall(ctx, []string{"python" + major}, runtimeID, version); err == nil {
+		_ = e.pm.InstallBestEffort(ctx, []string{"python" + major + "-venv"})
+		if _, err := exec.LookPath("python" + major); err == nil {
+			p(100, "Python "+major+" installed")
+			return nil
+		}
 	}
 	// 2. deadsnakes PPA — only the suite ppaCodename selects (distro's own,
 	//    or the derivative's base-Ubuntu suite; never a blind foreign pin).
@@ -490,6 +667,8 @@ func (e *Executor) installPython(ctx context.Context, runtimeID, version string,
 	if cnErr == nil {
 		p(55, "Adding deadsnakes PPA for Python "+major+"…")
 		if err := e.addDeadsnakesPPA(ctx, codename); err == nil {
+			c5, cancel5 := context.WithTimeout(ctx, 8*time.Minute)
+			defer cancel5()
 			if err := e.run(c5, "apt-get", "install", "-y", "python"+major, "python"+major+"-venv"); err == nil {
 				p(100, "Python "+major+" installed")
 				return nil
@@ -544,10 +723,8 @@ func (e *Executor) installStandalonePython(ctx context.Context, major string, p 
 		return fmt.Errorf("resolve standalone python release: %w", err)
 	}
 	tmp := filepath.Join("/tmp", fmt.Sprintf("cpython-%s.tar.gz", major))
-	c1, cancel1 := context.WithTimeout(ctx, 8*time.Minute)
-	defer cancel1()
-	if err := e.run(c1, "curl", "-fsSL", "--retry", "2", "-o", tmp, resolved); err != nil {
-		return fmt.Errorf("download %s: %w", resolved, err)
+	if err := e.downloadFile(ctx, resolved, tmp, 8*time.Minute); err != nil {
+		return err
 	}
 	if err := os.MkdirAll(base, 0o755); err != nil {
 		return err
@@ -629,7 +806,11 @@ func (e *Executor) RemoveRuntime(ctx context.Context, runtimeID, rtType, version
 	switch rtType {
 	case "php":
 		major := versionMajorDot(version)
-		// Static build? Remove its tree + unit + symlinks (idempotent).
+		// Source build? Remove its prefix + unit + symlinks (idempotent).
+		if _, err := os.Stat("/opt/epicpanel/php/" + major + "/sbin/php-fpm"); err == nil {
+			return e.removePHPSource(ctx, major)
+		}
+		// Legacy frozen static build? Clean its tree + unit + symlinks.
 		if _, err := os.Stat("/opt/epicpanel/php-static/" + major + "/sbin/php-fpm"); err == nil {
 			return e.removeStaticPHP(ctx, major)
 		}
@@ -652,20 +833,14 @@ func (e *Executor) RemoveRuntime(ctx context.Context, runtimeID, rtType, version
 		}
 		return nil
 	case "node":
-		// Official tarball layout present? Remove it; distro packages stay
-		// managed by apt (purging the panel's own nodejs is not our call).
-		entries, _ := os.ReadDir("/usr/local/lib/nodejs")
-		if len(entries) > 0 {
-			if err := e.run(ctx, "rm", "-rf", "/usr/local/lib/nodejs"); err != nil {
-				return err
-			}
-			for _, name := range []string{"node", "npm", "npx"} {
-				_ = os.Remove("/usr/local/bin/" + name)
-			}
-		}
-		return nil
+		// Managed per-major tree (new layout), with legacy global-tarball
+		// cleanup inside; distro packages stay managed by the package
+		// manager (purging the panel's own nodejs is not our call).
+		return e.removeNode(ctx, version)
 	case "java":
 		return e.RemoveJava(ctx, version)
+	case "redis":
+		return e.removeRedis(ctx)
 	default:
 		return fmt.Errorf("removal for %s not implemented", rtType)
 	}
@@ -684,9 +859,15 @@ func (e *Executor) removeStaticPHP(ctx context.Context, major string) error {
 		"/usr/local/bin/php-fpm" + major,
 		"/usr/local/bin/php-fpm" + strings.ReplaceAll(major, ".", ""),
 		"/usr/sbin/php-fpm" + major,
-		"/usr/local/bin/php",
 	} {
 		_ = os.Remove(link)
+	}
+	// The shared `php` shim must only die if it points into THIS static
+	// tree — it may belong to a source-built or distro PHP now (caught live:
+	// removing static 8.3 deleted the shim of source-built 8.4).
+	if cur, lerr := os.Readlink("/usr/local/bin/php"); lerr == nil &&
+		strings.HasPrefix(cur, "/opt/epicpanel/php-static/"+major+"/") {
+		_ = os.Remove("/usr/local/bin/php")
 	}
 	slog.Info("static php runtime removed", "major", major)
 	return nil
@@ -702,7 +883,58 @@ func (e *Executor) verifyPHPFPM(ctx context.Context, major string) error {
 		}
 		bin = alt
 	}
+	// Functional check, not just presence: a package install can succeed
+	// while the binary is broken (wrong arch, missing libs).
+	out, err := exec.CommandContext(ctx, bin, "-v").CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "PHP "+major+".") {
+		return fmt.Errorf("php-fpm %s not functional after install: %s (%v)", bin, tail([]byte(out), 200), err)
+	}
 	return nil
+}
+
+// symlinkReplace points link at want, replacing an existing link atomically
+// (tmp symlink + rename) so readers never observe a missing binary. No-op
+// when the link already targets want.
+func symlinkReplace(link, want string) error {
+	if cur, lerr := os.Readlink(link); lerr == nil && cur == want {
+		return nil
+	}
+	tmp := link + ".epicpanel-tmp"
+	_ = os.Remove(tmp)
+	if err := os.Symlink(want, tmp); err != nil {
+		return err
+	}
+	return os.Rename(tmp, link)
+}
+
+// renderStaticDefaultPool is the placeholder pool for managed static PHP
+// installs (the distro www.conf equivalent): a minimal dynamic pool so the
+// master validates and starts before any site pool exists.
+func renderStaticDefaultPool(major string) string {
+	owner := "www-data"
+	if _, err := user.Lookup(owner); err != nil {
+		owner = "nobody" // Alpine and friends ship no www-data
+	}
+	group := owner
+	if _, err := user.LookupGroup(group); err != nil {
+		if g, gerr := user.LookupGroup("nogroup"); gerr == nil {
+			group = g.Name
+		}
+	}
+	sock := fpmSocketDir + "/default-" + major + ".sock"
+	return "[epicpanel-default]\n" +
+		"user = " + owner + "\n" +
+		"group = " + group + "\n" +
+		"listen = " + sock + "\n" +
+		"listen.owner = " + owner + "\n" +
+		"listen.group = " + group + "\n" +
+		"pm = dynamic\n" +
+		"pm.max_children = 2\n" +
+		"pm.start_servers = 1\n" +
+		"pm.min_spare_servers = 1\n" +
+		"pm.max_spare_servers = 1\n" +
+		"php_admin_value[error_log] = /var/log/epicpanel/php-fpm-" + major + "-default.log\n" +
+		"php_admin_flag[log_errors] = on\n"
 }
 
 // phpFpmBinary resolves the distro-specific PHP-FPM binary name for a version.
@@ -764,133 +996,24 @@ func tail(b []byte, n int) string {
 	return s
 }
 
-// installStaticPHP installs a self-contained PHP build (static-php-cli
-// project: php + fpm + common extensions compiled into static binaries, no
-// system library dependencies) — the last-resort path when neither distro
-// repos nor the ondrej PPA can resolve dependencies (field case: a newer
-// distro where the PPA's packages deadlock on libxml2 Depends).
-//
-// Verified upstream layout (dl.static-php.dev/static-php-cli/common/):
-// the cli and fpm bundles are SEPARATE files, each a single flat binary:
-//
-//	php-8.3.9-cli-linux-x86_64.tar.gz  → ./php
-//	php-8.3.9-fpm-linux-x86_64.tar.gz  → ./php-fpm
-//
-// Install layout:
-//
-//	/opt/epicpanel/php-static/<major>/bin/php        (cli)
-//	/opt/epicpanel/php-static/<major>/sbin/php-fpm   (fpm master)
-//	/etc/php/<major>/fpm/php-fpm.conf + pool.d/      (shared pool machinery)
-//	/etc/systemd/system/php<major>-fpm.service       (unit name php<major>-fpm)
-//
-// The fpm.go pool engine hard-requires all three: fpmMainConfig for `-t`
-// validation, phpFpmPoolDir for pool files, phpFpmService for reload —
-// without the unit + main config, EnsurePool fails even with a good binary.
-func (e *Executor) installStaticPHP(ctx context.Context, major string, p ProgressFunc) error {
-	base := "/opt/epicpanel/php-static/" + major
-	fpmBin := filepath.Join(base, "sbin", "php-fpm")
-	if _, err := os.Stat(fpmBin); err == nil {
-		p(100, "static PHP "+major+" already installed")
-		return nil
-	}
-	bin := "x86_64"
-	if goArch() == "arm64" {
-		bin = "aarch64"
-	}
-
-	// Resolve the newest published full version for this major (8.3 → 8.3.9).
-	p(35, "Resolving static PHP "+major+" build…")
-	asset, err := e.resolveStaticPHPAsset(ctx, major, bin)
+// downloadFile fetches url to dest, first clearing any stale file left by a
+// previous failed attempt. On Ubuntu, /tmp is sticky with
+// fs.protected_regular: re-opening another user's leftover file fails even
+// for root (curl exit 23 "ERROR on write"), which poisoned every retry until
+// the temp file was removed by hand (caught live with PHP 8.1). Failures
+// remove the partial file too, so no attempt can poison the next one.
+func (e *Executor) downloadFile(ctx context.Context, url, dest string, timeout time.Duration) error {
+	_ = os.Remove(dest)
+	c, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	err := e.run(c, "curl", "-fsSL", "--retry", "2", "-o", dest, url)
 	if err != nil {
-		return err
+		_ = os.Remove(dest)
+		return fmt.Errorf("download %s: %w", url, err)
 	}
-
-	// Download + extract. Each tarball holds one flat binary at the root.
-	extract := func(url, dest string) error {
-		tmp := filepath.Join("/tmp", filepath.Base(url))
-		c1, cancel1 := context.WithTimeout(ctx, 5*time.Minute)
-		defer cancel1()
-		if err := e.run(c1, "curl", "-fsSL", "--retry", "2", "-o", tmp, url); err != nil {
-			return fmt.Errorf("download %s: %w", url, err)
-		}
-		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-			return err
-		}
-		c2, cancel2 := context.WithTimeout(ctx, 2*time.Minute)
-		defer cancel2()
-		// Single-file archive: stream the one entry straight to dest
-		// (tar auto-detects gzip; -O dumps the sole member to stdout).
-		if err := e.run(c2, "bash", "-c",
-			"tar -xf "+tmp+" -O --to-stdout > "+dest+" && chmod 0755 "+dest); err != nil {
-			return fmt.Errorf("extract %s: %w", url, err)
-		}
-		_ = os.Remove(tmp)
-		return nil
-	}
-	if err := extract(asset, fpmBin); err != nil {
-		return err
-	}
-	// cli: same version, sibling bundle (best-effort — composer/wp-cli want it).
-	cliAsset := strings.Replace(asset, "-fpm-linux-", "-cli-linux-", 1)
-	_ = extract(cliAsset, filepath.Join(base, "bin", "php"))
-	p(70, "Static PHP "+major+" binaries in place")
-
-	// Shared pool-machinery scaffolding (idempotent).
-	mainCfg := fpmMainConfig(major)
-	if _, err := os.Stat(mainCfg); os.IsNotExist(err) {
-		_ = os.MkdirAll(filepath.Dir(mainCfg), 0o755)
-		_ = os.MkdirAll(phpFpmPoolDir(major), 0o755)
-		_ = os.MkdirAll("/var/log/epicpanel", 0o755)
-		conf := "[global]\n" +
-			"pid = /run/epicpanel/php-fpm-" + major + ".pid\n" +
-			"error_log = /var/log/epicpanel/php-fpm-" + major + ".log\n" +
-			"daemonize = no\n" +
-			"include=" + phpFpmPoolDir(major) + "/*.conf\n"
-		if err := AtomicWriteFile(mainCfg, []byte(conf), 0o644); err != nil {
-			return fmt.Errorf("write static php-fpm.conf: %w", err)
-		}
-	}
-
-	// systemd unit so phpFpmService(major) (enable/start/reload) works.
-	if _, err := os.Stat("/usr/bin/systemctl"); err == nil {
-		unit := "/etc/systemd/system/php" + major + "-fpm.service"
-		if _, err := os.Stat(unit); os.IsNotExist(err) {
-			content := "[Unit]\n" +
-				"Description=PHP " + major + " FastCGI Process Manager (EpicPanel static)\n" +
-				"After=network.target\n\n[Service]\n" +
-				"Type=simple\n" +
-				"ExecStart=" + fpmBin + " --nodaemonize --fpm-config " + mainCfg + "\n" +
-				"ExecReload=/bin/kill -USR2 $MAINPID\n" +
-				"Restart=on-failure\n\n[Install]\n" +
-				"WantedBy=multi-user.target\n"
-			if err := AtomicWriteFile(unit, []byte(content), 0o644); err != nil {
-				return fmt.Errorf("write static fpm unit: %w", err)
-			}
-			_ = e.run(ctx, "systemctl", "daemon-reload")
-		}
-	}
-
-	// Compatibility symlinks: LookPath(php-fpm<major>) for validation/reload
-	// and `php` on PATH for composer/wp-cli. Never clobber a real binary.
-	_ = e.symlinkIfAbsent(fpmBin, "/usr/local/bin/php-fpm"+major)
-	_ = e.symlinkIfAbsent(fpmBin, "/usr/local/bin/php-fpm"+strings.ReplaceAll(major, ".", ""))
-	_ = e.symlinkIfAbsent(fpmBin, "/usr/sbin/php-fpm"+major)
-	if cli, err := os.Stat(filepath.Join(base, "bin", "php")); err == nil && cli.Mode().IsRegular() {
-		_ = e.symlinkIfAbsent(filepath.Join(base, "bin", "php"), "/usr/local/bin/php")
-	}
-
-	// Prove the whole chain works the way fpm.go will use it: binary + main
-	// config + include dir, exactly the args validateFPMConfig passes.
-	if err := ValidateCmd(ctx, 60*time.Second, fpmBin, "--fpm-config", mainCfg, "--test"); err != nil {
-		return fmt.Errorf("static php-fpm config test failed: %w", err)
-	}
-	if out, err := exec.CommandContext(ctx, fpmBin, "-v").CombinedOutput(); err != nil ||
-		!strings.Contains(string(out), major) {
-		return fmt.Errorf("static php-fpm not functional: %s (%v)", tail([]byte(out), 200), err)
-	}
-	slog.Info("static PHP installed", "major", major, "asset", filepath.Base(asset))
 	return nil
 }
+
 
 // symlinkIfAbsent creates link → target only when link does not exist
 // (dangling links count as absent: os.Stat follows symlinks).
@@ -902,127 +1025,49 @@ func (e *Executor) symlinkIfAbsent(target, link string) error {
 	return os.Symlink(target, link)
 }
 
-// resolveStaticPHPAsset picks the newest published fpm tarball for a
-// major.minor by scraping the static-php-cli download index. Live-verified
-// listing entries: php-8.3.9-fpm-linux-x86_64.tar.gz (cli/fpm/micro flavors,
-// x86_64 + aarch64). sort -V handles 8.3.9 < 8.3.10 correctly.
-func (e *Executor) resolveStaticPHPAsset(ctx context.Context, major, bin string) (string, error) {
-	c, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-	script := "curl -fsSL --max-time 40 'https://dl.static-php.dev/static-php-cli/common/' | " +
-		"grep -oE 'php-" + major + "\\.[0-9]+-fpm-linux-" + bin + "\\.tar\\.gz' | sort -uV | tail -1"
-	cmd := exec.CommandContext(c, "bash", "-c", script)
-	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("fetch static-php-cli index: %w", err)
-	}
-	asset := strings.TrimSpace(string(out))
-	if !strings.HasPrefix(asset, "php-") || !strings.HasSuffix(asset, ".tar.gz") {
-		return "", fmt.Errorf("no static-php-cli fpm build published for %s (%s)", major, bin)
-	}
-	return "https://dl.static-php.dev/static-php-cli/common/" + asset, nil
-}
 
-// installNode installs Node.js via NodeSource. The setup script itself runs
-// apt-get update which may fail on broken third-party repos — tolerate that
-// (the script still provisions the repo), then install nodejs.
-func (e *Executor) installNode(ctx context.Context, runtimeID, version string, p ProgressFunc) error {
-	major := nodeMajor(version)
-	if major == "" {
-		return fmt.Errorf("invalid Node.js version %q (want major, e.g. 22)", version)
-	}
-	// Node versions in the registry are single-major ("22", "20"); the DB
-	// check constraint wants major.minor, so display version is <major>.0.
-	if _, err := exec.LookPath("node"); err == nil {
-		out, _ := exec.CommandContext(ctx, "node", "--version").Output()
-		if strings.HasPrefix(strings.TrimSpace(string(out)), "v"+major+".") {
-			slog.Info("node already installed", "version", string(out))
-			p(100, "Node.js "+major+" already installed")
-			return nil
-		}
-	}
-	p(30, "Adding the NodeSource repository for Node "+major+"…")
-	if err := e.run(ctx, "bash", "-c",
-		fmt.Sprintf("curl -fsSL https://deb.nodesource.com/setup_%s.x | bash - || true", major)); err != nil {
-		return fmt.Errorf("nodesource setup: %w", err)
-	}
-	p(70, "Installing Node.js "+major+"…")
-	if err := e.aptInstall(ctx, []string{"nodejs"}, runtimeID, version); err != nil {
-		// NodeSource publishes per-distro-suite repos; on brand-new distro
-		// releases the suite is missing and apt install fails ("Unable to
-		// locate package nodejs"). Fall back to the official prebuilt
-		// binaries from nodejs.org — always published, zero repo needed.
-		slog.Warn("nodesource install failed; falling back to official nodejs.org binaries", "err", err)
-		p(75, "Installing official Node.js "+major+" binaries…")
-		if tarErr := e.installNodeTarball(ctx, major, p); tarErr != nil {
-			return fmt.Errorf("nodesource install: %v; official tarball: %w", err, tarErr)
-		}
-	}
-	if _, err := exec.LookPath("node"); err != nil {
-		return fmt.Errorf("node binary missing after install")
-	}
-	p(100, "Node.js "+major+" installed")
-	return nil
-}
-
-// installNodeTarball installs the official prebuilt Node.js binaries
-// (nodejs.org/dist/latest-v<major>.x) into /usr/local/lib/nodejs and symlinks
-// node/npm/npx onto PATH. Used when NodeSource does not publish a repo for
-// the running distro suite.
-func (e *Executor) installNodeTarball(ctx context.Context, major string, p ProgressFunc) error {
-	// nodejs.org asset naming: node-v22.23.2-linux-x64.tar.xz (x64 | arm64).
-	arch := "x64"
-	if goArch() == "arm64" {
-		arch = "arm64"
-	}
-	p(78, "Resolving latest Node.js "+major+" release…")
-	c, cancel := context.WithTimeout(ctx, 60*time.Second)
+// addNodeSourceRepo provisions the NodeSource apt repository directly — a
+// deb822 .sources file with a pinned keyring — instead of piping the
+// upstream setup_XX.x script through `bash -c` (that ran remote code with
+// root privileges and swallowed failures with `|| true`). NodeSource
+// publishes one suite per major ("nodistro"); probing it first means
+// unsupported/new distro suites fall through to the official tarball instead
+// of poisoning apt with a 404 repo.
+func (e *Executor) addNodeSourceRepo(ctx context.Context, major string) error {
+	c, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(c, "bash", "-c",
-		"curl -fsSL --max-time 40 'https://nodejs.org/dist/latest-v"+major+".x/' | grep -oE 'node-v"+major+
-			"\\.[0-9]+\\.[0-9]+-linux-"+arch+"\\.tar\\.xz' | head -1")
-	out, err := cmd.Output()
-	if err != nil {
-		return fmt.Errorf("list nodejs.org releases: %w", err)
+	probe := exec.CommandContext(c, "bash", "-c",
+		`[ "$(curl -fsSL --max-time 20 -o /dev/null -w '%{http_code}' 'https://deb.nodesource.com/node_`+major+`.x/dists/nodistro/Release')" = 200 ]`)
+	if probe.Run() != nil {
+		return fmt.Errorf("nodesource repo unreachable for node %s (nodistro suite)", major)
 	}
-	file := strings.TrimSpace(string(out))
-	if !strings.HasPrefix(file, "node-v") || !strings.HasSuffix(file, ".tar.xz") {
-		return fmt.Errorf("no official Node.js %s build published for %s", major, arch)
+	// The legacy setup script wrote /etc/apt/sources.list.d/nodesource.list;
+	// remove stale copies so apt never sees two competing entries.
+	c0, cancel0 := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel0()
+	if err := e.run(c0, "bash", "-c",
+		"rm -f /etc/apt/sources.list.d/nodesource.list /etc/apt/sources.list.d/nodesource.list.save 2>/dev/null || true; true"); err != nil {
+		return err
 	}
-	url := "https://nodejs.org/dist/latest-v" + major + ".x/" + file
-	tmp := filepath.Join("/tmp", file)
-	c1, cancel1 := context.WithTimeout(ctx, 8*time.Minute)
-	defer cancel1()
-	if err := e.run(c1, "curl", "-fsSL", "--retry", "2", "-o", tmp, url); err != nil {
-		return fmt.Errorf("download %s: %w", url, err)
-	}
-	dest := "/usr/local/lib/nodejs"
-	if err := os.MkdirAll(dest, 0o755); err != nil {
+	if err := e.run(ctx, "mkdir", "-p", "/etc/apt/keyrings"); err != nil {
 		return err
 	}
 	c2, cancel2 := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel2()
-	// Extracts to node-v<full>-linux-<arch>/ containing bin/{node,npm,npx}.
-	if err := e.run(c2, "tar", "-xf", tmp, "-C", dest); err != nil {
-		return fmt.Errorf("extract nodejs tarball: %w", err)
+	if err := e.run(c2, "bash", "-c",
+		"curl -fsSL --max-time 60 https://deb.nodesource.com/gpgkey/nodesource.gpg.key | gpg --batch --yes --no-tty --dearmor -o /etc/apt/keyrings/nodesource.gpg"); err != nil {
+		return fmt.Errorf("fetch nodesource signing key: %w", err)
 	}
-	_ = os.Remove(tmp)
-	stem := strings.TrimSuffix(file, ".tar.xz")
-	root := filepath.Join(dest, stem)
-	// Symlink onto PATH; node symlink replaces nothing (this path only runs
-	// when node is absent or the wrong major — remove stale link first).
-	for _, name := range []string{"node", "npm", "npx"} {
-		_ = os.Remove("/usr/local/bin/" + name)
-		if err := os.Symlink(filepath.Join(root, "bin", name), "/usr/local/bin/"+name); err != nil {
-			return fmt.Errorf("link %s: %w", name, err)
-		}
+	sources := "X-Repolib-Name: NodeSource\n" +
+		"Types: deb\n" +
+		"URIs: https://deb.nodesource.com/node_" + major + ".x\n" +
+		"Suites: nodistro\n" +
+		"Components: main\n" +
+		"Signed-By: /etc/apt/keyrings/nodesource.gpg\n"
+	if err := AtomicWriteFile("/etc/apt/sources.list.d/nodesource.sources", []byte(sources), 0o644); err != nil {
+		return err
 	}
-	out2, err := exec.CommandContext(ctx, "/usr/local/bin/node", "--version").CombinedOutput()
-	if err != nil || !strings.HasPrefix(strings.TrimSpace(string(out2)), "v"+major+".") {
-		return fmt.Errorf("node tarball not functional: %s (%v)", tail([]byte(out2), 200), err)
-	}
-	slog.Info("official nodejs tarball installed", "major", major, "file", file)
-	return nil
+	return e.aptUpdateTolerant(ctx)
 }
 
 // installGo downloads and unpacks the latest patch release of a Go minor
@@ -1045,25 +1090,54 @@ func (e *Executor) installGo(ctx context.Context, runtimeID, version string, p P
 	if err != nil {
 		return fmt.Errorf("resolve go version: %w", err)
 	}
+	dest := "/usr/local/go-" + full
+	// Already in place? Skip the download entirely — the dir may predate the
+	// panel (root-managed trees survive reinstalls) and re-extracting only to
+	// fail the rename burned 70MB per attempt (caught live on go 1.24).
+	if _, err := os.Stat(filepath.Join(dest, "bin", "go")); err == nil {
+		if err := e.linkGoSymlinks(dest); err != nil {
+			return err
+		}
+		p(100, "Go "+full+" already installed")
+		return nil
+	}
 	tarURL := fmt.Sprintf("https://go.dev/dl/go%s.linux-%s.tar.gz", full, goArch())
 	tarFile := filepath.Join("/tmp", fmt.Sprintf("go%s.linux-%s.tar.gz", full, goArch()))
-	if err := e.run(ctx, "curl", "-fsSL", "-o", tarFile, tarURL); err != nil {
-		return fmt.Errorf("download go: %w", err)
+	if err := e.downloadFile(ctx, tarURL, tarFile, 8*time.Minute); err != nil {
+		return err
 	}
-	dest := "/usr/local/go-" + full
-	if _, err := os.Stat(dest); os.IsNotExist(err) {
-		if err := e.run(ctx, "tar", "-C", "/usr/local", "-xzf", tarFile); err != nil {
-			return fmt.Errorf("extract go: %w", err)
-		}
-		// tar extracts to /usr/local/go; rename to versioned dir.
-		if err := os.Rename("/usr/local/go", dest); err != nil {
-			return fmt.Errorf("version go dir: %w", err)
-		}
+	// A previous crashed attempt can leave a partial /usr/local/go; tar would
+	// merge into it and the rename to dest would fail forever after.
+	_ = os.RemoveAll("/usr/local/go")
+	if err := e.run(ctx, "tar", "-C", "/usr/local", "-xzf", tarFile); err != nil {
+		return fmt.Errorf("extract go: %w", err)
+	}
+	// tar extracts to /usr/local/go; rename to versioned dir. Remove a stale
+	// dest first — rename onto an existing non-empty dir fails (caught live).
+	_ = os.RemoveAll(dest)
+	if err := os.Rename("/usr/local/go", dest); err != nil {
+		return fmt.Errorf("version go dir: %w", err)
 	}
 	_ = os.Remove(tarFile)
-	// Symlinks into the versioned dir (idempotent).
-	_ = os.Symlink(dest+"/bin/go", "/usr/local/bin/go")
-	_ = os.Symlink(dest+"/bin/gofmt", "/usr/local/bin/gofmt")
+	if err := e.linkGoSymlinks(dest); err != nil {
+		return err
+	}
+	// Functional check: binary must run and report the resolved release.
+	if out, err := exec.CommandContext(ctx, "go", "version").CombinedOutput(); err != nil ||
+		!strings.Contains(string(out), "go"+full+" ") {
+		return fmt.Errorf("go not functional after install: %s (%v)", tail([]byte(out), 200), err)
+	}
+	return nil
+}
+
+// linkGoSymlinks points /usr/local/bin/go and gofmt at dest/bin atomically
+// (replaces stale/dangling links from older installs or previous minors).
+func (e *Executor) linkGoSymlinks(dest string) error {
+	for _, bin := range []string{"go", "gofmt"} {
+		if err := symlinkReplace("/usr/local/bin/"+bin, dest+"/bin/"+bin); err != nil {
+			return fmt.Errorf("link %s: %w", bin, err)
+		}
+	}
 	return nil
 }
 
@@ -1105,8 +1179,10 @@ func goArch() string {
 }
 
 // InstallDatabaseTools deploys phpMyAdmin + Adminer behind a dedicated nginx
-// vhost on port 8081, served through the panel's PHP-FPM runtime.
-func (e *Executor) InstallDatabaseTools(ctx context.Context) (ip string, ssoKey string, err error) {
+// vhost on :8081, served through the panel's PHP-FPM runtime. preferredPHP
+// (from the global_php_version setting) wins when that version's FPM binary
+// is available; otherwise the highest installed minor is used.
+func (e *Executor) InstallDatabaseTools(ctx context.Context, preferredPHP string) (ip string, ssoKey string, err error) {
 	// PHP-FPM is required to serve both tools.
 	if err := e.InstallRuntime(ctx, "", "php", latestInstalledPHPMinor(e)); err != nil {
 		// no PHP at all: install the default managed version
@@ -1114,7 +1190,7 @@ func (e *Executor) InstallDatabaseTools(ctx context.Context) (ip string, ssoKey 
 			return "", "", fmt.Errorf("php runtime for db tools: %w", err)
 		}
 	}
-	minor := latestInstalledPHPMinor(e)
+	minor := e.resolveDBToolsPHP(preferredPHP)
 	_ = e.EnsureComposer(ctx) // best-effort: composer ships with the PHP stack
 
 	// Web root + downloads.
@@ -1122,16 +1198,16 @@ func (e *Executor) InstallDatabaseTools(ctx context.Context) (ip string, ssoKey 
 	_ = os.MkdirAll(root, 0o755)
 	adminerFile := filepath.Join(root, "adminer.php")
 	if _, err := os.Stat(adminerFile); os.IsNotExist(err) {
-		if err := e.run(ctx, "curl", "-fsSL", "-o", adminerFile, "https://www.adminer.org/latest.php"); err != nil {
+		if err := e.downloadFile(ctx, "https://www.adminer.org/latest.php", adminerFile, 3*time.Minute); err != nil {
 			return "", "", fmt.Errorf("download adminer: %w", err)
 		}
 	}
 	pmaDir := filepath.Join(root, "phpmyadmin")
 	if _, err := os.Stat(filepath.Join(pmaDir, "index.php")); os.IsNotExist(err) {
 		tarURL := "https://files.phpmyadmin.net/phpMyAdmin/5.2.2/phpMyAdmin-5.2.2-all-languages.tar.gz"
-		tarFile := "/tmp/phpmyadmin.tar.gz"
-		if err := e.run(ctx, "curl", "-fsSL", "-o", tarFile, tarURL); err != nil {
-			return "", "", fmt.Errorf("download phpmyadmin: %w", err)
+		tarFile := "/tmp/phpmyadmin-dbtools.tar.gz"
+		if err := e.downloadFile(ctx, tarURL, tarFile, 5*time.Minute); err != nil {
+			return "", "", err
 		}
 		_ = os.MkdirAll(pmaDir, 0o755)
 		if err := e.run(ctx, "tar", "-xzf", tarFile, "-C", pmaDir, "--strip-components=1"); err != nil {
@@ -1155,9 +1231,14 @@ func (e *Executor) InstallDatabaseTools(ctx context.Context) (ip string, ssoKey 
 			return "", "", err
 		}
 		ssoKeyHex = hex.EncodeToString(rb)
-		if err := os.MkdirAll(filepath.Dir(ssoKeyPath), 0o700); err != nil {
+		// 0755, not 0700: the shim runs as www-data and must TRAVERSE this
+		// directory to reach the key (a fresh 0700 dir made every SSO login
+		// fail with "SSO is not configured" — caught live). The key file
+		// itself stays root:www-data 0640; agent.env next to it stays 0600.
+		if err := os.MkdirAll(filepath.Dir(ssoKeyPath), 0o755); err != nil {
 			return "", "", err
 		}
+		_ = os.Chmod(filepath.Dir(ssoKeyPath), 0o755) // heal pre-existing tight perms
 		if err := os.WriteFile(ssoKeyPath, []byte(ssoKeyHex+"\n"), 0o640); err != nil {
 			return "", "", err
 		}
@@ -1197,6 +1278,12 @@ func (e *Executor) InstallDatabaseTools(ctx context.Context) (ip string, ssoKey 
 	}
 	if err := e.EnsurePool(ctx, poolSpec); err != nil {
 		return "", "", err
+	}
+	// The pool moved to `minor` — drop the dbadmin pool from any other PHP
+	// version dir so two masters never race for the same socket (ADR-016
+	// class bug: "another FPM instance already listens on ...sock").
+	if err := e.CleanupOtherVersionPools(ctx, minor, dbadminPoolSiteID); err != nil {
+		slog.Warn("dbadmin stale pool cleanup", "err", err)
 	}
 	_ = os.MkdirAll(fpmSocketDir, 0o755)
 	// The reserved pool renders the standard per-site error_log path; make
@@ -1285,7 +1372,10 @@ $cfg['Servers'][$i]['auth_type'] = 'signon';
 $cfg['Servers'][$i]['SignonSession'] = 'SignonSession';
 $cfg['Servers'][$i]['SignonURL'] = 'epicpanel-sso.php';
 $cfg['Servers'][$i]['LogoutURL'] = 'epicpanel-sso.php?logout=1';
-$cfg['Servers'][$i]['host'] = 'localhost';
+// 127.0.0.1 (TCP), never "localhost": host=localhost makes mysqli use the
+// socket, whose path differs per PHP build (source builds default to
+// /tmp/mysql.sock and fail — caught live as a signon redirect loop).
+$cfg['Servers'][$i]['host'] = '127.0.0.1';
 $cfg['Servers'][$i]['AllowNoPassword'] = false;
 $cfg['Servers'][$i]['hide_db'] = '(information_schema|mysql|performance_schema|sys)';
 $cfg['ServerDefault'] = 1;
@@ -1311,7 +1401,7 @@ $key = @hex2bin(trim($keyHex));
 if ($key === false || strlen($key) !== 32) epic_fail('SSO key invalid');
 
 $token = $_GET['t'] ?? '';
-if ($token === '') epic_fail('Missing token');
+if ($token === '') epic_fail('Your phpMyAdmin session has expired. Close this tab and open the database again from EpicPanel.');
 $raw = @base64_decode(strtr($token, '-_', '+/'), true);
 if ($raw === false || strlen($raw) < 25) epic_fail('Invalid token');
 
@@ -1355,6 +1445,26 @@ if (!empty($data['database']) && $data['database'] !== '') {
 }
 header('Location: /phpmyadmin/index.php');
 `
+
+// resolveDBToolsPHP picks the PHP minor for the dbadmin pool: the operator's
+// global_php_version setting when that version's FPM binary is actually
+// available, else the highest installed minor.
+func (e *Executor) resolveDBToolsPHP(preferred string) string {
+	if preferred != "" {
+		if _, err := exec.LookPath(phpFpmBinary(preferred)); err == nil {
+			return preferred
+		}
+		alt := "php-fpm" + strings.ReplaceAll(preferred, ".", "")
+		if _, err := exec.LookPath(alt); err == nil {
+			return preferred
+		}
+		if _, err := os.Stat("/opt/epicpanel/php-static/" + preferred + "/sbin/php-fpm"); err == nil {
+			return preferred
+		}
+		slog.Warn("global php version not installed; falling back to highest", "preferred", preferred)
+	}
+	return latestInstalledPHPMinor(e)
+}
 
 func latestInstalledPHPMinor(e *Executor) string {
 	matches, _ := filepath.Glob("/etc/php/*/fpm/pool.d")
@@ -1417,3 +1527,4 @@ func goMajor(version string) string {
 	}
 	return parts[0] + "." + parts[1]
 }
+

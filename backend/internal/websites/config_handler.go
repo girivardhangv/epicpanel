@@ -139,7 +139,7 @@ func (h *Handler) SetRewriteRules(w http.ResponseWriter, r *http.Request) {
 	if ws.Status == StatusReady || ws.Status == StatusFailed {
 		payload, apiErr := h.buildDesiredPayload(r.Context(), ws, orgID, ws.UnixUser, ws.RuntimeVersion)
 		if apiErr == nil {
-			_, _ = h.Jobs.Enqueue(r.Context(), ws.ServerID, &ws.ID, jobs.TypeProvisionWebsite, payload)
+			_, _ = h.Jobs.EnqueueIdempotent(r.Context(), ws.ServerID, &ws.ID, jobs.TypeProvisionWebsite, payload, "provision_website_"+ws.ID.String())
 		}
 	}
 	httpapi.WriteJSON(w, http.StatusOK, cfg)

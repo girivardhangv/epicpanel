@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Activity as ActivityIcon } from 'lucide-react'
 import { api, useAuth, useMetrics, useFreshness, seedFrames, normalizeBatch, primaryDisk, fmtBytes } from '@epicpanel/core'
-import type { Server, SnapshotFrame } from '@epicpanel/core'
+import type { Server, SnapshotFrame, Website } from '@epicpanel/core'
 import { Card, CardHeader, EmptyState, SkeletonRows, PageTitle, MiniItem } from '@epicpanel/ui'
 import { FreshnessBadge } from '@epicpanel/ui'
 import { AreaChart, ChartControls } from '@epicpanel/charts'
@@ -31,13 +31,18 @@ export function MetricsPage() {
   const [history, setHistory] = useState<HistPoint[] | null>(null)
   const { frames } = useMetrics()
 
+  const [websites, setWebsites] = useState<Website[]>([])
+
   useEffect(() => {
     if (!org) return
-    api
-      .get<{ servers: Server[] }>(`/v1/organizations/${org.id}/servers`)
-      .then(async (r) => {
-        const sv = r.servers ?? []
+    Promise.all([
+      api.get<{ servers: Server[] }>(`/v1/organizations/${org.id}/servers`),
+      api.get<{ websites: Website[] }>(`/v1/organizations/${org.id}/websites`)
+    ])
+      .then(async ([svRes, wsRes]) => {
+        const sv = svRes.servers ?? []
         setServers(sv)
+        setWebsites(wsRes.websites ?? [])
         setServerId((prev) => prev || sv[0]?.id || '')
         // Seed the live layer once so the header badge has something to show.
         return api
@@ -45,7 +50,10 @@ export function MetricsPage() {
           .then((res) => seedFrames(normalizeBatch(res)))
           .catch(() => undefined)
       })
-      .catch(() => setServers([]))
+      .catch(() => {
+        setServers([])
+        setWebsites([])
+      })
   }, [org?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -59,8 +67,37 @@ export function MetricsPage() {
 
   const frame: SnapshotFrame | null = frames[serverId] ?? null
   const fresh = useFreshness(frame)
+  const primaryFrame = frame
   const node = frame?.sample?.node
   const disk = primaryDisk(node)
+
+  const mySites = websites.filter((w) => w.status !== 'deleted' && w.status !== 'deleting')
+  const siteSamples = useMemo(() => {
+    const list = primaryFrame?.sample?.sites ?? []
+    return mySites
+      .map((w) => ({ site: w, sample: list.find((s) => s.website_id === w.id) }))
+      .filter((x) => !!x.sample)
+  }, [primaryFrame, mySites])
+
+  const aggMetrics = useMemo(() => {
+    let cpu = 0
+    let mem = 0
+    let bw = 0
+    let limitKnown = false
+    let memLimit = 0
+    for (const { sample } of siteSamples) {
+      if (sample) {
+        cpu += sample.cpu_percent
+        mem += sample.memory_bytes
+        if (sample.memory_limit_bytes > 0) {
+          memLimit += sample.memory_limit_bytes
+          limitKnown = true
+        }
+        bw += sample.bandwidth_bps
+      }
+    }
+    return { cpu, mem, bw, limitKnown, memLimit }
+  }, [siteSamples])
 
   const chart = useMemo(() => {
     const pts = history ?? []
@@ -111,15 +148,15 @@ export function MetricsPage() {
         <CardHeader
           className="mx-4 mt-4 !mb-0"
           title="Live now"
-          subtitle="WebSocket stream — this is not history"
-          right={frame ? <FreshnessBadge state={fresh.state} ageMs={fresh.ageMs} label="Live" /> : undefined}
+          subtitle="WebSocket stream — real-time updates"
+          right={frame ? <span className="status-chip status-live"><span className="h-1.5 w-1.5 rounded-full bg-current" />Live</span> : undefined}
         />
         {frame && node ? (
           <div className="grid grid-cols-2 gap-3.5 p-4 pt-1 sm:grid-cols-4">
-            <MiniItem tone="blue" icon={<ActivityIcon size={14} strokeWidth={1.8} />} title={`${Math.round(node.cpu_percent)}% CPU`} sub={`load ${node.load1?.toFixed(2) ?? '—'}`} />
-            <MiniItem tone="purple" icon={<ActivityIcon size={14} strokeWidth={1.8} />} title={node.memory_total_bytes ? fmtBytes(node.memory_used_bytes) : '—'} sub={node.memory_total_bytes ? `of ${fmtBytes(node.memory_total_bytes)}` : ''} />
+            <MiniItem tone="blue" icon={<ActivityIcon size={14} strokeWidth={1.8} />} title={`${Math.round(aggMetrics.cpu)}% CPU`} sub="Isolated site usage" />
+            <MiniItem tone="purple" icon={<ActivityIcon size={14} strokeWidth={1.8} />} title={fmtBytes(aggMetrics.mem)} sub={aggMetrics.limitKnown ? `of ${fmtBytes(aggMetrics.memLimit)}` : 'Live memory'} />
             <MiniItem tone="green" icon={<ActivityIcon size={14} strokeWidth={1.8} />} title={disk && disk.total_bytes ? fmtBytes(disk.used_bytes) : '—'} sub={disk && disk.total_bytes ? `of ${fmtBytes(disk.total_bytes)}` : ''} />
-            <MiniItem tone="amber" icon={<ActivityIcon size={14} strokeWidth={1.8} />} title={`${fmtBytes((node.net?.rx_bps ?? 0) + (node.net?.tx_bps ?? 0))}/s`} sub="network in+out" />
+            <MiniItem tone="amber" icon={<ActivityIcon size={14} strokeWidth={1.8} />} title={`${fmtBytes(aggMetrics.bw)}/s`} sub="network in+out" />
           </div>
         ) : (
           <div className="p-4 pt-1 text-[11.5px] text-muted">Waiting for live frames from the server agent…</div>

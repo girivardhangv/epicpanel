@@ -98,11 +98,19 @@ func encryptToken(token string) ([]byte, error) {
 // --- job payloads (shared with agent) ---
 
 type DeployPayload struct {
-	DeploymentID   uuid.UUID `json:"deployment_id"`
-	WebsiteID      uuid.UUID `json:"website_id"`
-	RepoURL        string    `json:"repo_url"`
-	Branch         string    `json:"branch"`
-	TokenEncrypted []byte    `json:"token_encrypted,omitempty"`
+	DeploymentID    uuid.UUID `json:"deployment_id"`
+	WebsiteID       uuid.UUID `json:"website_id"`
+	RepoURL         string    `json:"repo_url"`
+	Branch          string    `json:"branch"`
+	TokenEncrypted  []byte    `json:"token_encrypted,omitempty"`
+	Runtime         string    `json:"runtime,omitempty"`
+	RuntimeVersion  string    `json:"runtime_version,omitempty"`
+	BuildCommand    string    `json:"build_command,omitempty"`
+	UnixUser        string    `json:"unix_user,omitempty"`
+	StartupCommand  string    `json:"app_startup_command,omitempty"`
+	AppPort         int       `json:"app_port,omitempty"`
+	AppDesiredState string    `json:"app_desired_state,omitempty"`
+	AppEnvEnc       []byte    `json:"app_env_enc,omitempty"`
 }
 
 type RollbackPayload struct {
@@ -212,9 +220,20 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 		httpapi.RespondError(w, httpapi.ErrInternal(err))
 		return
 	}
-	payload := DeployPayload{DeploymentID: dep.ID, WebsiteID: ws.ID, RepoURL: ws.DeployRepoURL, Branch: branch}
+	payload := DeployPayload{
+		DeploymentID: dep.ID, WebsiteID: ws.ID, RepoURL: ws.DeployRepoURL, Branch: branch,
+		Runtime: string(ws.Runtime), RuntimeVersion: ws.RuntimeVersion,
+		BuildCommand: ws.AppBuildCommand, UnixUser: ws.UnixUser,
+		StartupCommand: ws.AppStartupCommand, AppPort: ws.AppPort,
+		AppDesiredState: ws.AppDesiredState,
+	}
 	if token, err := h.Deployments.GetWebsiteDeployToken(r.Context(), ws.ID); err == nil && token != nil {
 		payload.TokenEncrypted = token
+	}
+	// App env travels ciphertext-only (agent decrypts with its key) — the
+	// same trust model as the deploy token.
+	if envBlob, err := h.Websites.GetAppEnv(r.Context(), ws.ID); err == nil && len(envBlob) > 0 {
+		payload.AppEnvEnc = envBlob
 	}
 	if _, err := h.Jobs.Enqueue(r.Context(), ws.ServerID, &ws.ID, jobs.TypeDeployWebsite, payload); err != nil {
 		httpapi.RespondError(w, httpapi.ErrInternal(err))

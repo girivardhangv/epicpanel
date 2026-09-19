@@ -31,6 +31,10 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/organizations/{org_id}/servers/{server_id}/runtimes/{runtime_id}/extensions", h.requireOrg(organizations.RoleBilling, h.ListExtensions))
 	mux.HandleFunc("POST /v1/organizations/{org_id}/servers/{server_id}/runtimes/{runtime_id}/extensions", h.requireOrg(organizations.RoleDeveloper, h.ManageExtension))
 	mux.HandleFunc("POST /v1/organizations/{org_id}/servers/{server_id}/detect-software", h.requireOrg(organizations.RoleAdmin, h.DetectSoftware))
+
+	mux.HandleFunc("GET /v1/organizations/{org_id}/servers/{server_id}/software", h.requireOrg(organizations.RoleBilling, h.SoftwareCatalog))
+	mux.HandleFunc("POST /v1/organizations/{org_id}/servers/{server_id}/software/install", h.requireOrg(organizations.RoleAdmin, h.InstallSoftware))
+	mux.HandleFunc("POST /v1/organizations/{org_id}/servers/{server_id}/software/remove", h.requireOrg(organizations.RoleAdmin, h.RemoveSoftware))
 }
 
 func (h *Handler) requireOrg(min organizations.Role, next http.HandlerFunc) http.HandlerFunc {
@@ -133,12 +137,15 @@ func (h *Handler) Install(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !ValidType(req.Type) {
-		httpapi.RespondError(w, httpapi.ErrValidation("type must be one of: php, node, python, go"))
+		// dbtools is a combined software package, not a runtime — it has its
+		// own route: POST .../software/install {"name":"dbtools"}.
+		httpapi.RespondError(w, httpapi.ErrValidation(
+			"type must be one of: php, node, python, go, apache, openlitespeed, java, phpmyadmin, adminer, redis (or use /software/install for dbtools)"))
 		return
 	}
 	req.Version = strings.TrimSpace(req.Version)
 	if !ValidVersionForType(Type(req.Type), req.Version) {
-		httpapi.RespondError(w, httpapi.ErrValidation("invalid version for "+req.Type+": node wants a major (e.g. 22), php/python/go want major.minor (e.g. 8.3, 3.12, 1.22)"))
+		httpapi.RespondError(w, httpapi.ErrValidation("invalid version for "+req.Type))
 		return
 	}
 

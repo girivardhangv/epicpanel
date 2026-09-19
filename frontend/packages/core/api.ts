@@ -99,6 +99,10 @@ export interface Website {
   web_server: string
   backend_port?: number
   docroot_suffix?: string
+  app_startup_command?: string
+  app_build_command?: string
+  app_port?: number
+  app_desired_state?: string
   status: string
   unix_user: string
   document_root: string
@@ -367,9 +371,26 @@ function scheduleRetry() {
 }
 
 function wsUrl(): string {
-  const apiBase = (import.meta as any).env?.VITE_API_URL || `${location.protocol}//${location.hostname}:8080`
-  const proto = apiBase.startsWith('https') ? 'wss' : 'ws'
-  return `${proto}://${apiBase.replace(/^https?:\/\//, '')}/v1/ws`
+  if (typeof window === 'undefined') return ''
+  const apiBase = (import.meta as any).env?.VITE_API_URL
+  if (apiBase) {
+    const proto = apiBase.startsWith('https') ? 'wss' : 'ws'
+    return `${proto}://${apiBase.replace(/^https?:\/\//, '')}/v1/ws`
+  }
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${proto}//${location.host}/v1/ws`
+}
+
+export function reconnect() {
+  clearRetry()
+  backoffMs = START_BACKOFF_MS
+  if (socket) {
+    try {
+      socket.close()
+    } catch {}
+    socket = null
+  }
+  connect()
 }
 
 function connect() {
@@ -429,6 +450,7 @@ export const ws = {
   get connectionState(): WsConnectionState {
     return currentState
   },
+  reconnect,
   subscribe,
   onConnectionChange,
 }
@@ -760,6 +782,34 @@ export const domainsApi = {
   /** POST .../domains/{domain_id}/verify-dns — enqueues a DNS verification job. */
   verifyDns: (orgId: string, domainId: string) =>
     req<unknown>('POST', `/v1/organizations/${orgId}/domains/${domainId}/verify-dns`),
+}
+
+export interface AppConfig {
+  runtime: string
+  runtime_version: string
+  startup_command: string
+  build_command: string
+  desired_state: string
+  port: number
+  env: Record<string, string>
+  unit: string
+}
+
+export const appApi = {
+  get: (orgId: string, websiteId: string) =>
+    req<{ app: AppConfig | null }>('GET', `/v1/organizations/${orgId}/websites/${websiteId}/app`),
+  set: (orgId: string, websiteId: string, body: { startup_command?: string; build_command?: string; desired_state?: string; env?: Record<string, string> }) =>
+    req<{ job_id: string }>('PUT', `/v1/organizations/${orgId}/websites/${websiteId}/app`, body),
+  build: (orgId: string, websiteId: string) =>
+    req<{ status: string }>('POST', `/v1/organizations/${orgId}/websites/${websiteId}/app/build`),
+  start: (orgId: string, websiteId: string) =>
+    req<{ status: string }>('POST', `/v1/organizations/${orgId}/websites/${websiteId}/app/start`),
+  stop: (orgId: string, websiteId: string) =>
+    req<{ status: string }>('POST', `/v1/organizations/${orgId}/websites/${websiteId}/app/stop`),
+  restart: (orgId: string, websiteId: string) =>
+    req<{ status: string }>('POST', `/v1/organizations/${orgId}/websites/${websiteId}/app/restart`),
+  logs: (orgId: string, websiteId: string, lines = 200) =>
+    req<{ job_id: string }>('POST', `/v1/organizations/${orgId}/websites/${websiteId}/app/logs`, { lines }),
 }
 
 export const redirectsApi = {

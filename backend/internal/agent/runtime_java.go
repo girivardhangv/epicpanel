@@ -189,10 +189,8 @@ func (e *Executor) installJavaTarball(ctx context.Context, major string, p Progr
 	p(65, "Downloading Temurin "+major+"…")
 	file := fmt.Sprintf("temurin-%s-%s.tar.gz", major, arch)
 	tmp := filepath.Join("/tmp", file)
-	c1, cancel1 := context.WithTimeout(ctx, 10*time.Minute)
-	defer cancel1()
-	if err := e.run(c1, "curl", "-fsSL", "--retry", "2", "-o", tmp, tarURL); err != nil {
-		return fmt.Errorf("download temurin: %w", err)
+	if err := e.downloadFile(ctx, tarURL, tmp, 10*time.Minute); err != nil {
+		return err
 	}
 	if err := os.MkdirAll(base, 0o755); err != nil {
 		return err

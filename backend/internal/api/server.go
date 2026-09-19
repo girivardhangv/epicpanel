@@ -110,6 +110,11 @@ func (s *Server) Handler() http.Handler {
 	srvH.OnStreamEvent = func(serverID uuid.UUID, online bool) {
 		s.WSHub.BroadcastServerState(serverID.String(), online)
 	}
+	srvH.OnSample = func(_ uuid.UUID, snap *metrics.SnapshotFrame) {
+		if snap != nil {
+			s.WSHub.BroadcastMetrics(snap)
+		}
+	}
 	srvH.Register(mux)
 
 	// Live job feed for a server (software install progress on the dashboard).
@@ -385,6 +390,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/setup/jobs", setupH.SetupJobs)
 	mux.HandleFunc("GET /v1/settings", httpapi.RequireUser(setupH.GetSettings))
 	mux.HandleFunc("PATCH /v1/settings/hostname", httpapi.RequireUser(setupH.SetHostname))
+	mux.HandleFunc("PATCH /v1/settings/global-php", httpapi.RequireUser(setupH.SetGlobalPHP))
 	mux.HandleFunc("GET /v1/pma-gate", s.pmaGate)
 
 	termH := &terminal.Handler{
@@ -431,6 +437,17 @@ func (s *Server) Handler() http.Handler {
 	}
 	wsH.PickServer = func(ctx context.Context, orgID uuid.UUID, runtime, runtimeVersion string) (uuid.UUID, error) {
 		return s.Servers.AutoPickServer(ctx, runtime, runtimeVersion)
+	}
+	wsH.InstallRuntime = func(ctx context.Context, serverID, createdBy uuid.UUID, rtType, version string) error {
+		// Registers the runtime (installing) and enqueues the install job;
+		// the outcome handler provisions sites created with install_if_missing.
+		rt, err := s.Runtimes.Create(ctx, serverID, createdBy, runtimes.Type(rtType), version)
+		if err != nil {
+			return err
+		}
+		_, err = s.Jobs.Enqueue(ctx, serverID, nil, jobs.TypeInstallRuntime,
+			runtimes.InstallPayload{RuntimeID: rt.ID, Type: rtType, Version: version})
+		return err
 	}
 	wsH.OnJobClaimed = func(ctx context.Context, job *jobs.Job) {
 		switch job.Type {
@@ -733,7 +750,7 @@ func (s *Server) reconcileWebsiteServing(ctx context.Context, websiteID, orgID, 
 			})
 		}
 	}
-	if _, err := s.Jobs.Enqueue(ctx, serverID, &ws.ID, jobs.TypeProvisionWebsite, payload); err != nil {
+	if _, err := s.Jobs.EnqueueIdempotent(ctx, serverID, &ws.ID, jobs.TypeProvisionWebsite, payload, "provision_website_"+ws.ID.String()); err != nil {
 		slog.Error("vhost reconcile enqueue failed", "website", ws.ID, "err", err)
 	}
 }

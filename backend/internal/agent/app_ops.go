@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
@@ -13,6 +15,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/epicbyte/epicpanel/backend/internal/secretbox"
 )
 
 // ============================================================================
@@ -25,12 +29,60 @@ type AppSpec struct {
 	UnixUser       string            `json:"unix_user"`
 	Runtime        string            `json:"runtime"` // node | python | go
 	RuntimeVersion string            `json:"runtime_version"`
-	AppRoot        string            `json:"app_root"`        // e.g. /srv/epicpanel/websites/<id>/app
+	AppRoot        string            `json:"app_root"`        // empty = legacy app/ workspace; releases pass the public path
 	StartupFile    string            `json:"startup_file"`    // node: server.js; python: wsgi.py module path
 	StartupCommand string            `json:"startup_command"` // go: binary path or node fallback
 	BuildCommand   string            `json:"build_command"`   // npm ci && npm run build / pip install / go build
 	InternalPort   int               `json:"internal_port"`
 	Env            map[string]string `json:"env"`
+	// EnvEnc is the base64 secretbox ciphertext of the JSON env map (the
+	// control plane encrypts env at rest; it travels ciphertext-only, same
+	// trust model as the deploy token). Decoded into Env by decodeEnv.
+	EnvEnc string `json:"app_env_enc,omitempty"`
+}
+
+// decodeEnv merges the encrypted env payload into p.Env.
+func (p *AppSpec) decodeEnv() error {
+	if p.EnvEnc == "" {
+		return nil
+	}
+	raw, err := base64.StdEncoding.DecodeString(p.EnvEnc)
+	if err != nil {
+		return fmt.Errorf("decode app env: %w", err)
+	}
+	plain, err := secretbox.Decrypt(raw)
+	if err != nil {
+		return fmt.Errorf("decrypt app env: %w", err)
+	}
+	var env map[string]string
+	if err := json.Unmarshal([]byte(plain), &env); err != nil {
+		return fmt.Errorf("parse app env: %w", err)
+	}
+	if p.Env == nil {
+		p.Env = env
+	} else {
+		for k, v := range env {
+			p.Env[k] = v
+		}
+	}
+	p.EnvEnc = ""
+	return nil
+}
+
+// appRootFor resolves the build/run directory: the spec override (release
+// layout — apps build and run inside the release the public symlink points
+// at) or the legacy app/ workspace. An override must stay inside the site
+// tree (defense in depth; the control plane already constrains it).
+func appRootFor(p AppSpec) (string, error) {
+	base := filepath.Join("/srv/epicpanel/websites", p.WebsiteID)
+	if p.AppRoot == "" {
+		return filepath.Join(base, "app"), nil
+	}
+	clean := filepath.Clean(p.AppRoot)
+	if clean != base && !strings.HasPrefix(clean, base+string(filepath.Separator)) {
+		return "", fmt.Errorf("app_root escapes the site tree")
+	}
+	return clean, nil
 }
 
 // AppServiceName is the systemd unit for an application process.
@@ -58,11 +110,17 @@ func (e *Executor) DeployApp(ctx context.Context, p AppSpec) (*AppOutcome, error
 	if _, err := uuid.Parse(p.WebsiteID); err != nil {
 		return nil, fmt.Errorf("invalid website id")
 	}
+	if err := p.decodeEnv(); err != nil {
+		return nil, err
+	}
 	uid, gid, err := siteOwnerIDs(p.WebsiteID)
 	if err != nil {
 		return nil, fmt.Errorf("site owner: %w", err)
 	}
-	appRoot := filepath.Join(e.docRootBase, p.WebsiteID, "app")
+	appRoot, err := appRootFor(p)
+	if err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(appRoot, 0o750); err != nil {
 		return nil, err
 	}
@@ -93,17 +151,36 @@ func (e *Executor) DeployApp(ctx context.Context, p AppSpec) (*AppOutcome, error
 // runAsSite executes a command as the site user inside the app root via
 // setpriv (drop privileges in-process; never run user code as root).
 func (e *Executor) runAsSite(ctx context.Context, uid, gid int, dir string, name string, args ...string) (string, error) {
+	return e.runAsSiteEnv(ctx, uid, gid, dir, nil, name, args...)
+}
+
+// runAsSiteEnv is runAsSite with extra env assignments appended (a later
+// duplicate key wins, so a PATH here overrides the default one).
+func (e *Executor) runAsSiteEnv(ctx context.Context, uid, gid int, dir string, env []string, name string, args ...string) (string, error) {
 	c, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
 	full := append([]string{"--reuid", strconv.Itoa(uid), "--regid", strconv.Itoa(gid),
 		"--clear-groups", "--inh-caps", "-0", "--",
 		"env", "HOME=" + dir, "USER=" + fmt.Sprint(uid), "TERM=xterm",
-		"PATH=/usr/local/bin:/usr/bin:/bin",
-		name}, args...)
+		"PATH=/usr/local/bin:/usr/bin:/bin"},
+		env...)
+	full = append(full, name)
+	full = append(full, args...)
 	cmd := exec.CommandContext(c, "setpriv", full...)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+// nodeRuntimeBinDir returns the bin dir of the site's managed Node major
+// (/opt/epicpanel/node/<major>/bin), or "" when that major is not managed —
+// PATH resolution applies then (system-installed Node).
+func nodeRuntimeBinDir(version string) string {
+	major := nodeMajor(version)
+	if major == "" || !fileExists(nodeManagedBin(major)) {
+		return ""
+	}
+	return filepath.Join(nodeRootBase, major, "bin")
 }
 
 func (e *Executor) deployNodeApp(ctx context.Context, p AppSpec, appRoot string, log *strings.Builder) error {
@@ -111,22 +188,30 @@ func (e *Executor) deployNodeApp(ctx context.Context, p AppSpec, appRoot string,
 	if err != nil {
 		return err
 	}
+	// Pin the build to the site's managed Node major: absolute npm plus its
+	// bin dir prepended to PATH (npm scripts spawn node via PATH, and the
+	// system-wide `node` may be a completely different major).
+	npmBin, env := "npm", []string(nil)
+	if binDir := nodeRuntimeBinDir(p.RuntimeVersion); binDir != "" {
+		npmBin = filepath.Join(binDir, "npm")
+		env = []string{"PATH=" + binDir + ":/usr/local/bin:/usr/bin:/bin"}
+	}
 	lockFile := filepath.Join(appRoot, "package-lock.json")
 	if _, err := os.Stat(lockFile); err == nil {
 		log.WriteString("npm ci...\n")
-		if out, err := e.runAsSite(ctx, uid, gid, appRoot, "npm", "ci", "--no-audit", "--no-fund"); err != nil {
+		if out, err := e.runAsSiteEnv(ctx, uid, gid, appRoot, env, npmBin, "ci", "--no-audit", "--no-fund"); err != nil {
 			return fmt.Errorf("npm ci: %s (%w)", tailString(out, 400), err)
 		}
 	} else if _, err := os.Stat(filepath.Join(appRoot, "package.json")); err == nil {
 		log.WriteString("npm install...\n")
-		if out, err := e.runAsSite(ctx, uid, gid, appRoot, "npm", "install", "--no-audit", "--no-fund"); err != nil {
+		if out, err := e.runAsSiteEnv(ctx, uid, gid, appRoot, env, npmBin, "install", "--no-audit", "--no-fund"); err != nil {
 			return fmt.Errorf("npm install: %s (%w)", tailString(out, 400), err)
 		}
 	}
 	if p.BuildCommand != "" {
 		script := strings.TrimPrefix(strings.TrimSpace(p.BuildCommand), "npm run ")
 		log.WriteString("npm run " + script + "...\n")
-		if out, err := e.runAsSite(ctx, uid, gid, appRoot, "npm", "run", script); err != nil {
+		if out, err := e.runAsSiteEnv(ctx, uid, gid, appRoot, env, npmBin, "run", script); err != nil {
 			return fmt.Errorf("npm run %s: %s (%w)", script, tailString(out, 400), err)
 		}
 	}
@@ -204,6 +289,9 @@ func (e *Executor) StartApp(ctx context.Context, p AppSpec) (*AppOutcome, error)
 	if !safeIdentifier(strings.ReplaceAll(p.UnixUser, "ep-", "ep_")) && !strings.HasPrefix(p.UnixUser, "ep-") {
 		return nil, fmt.Errorf("invalid unix user")
 	}
+	if err := p.decodeEnv(); err != nil {
+		return nil, err
+	}
 	if p.InternalPort <= 0 {
 		port, err := AppPort(p.WebsiteID)
 		if err != nil {
@@ -215,13 +303,22 @@ func (e *Executor) StartApp(ctx context.Context, p AppSpec) (*AppOutcome, error)
 	if err != nil {
 		return nil, fmt.Errorf("site owner: %w", err)
 	}
-	appRoot := filepath.Join(e.docRootBase, p.WebsiteID, "app")
+	appRoot, err := appRootFor(p)
+	if err != nil {
+		return nil, err
+	}
 
 	startCmd := p.StartupCommand
 	if startCmd == "" {
 		switch p.Runtime {
 		case "node":
-			startCmd = "node " + filepath.Base(orDefault(p.StartupFile, "server.js"))
+			// Absolute managed binary — the unit must never depend on PATH's
+			// `node`, which is whichever major owns the default shim.
+			nodeBin := "node"
+			if binDir := nodeRuntimeBinDir(p.RuntimeVersion); binDir != "" {
+				nodeBin = filepath.Join(binDir, "node")
+			}
+			startCmd = nodeBin + " " + filepath.Base(orDefault(p.StartupFile, "server.js"))
 		case "python":
 			venvBin := filepath.Join(appRoot, "venv", "bin")
 			if fileExists(filepath.Join(venvBin, "gunicorn")) {
@@ -263,21 +360,31 @@ func (e *Executor) StartApp(ctx context.Context, p AppSpec) (*AppOutcome, error)
 
 	stop := e.run(ctx, "systemctl", "stop", unit) // idempotent restart
 	_ = stop
-	if err := e.run(ctx, "systemd-run", "--unit="+unit,
-		"--property", "User="+p.UnixUser,
-		"--property", "WorkingDirectory="+appRoot,
-		"--property", "EnvironmentFile="+envFile,
+	runArgs := []string{"systemd-run", "--unit=" + unit,
+		"--property", "User=" + p.UnixUser,
+		"--property", "WorkingDirectory=" + appRoot,
+		"--property", "EnvironmentFile=" + envFile,
 		"--property", "Restart=on-failure",
 		"--property", "RestartSec=3",
 		"--property", "MemoryMax=512M",
 		"--property", "TasksMax=128",
 		"--property", "NoNewPrivileges=yes",
 		"--property", "ProtectSystem=strict",
-		"--property", "ReadWritePaths="+appRoot+" "+filepath.Join("/srv/epicpanel/websites", p.WebsiteID, "logs"),
+		"--property", "ReadWritePaths=" + appRoot + " " + filepath.Join("/srv/epicpanel/websites", p.WebsiteID, "logs"),
 		"--property", "PrivateTmp=yes",
-		"--collect",
-		"/bin/bash", "-c", startCmd,
-	); err != nil {
+	}
+	// Pin the unit's PATH to the site's managed Node major so the startup
+	// command — and anything it spawns — resolves the right node/npm even
+	// in a custom startup command. bash -c does not reset PATH (no login
+	// shell), so this holds.
+	if p.Runtime == "node" {
+		if binDir := nodeRuntimeBinDir(p.RuntimeVersion); binDir != "" {
+			runArgs = append(runArgs, "--property",
+				"Environment=PATH="+binDir+":/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin")
+		}
+	}
+	runArgs = append(runArgs, "--collect", "/bin/bash", "-c", startCmd)
+	if err := e.run(ctx, runArgs[0], runArgs[1:]...); err != nil {
 		return nil, fmt.Errorf("systemd-run: %w", err)
 	}
 	if err := e.run(ctx, "systemctl", "enable", unit); err != nil {

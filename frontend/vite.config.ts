@@ -6,7 +6,7 @@ import path from 'path'
 const root = import.meta.dirname
 
 // API target for the dev/preview proxy — override with EPICPANEL_API.
-const apiTarget = process.env.EPICPANEL_API ?? 'http://127.0.0.1:8080'
+const apiTarget = process.env.EPICPANEL_API ?? 'http://127.0.0.1:8081'
 
 export default defineConfig({
   plugins: [react()],

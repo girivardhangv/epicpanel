@@ -59,6 +59,28 @@ func (e *Executor) InstallPHPExtension(ctx context.Context, rtType, version, nam
 	if major == "" {
 		return fmt.Errorf("invalid PHP version %q", version)
 	}
+	// Frozen binaries (legacy static trees AND source builds' compiled-in
+	// set): a bundled extension is already installed; anything outside the
+	// compiled set on a frozen prefix cannot be attached via apt/pecl.
+	if rtType != "openlitespeed" && rtType != "lsphp" {
+		for _, cli := range []string{
+			filepath.Join("/opt/epicpanel/php", major, "bin", "php"),      // source build
+			filepath.Join("/opt/epicpanel/php-static", major, "bin", "php"), // legacy static
+		} {
+			if _, ferr := os.Stat(cli); ferr != nil {
+				continue
+			}
+			if modules, merr := staticPHPModules(ctx, cli); merr == nil {
+				for _, mod := range extNameToModules(name) {
+					if modules[strings.ToLower(mod)] {
+						return nil // compiled in — nothing to install
+					}
+				}
+				return fmt.Errorf("extension %q is not part of the compiled PHP %s build (its extension set is fixed at compile time); add it via pecl with this version's phpize, or install PHP %s from distro or PPA repositories", name, major, major)
+			}
+			break
+		}
+	}
 	packages, _ := extensionPackage(rtType, major, name)
 	var installed bool
 	var lastErr error
@@ -103,6 +125,42 @@ func (e *Executor) RemovePHPExtension(ctx context.Context, rtType, version, name
 		_ = e.run(ctx, "systemctl", "reload", phpFpmService(major))
 	}
 	return nil
+}
+
+// staticPHPModules returns the lowercase module list of a PHP CLI (`php -m`),
+// including Zend modules (opcache appears as "zend opcache").
+func staticPHPModules(ctx context.Context, cli string) (map[string]bool, error) {
+	out, err := exec.CommandContext(ctx, cli, "-m").Output()
+	if err != nil {
+		return nil, err
+	}
+	modules := make(map[string]bool)
+	for _, line := range strings.Split(string(out), "\n") {
+		name := strings.ToLower(strings.TrimSpace(line))
+		if name != "" {
+			modules[name] = true
+		}
+	}
+	return modules, nil
+}
+
+// extNameToModules maps a friendly extension name to the php -m module names
+// that satisfy it (an extension may provide several modules).
+func extNameToModules(name string) []string {
+	switch name {
+	case "mysql":
+		return []string{"mysqli", "pdo_mysql", "mysqlnd"}
+	case "pgsql":
+		return []string{"pgsql", "pdo_pgsql"}
+	case "xml":
+		return []string{"dom", "simplexml", "xml", "xmlreader", "xmlwriter"}
+	case "sqlite3":
+		return []string{"sqlite3", "pdo_sqlite"}
+	case "opcache":
+		return []string{"zend opcache"}
+	default:
+		return []string{name}
+	}
 }
 
 func dpkgInstalled(pkg string) bool {

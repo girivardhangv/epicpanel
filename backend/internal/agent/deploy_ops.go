@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/url"
 	"os"
 	"os/exec"
@@ -20,6 +21,26 @@ import (
 
 const releasesBase = "/srv/epicpanel/releases"
 
+// DeploySpec is the full desired deploy context: repo source plus the site's
+// runtime context, so a deploy BUILDS the release (composer / npm / pip /
+// go build — per runtime) before it goes live and restarts + health-checks
+// the app process after the flip (a release whose app never listens is
+// rolled back and the previous release is started again).
+type DeploySpec struct {
+	WebsiteID       string
+	RepoURL         string
+	Branch          string
+	TokenCipherB64  string
+	Runtime         string
+	RuntimeVersion  string
+	BuildCommand    string
+	UnixUser        string
+	StartupCommand  string
+	AppPort         int
+	AppDesiredState string
+	AppEnvEnc       string
+}
+
 // DeployOutcome is the job result for deploy_website.
 type DeployOutcome struct {
 	CommitSHA  string `json:"commit_sha"`
@@ -27,10 +48,13 @@ type DeployOutcome struct {
 	Log        string `json:"log"`
 }
 
-// DeployGit clones/pulls the repo into a new release dir, carries over
-// .env / user-uploads, and atomically flips the public symlink. Previous
-// releases are retained for rollback (pruned to the last 5).
-func (e *Executor) DeployGit(ctx context.Context, websiteID, repoURL, branch, tokenCipherB64 string) (*DeployOutcome, error) {
+// DeployGit clones/pulls the repo into a new release dir, builds it (build
+// gate — a release that fails to build never activates), carries over
+// .env / user-uploads, and atomically flips the public symlink. App runtimes
+// are restarted and health-checked after the flip. Previous releases are
+// retained for rollback (pruned to the last 5).
+func (e *Executor) DeployGit(ctx context.Context, spec DeploySpec) (*DeployOutcome, error) {
+	websiteID, repoURL, branch, tokenCipherB64 := spec.WebsiteID, spec.RepoURL, spec.Branch, spec.TokenCipherB64
 	if _, err := uuid.Parse(websiteID); err != nil {
 		return nil, fmt.Errorf("invalid website id")
 	}
@@ -100,8 +124,26 @@ func (e *Executor) DeployGit(ctx context.Context, websiteID, repoURL, branch, to
 	log.step("carrying over .env and uploads")
 	carryOverFromCurrent(publicLink, releaseDir)
 
-	// Ownership + permissions: site user owns everything.
+	// Ownership + permissions: site user owns everything. This must happen
+	// BEFORE the build gate — composer/npm/pip/go run as the site user and
+	// write into the release tree.
 	_ = chownRecursive(releaseDir, uid, gid)
+
+	// Build gate: the release is built (as the site user) BEFORE activation.
+	// A failed build fails the deploy and removes the broken release — the
+	// live release is untouched. PHP: composer install when composer.json
+	// exists. Node: npm ci/install + build. Python: venv + pip. Go: go build.
+	buildLog, buildErr := e.buildRelease(ctx, spec, releaseDir)
+	log.WriteString(buildLog)
+	if buildErr != nil {
+		_ = os.RemoveAll(releaseDir)
+		return nil, fmt.Errorf("release build failed (live release untouched): %w", buildErr)
+	}
+	if buildLog != "" {
+		log.step("build completed")
+	}
+
+	prevTarget, _ := os.Readlink(publicLink)
 
 	log.step("activating release")
 	// First deployment: public is a real directory (initial provisioning).
@@ -138,6 +180,34 @@ func (e *Executor) DeployGit(ctx context.Context, websiteID, repoURL, branch, to
 
 	// Prune old releases (keep 5).
 	e.pruneReleases(releasesDir, 5)
+
+	// App runtimes: restart the process on the new release and health-check
+	// the port. A release whose app never listens is rolled back and the
+	// previous release is brought back up — deploys never end in a dead site.
+	if isAppRuntime(spec.Runtime) && spec.AppPort > 0 && spec.AppDesiredState == "running" {
+		appSpec := AppSpec{
+			WebsiteID:      spec.WebsiteID,
+			UnixUser:       spec.UnixUser,
+			Runtime:        spec.Runtime,
+			RuntimeVersion: spec.RuntimeVersion,
+			StartupCommand: spec.StartupCommand,
+			InternalPort:   spec.AppPort,
+			EnvEnc:         spec.AppEnvEnc,
+			AppRoot:        publicLink, // systemd resolves the symlink at start → new release
+		}
+		if _, err := e.RestartApp(ctx, appSpec); err != nil {
+			rollbackRelease(publicLink, prevTarget)
+			return nil, fmt.Errorf("app restart after deploy: %w", err)
+		}
+		if err := waitPortListening(ctx, spec.AppPort, 20*time.Second); err != nil {
+			rollbackRelease(publicLink, prevTarget)
+			if prevTarget != "" {
+				_, _ = e.RestartApp(ctx, appSpec) // previous release serves again
+			}
+			return nil, fmt.Errorf("app did not listen on 127.0.0.1:%d within 20s — release rolled back: %w", spec.AppPort, err)
+		}
+		log.stepf("app healthy on 127.0.0.1:%d", spec.AppPort)
+	}
 
 	log.step("done")
 	slog.Info("deployment completed", "website", websiteID, "release", releaseDir, "sha", sha)
@@ -261,6 +331,80 @@ func execGitSHA(ctx context.Context, dir string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// buildRelease builds the release in place, as the site user: composer for
+// PHP (when composer.json exists), npm for node, venv+pip for python, go
+// build for go. Reuses the app build helpers with the release dir as root —
+// builds are always per-release (fresh node_modules/venv/bin), never shared.
+func (e *Executor) buildRelease(ctx context.Context, spec DeploySpec, releaseDir string) (string, error) {
+	var log strings.Builder
+	uid, gid, err := siteOwnerIDs(spec.WebsiteID)
+	if err != nil {
+		return "", err
+	}
+	p := AppSpec{WebsiteID: spec.WebsiteID, Runtime: spec.Runtime, RuntimeVersion: spec.RuntimeVersion, BuildCommand: spec.BuildCommand}
+	switch spec.Runtime {
+	case "php":
+		if fileExists(filepath.Join(releaseDir, "composer.json")) {
+			log.WriteString("composer install --no-dev --optimize-autoloader\n")
+			if out, err := e.runAsSiteEnv(ctx, uid, gid, releaseDir, nil, "composer",
+				"install", "--no-dev", "--optimize-autoloader", "--no-interaction"); err != nil {
+				return log.String(), fmt.Errorf("composer install: %s (%w)", tailString(out, 400), err)
+			}
+		}
+	case "node":
+		if err := e.deployNodeApp(ctx, p, releaseDir, &log); err != nil {
+			return log.String(), err
+		}
+	case "python":
+		if err := e.deployPythonApp(ctx, p, releaseDir, &log); err != nil {
+			return log.String(), err
+		}
+	case "go":
+		if err := e.deployGoApp(ctx, p, releaseDir, &log); err != nil {
+			return log.String(), err
+		}
+	}
+	return log.String(), nil
+}
+
+// waitPortListening polls a loopback TCP port until it accepts a connection
+// (or the timeout expires). This is the deploy health gate for app runtimes.
+func waitPortListening(ctx context.Context, port int, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	for {
+		conn, err := net.DialTimeout("tcp", addr, time.Second)
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timeout waiting for %s to listen", addr)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+}
+
+// rollbackRelease repoints the public symlink at the previous release
+// (best effort — first deploys have no previous release to restore).
+func rollbackRelease(publicLink, prevTarget string) {
+	if prevTarget == "" {
+		return
+	}
+	tmpLink := publicLink + ".new"
+	_ = os.Remove(tmpLink)
+	if err := os.Symlink(prevTarget, tmpLink); err != nil {
+		return
+	}
+	if err := os.Rename(tmpLink, publicLink); err == nil {
+		slog.Warn("deploy rolled back to previous release", "release", prevTarget)
+	}
+}
+
 // logBuilder accumulates human-readable deploy logs (kept short).
 type logBuilder struct {
 	sb strings.Builder
@@ -275,5 +419,9 @@ func (l *logBuilder) step(msg string) {
 func (l *logBuilder) stepf(format string, args ...any) {
 	l.step(fmt.Sprintf(format, args...))
 }
+
+// WriteString makes logBuilder an io.Writer so multi-line build output can
+// be appended verbatim.
+func (l *logBuilder) WriteString(s string) { l.sb.WriteString(s) }
 
 func (l *logBuilder) String() string { return l.sb.String() }

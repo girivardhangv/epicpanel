@@ -130,6 +130,26 @@ export function DashboardPage() {
       .filter((x) => !!x.sample)
   }, [primaryFrame, mySites])
 
+  const aggMetrics = useMemo(() => {
+    let cpu = 0
+    let mem = 0
+    let memLimit = 0
+    let bw = 0
+    let limitKnown = false
+    for (const { sample } of siteSamples) {
+      if (sample) {
+        cpu += sample.cpu_percent
+        mem += sample.memory_bytes
+        if (sample.memory_limit_bytes > 0) {
+          memLimit += sample.memory_limit_bytes
+          limitKnown = true
+        }
+        bw += sample.bandwidth_bps
+      }
+    }
+    return { cpu, mem, memLimit, limitKnown, bw }
+  }, [siteSamples])
+
   /* History chart (historical store — separate from the live cards). */
   const chart = useMemo(() => {
     const pts = data?.history ?? []
@@ -210,24 +230,20 @@ export function DashboardPage() {
       {/* Live resource cards — WS stream only, every value carries freshness */}
       <div className="mb-4 grid grid-cols-1 gap-3.5 sm:grid-cols-2 xl:grid-cols-4">
         <UsageCard
-          icon={<Gauge size={14} strokeWidth={1.8} />} tone="blue" title="CPU" sub="Live node usage"
-          value={node ? `${Math.round(node.cpu_percent)}%` : '—'}
-          pct={node?.cpu_percent ?? 0} color="#2563eb"
-          note={node ? `load ${node.load1?.toFixed(2) ?? '—'}` : 'waiting for agent'}
+          icon={<Gauge size={14} strokeWidth={1.8} />} tone="blue" title="CPU" sub="Isolated site usage"
+          value={primaryFrame ? `${Math.round(aggMetrics.cpu)}%` : '—'}
+          pct={aggMetrics.cpu} color="#2563eb"
+          note={primaryFrame ? 'Live CPU usage' : 'waiting for agent'}
           note2=""
-        >
-          <div className="mt-2"><FreshnessBadge state={fresh.state} ageMs={fresh.ageMs} label="CPU" /></div>
-        </UsageCard>
+        />
         <UsageCard
-          icon={<ServerIcon size={14} strokeWidth={1.8} />} tone="purple" title="Memory" sub="Live node usage"
-          value={node?.memory_total_bytes ? fmtBytes(node.memory_used_bytes) : '—'}
-          pct={node?.memory_total_bytes ? (node.memory_used_bytes / node.memory_total_bytes) * 100 : 0}
+          icon={<ServerIcon size={14} strokeWidth={1.8} />} tone="purple" title="Memory" sub="Isolated site usage"
+          value={primaryFrame ? fmtBytes(aggMetrics.mem) : '—'}
+          pct={aggMetrics.limitKnown ? (aggMetrics.mem / aggMetrics.memLimit) * 100 : 0}
           color="#7c4dff"
-          note={node?.memory_total_bytes ? `${fmtBytes(node.memory_total_bytes - node.memory_used_bytes)} free` : 'waiting for agent'}
+          note={aggMetrics.limitKnown ? `${fmtBytes(aggMetrics.memLimit - aggMetrics.mem)} free` : (primaryFrame ? 'Live memory usage' : 'waiting for agent')}
           note2=""
-        >
-          <div className="mt-2"><FreshnessBadge state={fresh.state} ageMs={fresh.ageMs} label="RAM" /></div>
-        </UsageCard>
+        />
         <UsageCard
           icon={<HardDrive size={14} strokeWidth={1.8} />} tone="green" title="Disk" sub="Files + databases"
           value={storageTotal ? fmtBytes(storageUsed) : '—'}
@@ -235,19 +251,15 @@ export function DashboardPage() {
           color="#0f9d6e"
           note={storageTotal ? `${Math.round((storageUsed / storageTotal) * 100)}% used` : 'waiting for agent'}
           note2={storageTotal ? `${fmtBytes(storageTotal - storageUsed)} free` : ''}
-        >
-          <div className="mt-2"><FreshnessBadge state={fresh.state} ageMs={fresh.ageMs} label="Disk" /></div>
-        </UsageCard>
+        />
         <UsageCard
-          icon={<Network size={14} strokeWidth={1.8} />} tone="amber" title="Bandwidth" sub="Live throughput"
-          value={node ? fmtBytes((node.net?.rx_bps ?? 0) + (node.net?.tx_bps ?? 0)) + '/s' : '—'}
-          pct={Math.min(100, ((node?.net?.rx_bps ?? 0) + (node?.net?.tx_bps ?? 0)) / 125_000)}
+          icon={<Network size={14} strokeWidth={1.8} />} tone="amber" title="Bandwidth" sub="Live site traffic"
+          value={primaryFrame ? fmtBytes(aggMetrics.bw) + '/s' : '—'}
+          pct={Math.min(100, aggMetrics.bw / 125_000)}
           color="#d88b00"
-          note={node ? `down ${fmtBytes(node.net?.rx_bps ?? 0)}/s · up ${fmtBytes(node.net?.tx_bps ?? 0)}/s` : 'waiting for agent'}
+          note={primaryFrame ? 'Live bandwidth usage' : 'waiting for agent'}
           note2=""
-        >
-          <div className="mt-2"><FreshnessBadge state={fresh.state} ageMs={fresh.ageMs} label="Net" /></div>
-        </UsageCard>
+        />
       </div>
 
       {/* Traffic chart + websites */}

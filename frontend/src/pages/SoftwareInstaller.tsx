@@ -4,6 +4,7 @@ import {
   Loader2, X, CircleCheck, CircleX, CircleDashed, Terminal, Server as ServerIcon, Zap,
 } from 'lucide-react'
 import { api } from '@/lib/api'
+import { subscribe } from '@epicpanel/core'
 import { useAuth } from '@/context/AuthContext'
 import { Card, StatusBadge, EmptyState, SkeletonRows } from '@/components/cards'
 import { Modal, Field, ErrorNote, Select } from '@/components/ui'
@@ -98,34 +99,33 @@ function TaskDrawer({ orgID, serverID, taskID, onClose, onSettled }: {
 
   useEffect(() => {
     let alive = true
-    const tick = async () => {
-      try {
-        const t = await software.task(orgID, serverID, taskID)
-        if (!alive) return
-        setTask(t)
-        if (t.status === 'success' || t.status === 'failed') {
-          doneRef.current = true
-          onSettled()
-        }
-      } catch {
-        /* transient — keep polling */
+    const unsub = subscribe((frame: any) => {
+      if (!alive) return
+      const t = frame?.type === 'job' || frame?.type === 'task' ? frame : null
+      if (!t || t.id !== taskID) return
+      if (t.data) {
+        setTask(t.data)
+        if (Array.isArray(t.data.log_lines)) setLines(t.data.log_lines.slice(-1500))
+      } else {
+        // minimal frame: fall back to lightweight fetch once
+        void (async () => {
+          try {
+            const r = await software.task(orgID, serverID, taskID)
+            if (!alive) return
+            setTask(r)
+          } catch {}
+        })()
       }
-      try {
-        const l = await software.taskLogs(orgID, serverID, taskID, cursorRef.current, LOG_BATCH)
-        if (!alive) return
-        if ((l.lines ?? []).length > 0) setLines((prev) => [...prev, ...l.lines].slice(-1500))
-        cursorRef.current = l.cursor ?? cursorRef.current
-        if (l.done) { doneRef.current = true; setLogDone(true) }
-        setLogErr('')
-      } catch (ex: any) {
-        if (alive) setLogErr(ex.message ?? 'log stream unavailable')
+      const st = t.data?.status ?? t.status
+      if (st === 'success' || st === 'failed') {
+        doneRef.current = true
+        onSettled()
       }
-    }
-    void tick()
-    const timer = window.setInterval(() => { if (!doneRef.current) void tick() }, TASK_POLL_MS)
-    return () => { alive = false; window.clearInterval(timer) }
+    })
+    return () => { alive = false; unsub?.() }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgID, serverID, taskID])
+
 
   useEffect(() => {
     const el = logBoxRef.current
@@ -222,7 +222,7 @@ function TaskDrawer({ orgID, serverID, taskID, onClose, onSettled }: {
             )}
           </div>
           <p className="mt-2 text-[10px] text-muted">
-            Polling status + log deltas every {TASK_POLL_MS / 1000}s from cursor {cursorRef.current.toLocaleString()}.
+            Polling status + log deltas every 2s from cursor {cursorRef.current.toLocaleString()}.
           </p>
         </div>
       </aside>

@@ -140,7 +140,7 @@ func PollAndExecute(ctx context.Context, c *Client, e *Executor, cfg Config) (bo
 		if err := json.Unmarshal(job.Payload, &p); err != nil {
 			execErr = err
 		} else {
-			outcome, err := e.DeployGit(ctx, p.WebsiteID, p.RepoURL, p.Branch, p.TokenEncrypted)
+			outcome, err := e.DeployGit(ctx, deploySpecFromPayload(p))
 			if err != nil {
 				execErr = err
 			} else if b, err := json.Marshal(outcome); err == nil {
@@ -309,7 +309,11 @@ func PollAndExecute(ctx context.Context, c *Client, e *Executor, cfg Config) (bo
 			execErr = e.SyncSSHKeys(ctx, p.WebsiteID, p.Keys)
 		}
 	case "install_database_tools":
-		ip, ssoKey, err := e.InstallDatabaseTools(ctx)
+		var p struct {
+			PHPVersion string `json:"php_version"`
+		}
+		_ = json.Unmarshal(job.Payload, &p) // empty payload = auto (highest installed)
+		ip, ssoKey, err := e.InstallDatabaseTools(ctx, p.PHPVersion)
 		if err != nil {
 			execErr = err
 		} else if b, err := json.Marshal(DBToolsOutcome{IP: ip, SSOKey: ssoKey}); err == nil {
@@ -467,13 +471,38 @@ type DatabaseOutcome struct {
 
 // DeployJobPayload matches deployments.DeployPayload.
 type DeployJobPayload struct {
-	DeploymentID   string `json:"deployment_id"`
-	WebsiteID      string `json:"website_id"`
-	RepoURL        string `json:"repo_url"`
-	Branch         string `json:"branch"`
-	TokenEncrypted string `json:"token_encrypted,omitempty"`
-	Runtime        string `json:"runtime,omitempty"`
-	RuntimeVersion string `json:"runtime_version,omitempty"`
+	DeploymentID    string `json:"deployment_id"`
+	WebsiteID       string `json:"website_id"`
+	RepoURL         string `json:"repo_url"`
+	Branch          string `json:"branch"`
+	TokenEncrypted  string `json:"token_encrypted,omitempty"`
+	Runtime         string `json:"runtime,omitempty"`
+	RuntimeVersion  string `json:"runtime_version,omitempty"`
+	BuildCommand    string `json:"build_command,omitempty"`
+	UnixUser        string `json:"unix_user,omitempty"`
+	StartupCommand  string `json:"app_startup_command,omitempty"`
+	AppPort         int    `json:"app_port,omitempty"`
+	AppDesiredState string `json:"app_desired_state,omitempty"`
+	AppEnvEnc       string `json:"app_env_enc,omitempty"`
+}
+
+// deploySpecFromPayload adapts the job payload to the DeploySpec the deploy
+// engine builds against.
+func deploySpecFromPayload(p DeployJobPayload) DeploySpec {
+	return DeploySpec{
+		WebsiteID:       p.WebsiteID,
+		RepoURL:         p.RepoURL,
+		Branch:          p.Branch,
+		TokenCipherB64:  p.TokenEncrypted,
+		Runtime:         p.Runtime,
+		RuntimeVersion:  p.RuntimeVersion,
+		BuildCommand:    p.BuildCommand,
+		UnixUser:        p.UnixUser,
+		StartupCommand:  p.StartupCommand,
+		AppPort:         p.AppPort,
+		AppDesiredState: p.AppDesiredState,
+		AppEnvEnc:       p.AppEnvEnc,
+	}
 }
 
 // RollbackJobPayload matches deployments.RollbackPayload.

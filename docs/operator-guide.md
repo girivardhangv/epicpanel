@@ -8,7 +8,7 @@ End-user (hosting customer) documentation lives in `docs/customer-guide.md`.
 One command (Debian 11+/Ubuntu 20.04+):
 
 ```bash
-curl -fsSL https://get.epichostly.in | bash
+curl -fsSL https://raw.githubusercontent.com/epicbyte/epicpanel/main/install.sh | bash
 # or, from a checkout:
 sudo bash install.sh
 ```

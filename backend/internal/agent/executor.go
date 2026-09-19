@@ -28,6 +28,20 @@ func NewExecutor() *Executor {
 	return &Executor{docRootBase: "/srv/epicpanel/websites", ctx: context.Background(), pm: DetectPackageManager()}
 }
 
+func (e *Executor) ensureBaseDirs() error {
+	dirs := []string{"/srv", "/srv/epicpanel", e.docRootBase, "/srv/epicpanel/releases"}
+	for _, d := range dirs {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			if d == e.docRootBase {
+				return fmt.Errorf("create dir %s: %w", d, err)
+			}
+			continue
+		}
+		_ = os.Chmod(d, 0o755)
+	}
+	return nil
+}
+
 type ProvisionPayload struct {
 	WebsiteID      string          `json:"website_id"`
 	Organization   string          `json:"organization"`
@@ -44,8 +58,9 @@ type ProvisionPayload struct {
 	// Redirects are domain-level redirects (301/302/307/308) rendered by the
 	// selected web server(s).
 	Redirects []RedirectRule `json:"redirects,omitempty"`
-	// Suspended serves a plain 503 stub for every domain (no PHP, no proxy).
-	Suspended bool `json:"suspended,omitempty"`
+	// Control toggles
+	Suspended     bool `json:"suspended,omitempty"`
+	QuotaExceeded bool `json:"quota_exceeded,omitempty"`
 	// FPM pool sizing from the org's hosting package; zero = agent defaults.
 	FpmMemoryLimitMB int `json:"fpm_memory_limit_mb,omitempty"`
 	FpmMaxChildren   int `json:"fpm_max_children,omitempty"`
@@ -54,6 +69,21 @@ type ProvisionPayload struct {
 	PHPSettings map[string]string `json:"php_settings,omitempty"`
 	// RequestTerminateTimeout caps a single PHP request (seconds; 0 = default).
 	RequestTerminateTimeout int `json:"request_terminate_timeout,omitempty"`
+	// App-platform serving mode (node/python/go): nginx reverse-proxies to
+	// the site's app process on this loopback port (0 = docroot serving).
+	AppStartupCommand string `json:"app_startup_command,omitempty"`
+	AppBuildCommand   string `json:"app_build_command,omitempty"`
+	AppPort           int    `json:"app_port,omitempty"`
+}
+
+// isAppRuntime reports whether a runtime is served as a proxied application
+// process (app-platform mode) rather than files served by the web server.
+func isAppRuntime(rt string) bool {
+	switch rt {
+	case "node", "python", "go":
+		return true
+	}
+	return false
 }
 
 // effectiveDocroot resolves the serving directory: siteBase/public, or
@@ -111,6 +141,10 @@ func (e *Executor) ProvisionWebsite(ctx context.Context, payload ProvisionPayloa
 		return nil, fmt.Errorf("invalid website id: %w", err)
 	}
 
+	if err := e.ensureBaseDirs(); err != nil {
+		return nil, fmt.Errorf("ensure base dirs: %w", err)
+	}
+
 	siteBase := filepath.Join(e.docRootBase, payload.WebsiteID)
 	// Standard layout first (public/, logs/, tmp/ always exist); the serving
 	// docroot then resolves to the override when set (e.g. Laravel public/).
@@ -130,12 +164,6 @@ func (e *Executor) ProvisionWebsite(ctx context.Context, payload ProvisionPayloa
 			return nil, fmt.Errorf("create dir %s: %w", dir, err)
 		}
 	}
-	if docRoot != stdPublic {
-		// The override dir is served by nginx/apache: mirror the ACLs.
-		_ = grantWebServerAccess(siteBase)
-		_ = exec.Command("setfacl", "-m", "u:"+webServerUser+":r-x", docRoot).Run()
-		_ = exec.Command("setfacl", "-d", "-m", "u:"+webServerUser+":r-x", docRoot).Run()
-	}
 
 	uid, gid, err := e.ensureUnixUser(payload.UnixUser)
 	if err != nil {
@@ -146,7 +174,7 @@ func (e *Executor) ProvisionWebsite(ctx context.Context, payload ProvisionPayloa
 		return nil, fmt.Errorf("chown site tree: %w", err)
 	}
 
-	if err := grantWebServerAccess(siteBase); err != nil {
+	if err := grantWebServerAccess(siteBase, docRoot); err != nil {
 		return nil, fmt.Errorf("grant web server access: %w", err)
 	}
 
@@ -215,6 +243,12 @@ func (e *Executor) ProvisionWebsite(ctx context.Context, payload ProvisionPayloa
 	if payload.WebServer == "none" {
 		wservers = nil
 	}
+	// App runtimes are nginx-proxied processes: Apache/OLS backends cannot
+	// serve them (they have no FPM pool), so serving collapses to the nginx
+	// edge with a reverse proxy to the app's loopback port.
+	if isAppRuntime(payload.Runtime) {
+		wservers = []string{"nginx"}
+	}
 
 	domains := make([]DomainSpec, 0, len(payload.Domains))
 	for _, d := range payload.Domains {
@@ -232,15 +266,16 @@ func (e *Executor) ProvisionWebsite(ctx context.Context, payload ProvisionPayloa
 
 	buildVhost := func() VhostSpec {
 		return VhostSpec{
-			WebsiteID:    payload.WebsiteID,
-			UnixUser:     payload.UnixUser,
-			DocumentRoot: docRoot,
-			FpmSocket:    fpmSocket,
-			RewriteRules: payload.RewriteRules,
-			BackendPort:  payload.BackendPort,
-			Redirects:    payload.Redirects,
-			Suspended:    payload.Suspended,
-			Domains:      domains,
+			WebsiteID:     payload.WebsiteID,
+			UnixUser:      payload.UnixUser,
+			DocumentRoot:  docRoot,
+			FpmSocket:     fpmSocket,
+			RewriteRules:  payload.RewriteRules,
+			BackendPort:   payload.BackendPort,
+			Redirects:     payload.Redirects,
+			Suspended:     payload.Suspended,
+			QuotaExceeded: payload.QuotaExceeded,
+			Domains:       domains,
 		}
 	}
 
@@ -252,8 +287,16 @@ func (e *Executor) ProvisionWebsite(ctx context.Context, payload ProvisionPayloa
 		case "nginx":
 			hasNginx = true
 		case "apache":
+			if _, err := exec.LookPath("apache2"); err != nil {
+				hasNginx = true
+				continue
+			}
 			hasApache = true
 		case "openlitespeed":
+			if _, err := os.Stat("/usr/local/lsws/bin/openlitespeed"); err != nil {
+				hasNginx = true
+				continue
+			}
 			hasOLS = true
 		}
 	}
@@ -270,6 +313,8 @@ func (e *Executor) ProvisionWebsite(ctx context.Context, payload ProvisionPayloa
 			vhost.ProxyPass = fmt.Sprintf("http://127.0.0.1:%d", apachePort(payload))
 		} else if hasOLS {
 			vhost.ProxyPass = fmt.Sprintf("http://127.0.0.1:%d", olsPort(payload))
+		} else if appPort := payload.AppPort; isAppRuntime(payload.Runtime) && appPort > 0 {
+			vhost.ProxyPass = fmt.Sprintf("http://127.0.0.1:%d", appPort)
 		}
 		ng := &NginxProvider{}
 		if err := ng.Ensure(ctx, vhost); err != nil {
@@ -387,19 +432,38 @@ func chownRecursive(root string, uid, gid int) error {
 const webServerUser = "www-data"
 
 // grantWebServerAccess lets nginx traverse the site base and read the docroot
-// without making the tree world-readable: the base gets traverse-only (--x,
-// no listing), public gets r-x plus a default ACL so files the site user
-// uploads later are served too. Falls back to loosening modes when setfacl is
-// unavailable or the filesystem rejects ACLs; logs/ and tmp/ stay 0750.
-func grantWebServerAccess(siteBase string) error {
-	docRoot := filepath.Join(siteBase, "public")
+// without making the tree world-readable: the ancestors down to siteBase get 0755
+// traversal, the base gets traverse-only (--x, no listing), public gets r-x plus a
+// default ACL so files the site user uploads later are served too. Falls back to
+// loosening modes when setfacl is unavailable or the filesystem rejects ACLs;
+// logs/ and tmp/ stay 0750.
+func grantWebServerAccess(siteBase, docRoot string) error {
+	// Ancestor directories of siteBase (/srv, /srv/epicpanel, /srv/epicpanel/websites)
+	// must be world-traversable so www-data can reach the siteBase.
+	for p := filepath.Dir(siteBase); p != "/" && p != "."; p = filepath.Dir(p) {
+		_ = os.Chmod(p, 0o755)
+	}
+
 	if _, err := exec.LookPath("setfacl"); err == nil {
 		ok := true
-		for _, args := range [][]string{
+		commands := [][]string{
 			{"-m", "u:" + webServerUser + ":--x", siteBase},
-			{"-m", "u:" + webServerUser + ":r-x", docRoot},
+			{"-R", "-m", "u:" + webServerUser + ":r-X", docRoot},
 			{"-d", "-m", "u:" + webServerUser + ":r-x", docRoot},
-		} {
+		}
+		// If docRoot is a subdirectory nested inside siteBase (e.g. siteBase/nested/public),
+		// ensure intermediate directories have traverse permission for www-data.
+		for inter := filepath.Dir(docRoot); inter != siteBase && strings.HasPrefix(inter, siteBase); inter = filepath.Dir(inter) {
+			commands = append(commands, []string{"-m", "u:" + webServerUser + ":--x", inter})
+		}
+		stdPublic := filepath.Join(siteBase, "public")
+		if stdPublic != docRoot {
+			commands = append(commands,
+				[]string{"-R", "-m", "u:" + webServerUser + ":r-X", stdPublic},
+				[]string{"-d", "-m", "u:" + webServerUser + ":r-x", stdPublic},
+			)
+		}
+		for _, args := range commands {
 			if out, err := exec.Command("setfacl", args...).CombinedOutput(); err != nil {
 				slog.Warn("setfacl failed, falling back to chmod", "args", args, "out", strings.TrimSpace(string(out)), "err", err)
 				ok = false
@@ -415,10 +479,26 @@ func grantWebServerAccess(siteBase string) error {
 	if err := os.Chmod(siteBase, 0o711); err != nil {
 		return fmt.Errorf("chmod site base: %w", err)
 	}
-	return os.Chmod(docRoot, 0o755)
+	for inter := filepath.Dir(docRoot); inter != siteBase && strings.HasPrefix(inter, siteBase); inter = filepath.Dir(inter) {
+		_ = os.Chmod(inter, 0o711)
+	}
+	if err := os.Chmod(docRoot, 0o755); err != nil {
+		return fmt.Errorf("chmod doc root: %w", err)
+	}
+	stdPublic := filepath.Join(siteBase, "public")
+	if stdPublic != docRoot {
+		_ = os.Chmod(stdPublic, 0o755)
+	}
+	return nil
 }
 
 func validUnixUserName(name string) bool {
+	// The reserved dbadmin tools pool runs as the distro www-data user —
+	// it is not a per-site ep- account (caught live: dbtools install failed
+	// validation with "invalid unix user www-data").
+	if name == "www-data" {
+		return true
+	}
 	if len(name) < 2 || len(name) > 32 {
 		return false
 	}

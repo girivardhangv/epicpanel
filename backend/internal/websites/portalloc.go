@@ -27,42 +27,51 @@ type BackendPortAllocator struct {
 }
 
 // AllocateFor returns the port to use for websiteID with the given mode.
-// mode is "apache" or "openlitespeed". existingPort is the currently persisted
+// mode is "apache", "openlitespeed" (web server backends) or "app"
+// (node/python/go app processes). existingPort is the currently persisted
 // port (0 = none).
 func (a *BackendPortAllocator) AllocateFor(ctx context.Context, serverID, websiteID, mode string, existingPort int) (int, error) {
 	var r ports.Range
+	usedFn := func() (map[int]bool, error) { return nil, nil }
+	setFn := func(int) error { return nil }
 	switch mode {
 	case "apache":
 		r = ports.Apache()
+		usedFn = func() (map[int]bool, error) { return a.Websites.UsedBackendPorts(ctx, uuid.MustParse(serverID)) }
+		setFn = func(p int) error { return a.Websites.SetBackendPort(ctx, uuid.MustParse(websiteID), p) }
 	case "openlitespeed":
 		r = ports.OLS()
+		usedFn = func() (map[int]bool, error) { return a.Websites.UsedBackendPorts(ctx, uuid.MustParse(serverID)) }
+		setFn = func(p int) error { return a.Websites.SetBackendPort(ctx, uuid.MustParse(websiteID), p) }
+	case "app":
+		r = ports.App()
+		usedFn = func() (map[int]bool, error) { return a.Websites.UsedAppPorts(ctx, uuid.MustParse(serverID)) }
+		setFn = func(p int) error { return a.Websites.SetAppPort(ctx, uuid.MustParse(websiteID), p) }
 	default:
 		return 0, fmt.Errorf("unknown backend type %q", mode)
 	}
+	used, usedErr := usedFn()
 
 	// Keep the existing allocation when it is still sane: in range and not
 	// claimed by a different website.
 	if existingPort > 0 && r.Contains(existingPort) {
-		used, err := a.Websites.UsedBackendPorts(ctx, uuid.MustParse(serverID))
-		if err == nil && !used[existingPort] {
+		if usedErr != nil {
+			// DB error — keep the stable port anyway (best effort).
 			return existingPort, nil
 		}
-		if err == nil && used[existingPort] {
-			// Owned by someone else (stale row from an old mode) — fall through
-			// and allocate fresh; the setter below will release it implicitly.
-			return a.allocate(ctx, serverID, websiteID, r)
+		if !used[existingPort] {
+			return existingPort, nil
 		}
-		// DB error — keep the stable port anyway (best effort).
-		return existingPort, nil
+		// Owned by someone else (stale row from an old mode) — fall through
+		// and allocate fresh; the setter below will release it implicitly.
 	}
-	return a.allocate(ctx, serverID, websiteID, r)
+	if usedErr != nil {
+		return 0, fmt.Errorf("load allocated ports: %w", usedErr)
+	}
+	return a.allocate(ctx, r, setFn, used)
 }
 
-func (a *BackendPortAllocator) allocate(ctx context.Context, serverID, websiteID string, r ports.Range) (int, error) {
-	used, err := a.Websites.UsedBackendPorts(ctx, uuid.MustParse(serverID))
-	if err != nil {
-		return 0, fmt.Errorf("load allocated ports: %w", err)
-	}
+func (a *BackendPortAllocator) allocate(ctx context.Context, r ports.Range, setPort func(int) error, used map[int]bool) (int, error) {
 	for p := r.Min; p <= r.Max; p++ {
 		if used[p] {
 			continue
@@ -70,12 +79,12 @@ func (a *BackendPortAllocator) allocate(ctx context.Context, serverID, websiteID
 		if !portFreeOnLoopback(p) {
 			continue // some process (possibly stale) still holds it
 		}
-		if err := a.Websites.SetBackendPort(ctx, uuid.MustParse(websiteID), p); err != nil {
+		if err := setPort(p); err != nil {
 			return 0, fmt.Errorf("persist backend port: %w", err)
 		}
 		return p, nil
 	}
-	return 0, fmt.Errorf("no free %s backend port in range %s", modeName(r), r)
+	return 0, fmt.Errorf("no free port in range %s", r)
 }
 
 // portFreeOnLoopback verifies no process currently listens on 127.0.0.1:p.
@@ -86,11 +95,4 @@ func portFreeOnLoopback(p int) bool {
 	}
 	_ = conn.Close()
 	return false
-}
-
-func modeName(r ports.Range) string {
-	if r == ports.OLS() {
-		return "openlitespeed"
-	}
-	return "apache"
 }

@@ -143,10 +143,21 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	serverID, err := uuid.Parse(req.ServerID)
-	if err != nil {
-		httpapi.RespondError(w, httpapi.ErrValidation("server_id must be a UUID"))
-		return
+	var serverID uuid.UUID
+	if req.ServerID == "" {
+		picked, pickErr := h.Servers.AutoPickServer(r.Context(), "", "")
+		if pickErr != nil {
+			httpapi.RespondError(w, httpapi.ErrValidation("could not select a server automatically: "+pickErr.Error()))
+			return
+		}
+		serverID = picked
+	} else {
+		parsed, err := uuid.Parse(req.ServerID)
+		if err != nil {
+			httpapi.RespondError(w, httpapi.ErrValidation("server_id must be a UUID"))
+			return
+		}
+		serverID = parsed
 	}
 	if _, err := h.Servers.GetByID(r.Context(), serverID); err == servers.ErrNotFound {
 		httpapi.RespondError(w, httpapi.ErrNotFound("server not found"))

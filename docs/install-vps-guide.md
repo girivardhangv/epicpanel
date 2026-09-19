@@ -9,7 +9,7 @@
 ## 2. Install (one command)
 
 ```bash
-curl -fsSL https://get.epichostly.in | bash
+curl -fsSL https://raw.githubusercontent.com/epicbyte/epicpanel/main/install.sh | bash
 ```
 
 or from the repo:
@@ -54,7 +54,7 @@ sudo epicpanel-update          # helper installed on the box
 # or:
 sudo bash install.sh update
 # or simply re-run:
-curl -fsSL https://get.epichostly.in | bash
+curl -fsSL https://raw.githubusercontent.com/epicbyte/epicpanel/main/install.sh | bash
 ```
 
 ## 5. Rollback a bad update
@@ -78,49 +78,22 @@ sudo bash install.sh uninstall --purge    # also drops DB, role, /etc/epicpanel,
 manual `rm -rf` only when you are certain. nginx/postgres packages stay
 installed (other services may use them).
 
-## 7. Serving the installer: Cloudflare Worker
+## 7. Serving the installer: GitHub Releases
 
-`deploy/cloudflare/installer-worker.js` powers:
-
-- `get.epichostly.in` → serves `install.sh` (from R2, 60 s edge cache)
-- `downloads.epichostly.in/latest/<binary>` → resolves `latest.json` and
-  streams the binary from R2 (versioned objects are immutable-cached)
-
-One-time setup:
-
-```bash
-npm i -g wrangler
-wrangler login
-wrangler r2 bucket create epicpanel-releases
-
-# publish the installer
-wrangler r2 object put epicpanel-releases/installer/install.sh --file install.sh
-
-# publish binaries (build first: cd backend && ./build-release.sh <version>)
-wrangler r2 object put epicpanel-releases/releases/v1.0.0/epicpanel-api-linux-amd64 --file bin/epicpanel-api-linux-amd64
-wrangler r2 object put epicpanel-releases/releases/v1.0.0/epicpanel-agent-linux-amd64 --file bin/epicpanel-agent-linux-amd64
-# arm64 the same way with -linux-arm64
-
-# point "latest" at the new version
-echo '{"version":"v1.0.0"}' > latest.json
-wrangler r2 object put epicpanel-releases/releases/latest.json --file latest.json
-
-# deploy the worker (fill your hosts in wrangler.toml inside the file's comment)
-cd deploy/cloudflare && wrangler deploy
-```
-
-Then in Cloudflare DNS, add the two hostnames as **custom domains** on the
-worker (get.epichostly.in, downloads.epichostly.in).
+The installer script is served directly from GitHub, and pulls the compiled binaries from GitHub Releases automatically.
 
 ### Releasing a new version
 
+To publish a new release:
+1. Ensure you have the GitHub CLI (`gh`) installed and authenticated (`gh auth login`).
+2. Run the build script:
+
 ```bash
-cd backend && ./build-release.sh v1.0.1          # builds 4 binaries into bin/
-./build-release.sh upload v1.0.1                 # wrangler puts them to R2
-echo '{"version":"v1.0.1"}' > latest.json && wrangler r2 object put epicpanel-releases/releases/latest.json --file latest.json
+cd backend && ./build-release.sh upload v1.0.1
 ```
 
-Users update with `sudo epicpanel-update`.
+This will compile the binaries for `amd64` and `arm64`, and create a new GitHub Release with the tag `v1.0.1`, uploading the binaries directly to it.
+Users update simply by running `sudo epicpanel-update`.
 
 ## 8. DNS / panel hostname
 

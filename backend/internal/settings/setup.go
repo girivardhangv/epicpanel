@@ -7,17 +7,23 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"errors"
+	"log/slog"
 	"net"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/epicbyte/epicpanel/backend/internal/httpapi"
 	"github.com/epicbyte/epicpanel/backend/internal/jobs"
 	"github.com/epicbyte/epicpanel/backend/internal/servers"
 )
+
+// phpMinorRe validates PHP major.minor versions for the global setting.
+var phpMinorRe = regexp.MustCompile(`^[0-9]+\.[0-9]+$`)
 
 // setupTokenTTL is how long the installer-generated bootstrap link stays
 // valid. After that the link is dead and a new one must be minted on the
@@ -280,9 +286,65 @@ func (h *SetupHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	hostname, _ := h.Settings.Get(r.Context(), "panel_hostname")
+	globalPHP, _ := h.Settings.Get(r.Context(), "global_php_version")
 	httpapi.WriteJSON(w, http.StatusOK, map[string]any{
-		"hostname": hostname,
+		"hostname":           hostname,
+		"global_php_version": globalPHP,
 	})
+}
+
+// PATCH /v1/settings/global-php — admin-only: which PHP minor the panel's
+// own tooling uses (DB Tools pool today). Empty = auto (highest installed).
+func (h *SetupHandler) SetGlobalPHP(w http.ResponseWriter, r *http.Request) {
+	user, ok := httpapi.UserFrom(r.Context())
+	if !ok || user.Role != "admin" {
+		httpapi.RespondError(w, httpapi.ErrForbidden("platform administrator access required"))
+		return
+	}
+	var req struct {
+		Version string `json:"version"`
+	}
+	if apiErr := httpapi.Read(r, &req); apiErr != nil {
+		httpapi.RespondError(w, apiErr)
+		return
+	}
+	req.Version = strings.TrimSpace(req.Version)
+	if req.Version != "" && !phpMinorRe.MatchString(req.Version) {
+		httpapi.RespondError(w, httpapi.ErrValidation("version must be major.minor (e.g. 8.4), or empty for auto"))
+		return
+	}
+	if err := h.Settings.Set(r.Context(), "global_php_version", req.Version); err != nil {
+		httpapi.RespondError(w, httpapi.ErrInternal(err))
+		return
+	}
+
+	// Auto-migrate: every server that already runs DB Tools gets a fresh
+	// install job immediately — the operator changes ONE setting and the
+	// tools' pool moves to the new PHP without touching the Software page
+	// (operator request: "it gets changed automatically").
+	migrated := 0
+	if h.Jobs != nil {
+		rows, qerr := h.Settings.Pool.Query(r.Context(),
+			`SELECT DISTINCT server_id FROM jobs WHERE type = $1 AND status = 'success'`,
+			jobs.TypeDBTools)
+		if qerr == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var sid uuid.UUID
+				if serr := rows.Scan(&sid); serr != nil {
+					continue
+				}
+				if _, jerr := h.Jobs.EnqueueIdempotent(r.Context(), sid, nil, jobs.TypeDBTools,
+					map[string]string{"php_version": req.Version}, "install_dbtools_"+sid.String()); jerr != nil {
+					slog.Warn("global-php auto-migration enqueue failed", "server", sid, "err", jerr)
+					continue
+				}
+				migrated++
+			}
+		}
+	}
+
+	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"global_php_version": req.Version, "dbtools_migrations_queued": migrated})
 }
 
 // PATCH /v1/settings/hostname — admin-only hostname update.

@@ -249,13 +249,9 @@ function FleetFreshness({ fleet, compact }: { fleet: Overview['fleet']; compact?
     const t = setInterval(() => tick((x) => x + 1), 1000)
     return () => clearInterval(t)
   }, [])
-  const state = fleet.freshness?.state ?? 'OFFLINE'
-  const ageMs = fleet.freshness?.age_ms ?? 0
-  if (compact) return <FreshnessBadge state={state} ageMs={ageMs} />
   return (
     <div className="flex items-center gap-2">
-      <FreshnessBadge state={state} ageMs={ageMs} label="Fleet" />
-      {!compact && <span className="text-[10px] text-muted">{fleet.sampled_nodes} live nodes · updated {formatAge(ageMs)} ago</span>}
+      <span className="status-chip status-live"><span className="h-1.5 w-1.5 rounded-full bg-current" />Fleet Live</span>
     </div>
   )
 }
@@ -269,7 +265,7 @@ function NodeHealthCard({ frame }: { frame: SnapshotFrame }) {
     <div className={`rounded-[11px] border border-line p-3 ${state === 'OFFLINE' ? 'opacity-80' : ''}`}>
       <div className="mb-2 flex items-center justify-between gap-2">
         <span className="truncate text-[11px] font-bold text-ink">{frame.server_id.slice(0, 8)}</span>
-        <FreshnessBadge state={state} ageMs={fresh.ageMs} />
+        <span className={`status-chip ${state === 'OFFLINE' ? 'status-down' : 'status-live'}`}>{state === 'OFFLINE' ? 'Offline' : 'Online'}</span>
       </div>
       {state === 'OFFLINE' || !node ? (
         <div className="text-[9.5px] text-muted">

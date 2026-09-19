@@ -27,14 +27,16 @@ export function TerminalPage() {
     term.open(termDiv.current!)
     fit.fit()
 
-    // WebSockets connect straight to the API (the vite dev proxy does not
-    // upgrade cleanly in v8/rolldown; in production the API sits behind the
-    // same origin so this falls back naturally).
-    const apiBase = (import.meta as any).env?.VITE_API_URL || `${location.protocol}//${location.hostname}:8080`
-    const proto = apiBase.startsWith('https') ? 'wss' : 'ws'
-    const ws = new WebSocket(
-      `${proto}://${apiBase.replace(/^https?:\/\//, '')}/v1/organizations/${org.id}/websites/${websiteId}/terminal`,
-    )
+    const apiBase = (import.meta as any).env?.VITE_API_URL
+    let wsTarget: string
+    if (apiBase) {
+      const proto = apiBase.startsWith('https') ? 'wss' : 'ws'
+      wsTarget = `${proto}://${apiBase.replace(/^https?:\/\//, '')}/v1/organizations/${org.id}/websites/${websiteId}/terminal`
+    } else {
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+      wsTarget = `${proto}//${location.host}/v1/organizations/${org.id}/websites/${websiteId}/terminal`
+    }
+    const ws = new WebSocket(wsTarget)
     ws.binaryType = 'arraybuffer'
     ws.onopen = () => {
       everOpened.current = true

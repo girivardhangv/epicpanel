@@ -20,10 +20,13 @@ type Range struct {
 // Contains reports whether p lies within the range.
 func (r Range) Contains(p int) bool { return p >= r.Min && p <= r.Max }
 
-// Defaults — never bind public :80/:443 here; nginx owns those.
+// Defaults — never bind public :80/:443 here; nginx owns those. Ranges are
+// disjoint by design: backend ports (apache/OLS) and app ports (node/python/
+// go processes) are allocated independently and must never collide.
 var (
 	defaultApache = Range{Min: 6600, Max: 6999}
 	defaultOLS    = Range{Min: 7100, Max: 7499}
+	defaultApp    = Range{Min: 8100, Max: 8499}
 )
 
 // Apache returns the Apache backend range (EPICPANEL_APACHE_PORT_RANGE "min-max").
@@ -31,6 +34,10 @@ func Apache() Range { return parse("EPICPANEL_APACHE_PORT_RANGE", defaultApache)
 
 // OLS returns the OpenLiteSpeed backend range (EPICPANEL_OLS_PORT_RANGE "min-max").
 func OLS() Range { return parse("EPICPANEL_OLS_PORT_RANGE", defaultOLS) }
+
+// App returns the app-process range (EPICPANEL_APP_PORT_RANGE "min-max") —
+// the loopback ports nginx proxies to for node/python/go websites.
+func App() Range { return parse("EPICPANEL_APP_PORT_RANGE", defaultApp) }
 
 func parse(env string, fallback Range) Range {
 	v := strings.TrimSpace(os.Getenv(env))

@@ -6,6 +6,7 @@ import { api, useAuth, domainsApi, redirectsApi, fmtBytes, timeAgo } from '@epic
 import type { Website, Domain, Redirect } from '@epicpanel/core'
 import { Card, CardHeader, StatusBadge, EmptyState, SkeletonRows, MiniItem, Breadcrumbs, RowActions, pushToast, UsageCard } from '@epicpanel/ui'
 import { Modal, Field, ErrorNote, ConfirmDialog } from '@epicpanel/forms'
+import { AppPanel } from './AppPanel'
 
 interface Usage {
   cpu_percent: number
@@ -138,6 +139,11 @@ export function SiteDetailPage() {
       </div>
 
       <ErrorNote message={err} />
+
+      {/* Application (node/python/go sites): process controls, config, logs */}
+      {site && ['node', 'python', 'go'].includes(site.runtime) && org && (
+        <AppPanel orgId={org.id} websiteId={websiteId} />
+      )}
 
       {/* Usage */}
       {usage && (

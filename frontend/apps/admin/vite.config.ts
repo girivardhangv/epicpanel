@@ -69,7 +69,12 @@ export default defineConfig({
     port: 5175,
     allowedHosts: true,
     proxy: {
-      '/v1': { target: API_TARGET, changeOrigin: true, ws: true },
+      '/v1': {
+        target: API_TARGET,
+        changeOrigin: true,
+        ws: true,
+        headers: { Origin: 'http://localhost:5173' },
+      },
       '/healthz': { target: API_TARGET, changeOrigin: true },
     },
   },

@@ -240,7 +240,6 @@ function CustomerHeader({ alerts, fresh, onMenu }: { alerts: Alert[]; fresh: { s
           </span>
         </div>
         <div className="flex-1" />
-        {org && <FreshnessBadge state={fresh.state} ageMs={fresh.ageMs} label="Platform" />}
         <Link
           to="/metrics"
           title="Alerts"

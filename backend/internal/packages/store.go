@@ -105,6 +105,16 @@ func (s *Store) DefaultPackage(ctx context.Context) (*Package, error) {
 	return p, err
 }
 
+// ByKind returns the single package row of a special kind (e.g. 'free_perk').
+func (s *Store) ByKind(ctx context.Context, kind string) (*Package, error) {
+	row := s.Pool.QueryRow(ctx, `SELECT `+cols+` FROM hosting_packages WHERE kind = $1 ORDER BY created_at LIMIT 1`, kind)
+	p, err := scanRow(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return p, err
+}
+
 type CreateInput struct {
 	Name            string
 	Kind            string

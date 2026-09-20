@@ -70,6 +70,11 @@ type Website struct {
 	LastBackupAt     *time.Time `json:"last_backup_at,omitempty"`
 	ProvisionedAt    *time.Time `json:"provisioned_at,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`
+	// Dynamic resources (traffic-adaptive allocation + bot defense).
+	DynamicEnabled bool   `json:"dynamic_enabled"`
+	DynamicTier    int    `json:"dynamic_tier"`
+	DynamicState   string `json:"dynamic_state"` // active | busy | suspended_attack
+	FreePerk       bool   `json:"free_perk"`
 }
 
 // DesiredPayload is what the agent receives in a provision job.
@@ -127,7 +132,7 @@ type Store struct {
 	Pool *pgxpool.Pool
 }
 
-const cols = `id, organization_id, server_id, name, primary_domain, runtime, runtime_version, web_server, backend_port, docroot_suffix, app_startup_command, app_build_command, app_port, app_desired_state, usage_cpu_percent, usage_memory_bytes, usage_disk_mb, usage_processes, usage_sampled_at, status, unix_user, document_root, error_message, is_staging, staging_of, backup_schedule, backup_retention, deploy_repo_url, deploy_branch, last_backup_at, provisioned_at, created_at, created_by`
+const cols = `id, organization_id, server_id, name, primary_domain, runtime, runtime_version, web_server, backend_port, docroot_suffix, app_startup_command, app_build_command, app_port, app_desired_state, usage_cpu_percent, usage_memory_bytes, usage_disk_mb, usage_processes, usage_sampled_at, status, unix_user, document_root, error_message, is_staging, staging_of, backup_schedule, backup_retention, deploy_repo_url, deploy_branch, last_backup_at, provisioned_at, created_at, created_by, dynamic_enabled, dynamic_tier, dynamic_state, free_perk`
 
 func scanRow(row pgx.Row) (*Website, error) {
 	var w Website
@@ -135,7 +140,8 @@ func scanRow(row pgx.Row) (*Website, error) {
 		&w.AppStartupCommand, &w.AppBuildCommand, &w.AppPort, &w.AppDesiredState,
 		&w.UsageCPUPercent, &w.UsageMemoryBytes, &w.UsageDiskMB, &w.UsageProcesses, &w.UsageSampledAt,
 		&w.Status, &w.UnixUser, &w.DocumentRoot, &w.ErrorMessage, &w.IsStaging, &w.StagingOf, &w.BackupSchedule, &w.BackupRetention,
-		&w.DeployRepoURL, &w.DeployBranch, &w.LastBackupAt, &w.ProvisionedAt, &w.CreatedAt, &w.CreatedBy)
+		&w.DeployRepoURL, &w.DeployBranch, &w.LastBackupAt, &w.ProvisionedAt, &w.CreatedAt, &w.CreatedBy,
+		&w.DynamicEnabled, &w.DynamicTier, &w.DynamicState, &w.FreePerk)
 	if err != nil {
 		return nil, err
 	}

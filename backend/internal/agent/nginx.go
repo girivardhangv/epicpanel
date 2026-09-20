@@ -266,12 +266,39 @@ func (v VhostSpec) commonLocations() string {
 	location /.well-known/acme-challenge/ {
 		root %s;
 	}
-
+%s
 	location ~ /\. {
 		deny all;
 	}
 %s%s
-`, rootSection, accessLog, errorLog, v.acmeWebrootPath(), phpHeader, phpSection)
+`, rootSection, accessLog, errorLog, v.acmeWebrootPath(), errorPagesSection(), phpHeader, phpSection)
+}
+
+// epicpanelDefaultPagesDir is the panel-owned directory holding the global
+// default status pages (written by InstallNginx).
+const epicpanelDefaultPagesDir = "/srv/epicpanel/default_pages"
+
+// errorPagesSection wires the panel's default status pages into a live
+// vhost: nginx-generated 404s render "Sorry, Wrong Page"; origin
+// unreachable/overloaded (nginx-generated 502/504) renders "Server Busy".
+// Application-generated error responses pass through untouched
+// (fastcgi_intercept_errors / proxy_intercept_errors default off) — the
+// panel never masks what a site's own code answers.
+func errorPagesSection() string {
+	return fmt.Sprintf(`
+	location = /epicpanel-busy.html {
+		root %s;
+		internal;
+	}
+
+	location = /epicpanel-notfound.html {
+		root %s;
+		internal;
+	}
+
+	error_page 404 /epicpanel-notfound.html;
+	error_page 502 504 /epicpanel-busy.html;
+`, epicpanelDefaultPagesDir, epicpanelDefaultPagesDir)
 }
 
 // acmeWebrootPath resolves the ACME webroot (injectable for tests).
@@ -471,6 +498,8 @@ func (e *Executor) InstallNginx(ctx context.Context) error {
 	_ = os.WriteFile(filepath.Join(pagesDir, "default.html"), []byte(pages.DefaultHTML), 0o644)
 	_ = os.WriteFile(filepath.Join(pagesDir, "suspended.html"), []byte(pages.SuspendedHTML), 0o644)
 	_ = os.WriteFile(filepath.Join(pagesDir, "quota_exceeded.html"), []byte(pages.QuotaExceededHTML), 0o644)
+	_ = os.WriteFile(filepath.Join(pagesDir, "busy.html"), []byte(pages.BusyHTML), 0o644)
+	_ = os.WriteFile(filepath.Join(pagesDir, "notfound.html"), []byte(pages.NotFoundHTML), 0o644)
 
 	// WebSocket upgrade map for proxied vhosts (app sites + Apache/OLS
 	// edge mode). conf.d/*.conf is included by nginx.conf's http block on

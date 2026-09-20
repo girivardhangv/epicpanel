@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Spinner } from '../loading'
 import { Link, useParams } from 'react-router-dom'
 import { Globe, ArrowLeft, Folder, Clock, Network, KeyRound, History, Plus, Trash2, ShieldQuestion, RefreshCw } from 'lucide-react'
-import { api, useAuth, domainsApi, redirectsApi, fmtBytes, timeAgo } from '@epicpanel/core'
+import { api, useAuth, domainsApi, redirectsApi, fmtBytes, timeAgo, DynamicResourcesCard } from '@epicpanel/core'
 import type { Website, Domain, Redirect } from '@epicpanel/core'
 import { Card, CardHeader, StatusBadge, EmptyState, SkeletonRows, MiniItem, Breadcrumbs, RowActions, pushToast, UsageCard } from '@epicpanel/ui'
 import { Modal, Field, ErrorNote, ConfirmDialog } from '@epicpanel/forms'
@@ -218,6 +218,11 @@ export function SiteDetailPage() {
           </div>
         )}
       </Card>
+
+      {/* Dynamic resources (traffic-adaptive allocation + bot defense) */}
+      {site && org && (
+        <DynamicResourcesCard orgId={org.id} website={site} canManage={canManage} toast={pushToast} onChanged={load} />
+      )}
 
       {/* Redirects */}
       <Card>

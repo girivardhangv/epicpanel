@@ -22,7 +22,7 @@ export function SitesPage() {
   const [deletingId, setDeletingId] = useState('')
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
-  const [form, setForm] = useState({ name: '', primary_domain: '', runtime: 'static', runtime_version: '', server_id: '' })
+  const [form, setForm] = useState({ name: '', primary_domain: '', runtime: 'static', runtime_version: '', server_id: '', free_perk: false, dynamic_enabled: false })
   const [wpTarget, setWPTarget] = useState<Website | null>(null)
 
   const load = async () => {
@@ -48,9 +48,11 @@ export function SitesPage() {
       if (form.primary_domain) body.primary_domain = form.primary_domain.toLowerCase()
       if (form.server_id) body.server_id = form.server_id
       if (form.runtime !== 'static') body.runtime_version = form.runtime_version
+      if (form.free_perk) body.free_perk = true
+      if (form.dynamic_enabled) body.dynamic_enabled = true
       await api.post(`/v1/organizations/${org.id}/websites`, body)
       setShow(false)
-      setForm({ name: '', primary_domain: '', runtime: 'static', runtime_version: '', server_id: '' })
+      setForm({ name: '', primary_domain: '', runtime: 'static', runtime_version: '', server_id: '', free_perk: false, dynamic_enabled: false })
       await load()
     } catch (ex: any) {
       setErr(ex.message ?? 'Failed to create website')
@@ -220,6 +222,22 @@ export function SitesPage() {
               </Field>
             </div>
           )}
+          <div className="sm:col-span-2 space-y-2 rounded-[9px] border border-line p-3">
+            <label className="flex items-start gap-2 text-[11.5px] text-ink">
+              <input type="checkbox" className="mt-0.5" checked={form.dynamic_enabled} onChange={(e) => setForm({ ...form, dynamic_enabled: e.target.checked })} />
+              <span>
+                <span className="font-semibold">Dynamic resources</span>
+                <span className="block text-muted">Scale up on legitimate traffic, throttle or suspend automatically under bot/attack traffic.</span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2 text-[11.5px] text-ink">
+              <input type="checkbox" className="mt-0.5" checked={form.free_perk} onChange={(e) => setForm({ ...form, free_perk: e.target.checked })} />
+              <span>
+                <span className="font-semibold">Free Perk package</span>
+                <span className="block text-muted">64MB RAM, 1GB SSD, 20% CPU for this site (limited number of sites per organization).</span>
+              </span>
+            </label>
+          </div>
         </div>
         <div className="mt-2 flex justify-end gap-2">
           <button className="btn-ghost" onClick={() => setShow(false)}>Cancel</button>

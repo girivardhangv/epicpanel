@@ -110,6 +110,11 @@ export interface Website {
   backup_schedule?: string
   backup_retention?: number
   created_at: string
+  // Dynamic resources (traffic-adaptive allocation + bot defense).
+  dynamic_enabled?: boolean
+  dynamic_tier?: number
+  dynamic_state?: 'active' | 'busy' | 'suspended_attack'
+  free_perk?: boolean
 }
 
 export interface Database {
@@ -906,4 +911,70 @@ export const appsApi = {
   /** GET .../jobs — job history incl. results (poll for command output). */
   jobs: (orgId: string, websiteId: string) =>
     req<{ jobs: Job[] }>('GET', `/v1/organizations/${orgId}/websites/${websiteId}/jobs`),
+}
+
+// ------------------------------------------------- dynamic resources + perk
+
+export interface DynamicFactor { name: string; weight: number; detail?: string }
+export interface DynamicTrend {
+  baseline: number
+  attack_streak: number
+  busy_streak: number
+  clean_streak: number
+  last_window_at?: string
+  last_verdict?: { class: 'legit' | 'busy' | 'attack'; score: number; factors?: DynamicFactor[] }
+  last_requests?: number
+}
+export interface DynamicEvent {
+  kind: string
+  from_tier?: number | null
+  to_tier?: number | null
+  score?: number
+  reason?: string
+  created_at: string
+}
+export interface DynamicStatus {
+  enabled: boolean
+  global_enabled: boolean
+  tier: number
+  state: 'active' | 'busy' | 'suspended_attack'
+  floor_memory_mb: number
+  free_perk: boolean
+  effective_limits?: { memory_mb?: number; cpu_percent?: number; pids_max?: number; fpm_max_children?: number; disk_mb?: number }
+  trend?: DynamicTrend
+  recent_windows?: { window_s: number; requests: number; unique_ips: number; top3_share: number; status_4xx: number; ua_bad_tool: number; ua_empty: number; ua_good_bot: number; not_found_reqs: number }[]
+  recent_events?: DynamicEvent[]
+}
+export interface FreePerkStatus {
+  max_sites: number
+  used: number
+  remaining: number
+  package?: { id: string; name: string; memory_limit_mb: number; max_disk_mb: number; cpu_cores: number }
+}
+export interface DynamicAdminConfig {
+  enabled: boolean
+  floor_memory_mb: number
+  attack_windows: number
+  recover_windows: number
+  auto_resume_minutes: number
+  free_perk_max_per_org: number
+  free_perk_package?: { id: string; name: string; memory_limit_mb: number; max_disk_mb: number; cpu_cores: number }
+  sites?: { id: string; name: string; primary_domain: string; organization_name?: string | null; dynamic_enabled: boolean; tier: number; state: string; free_perk: boolean; last_score?: number; last_class?: string; last_window_requests?: number }[]
+}
+
+export const dynamicApi = {
+  status: (orgId: string, websiteId: string) =>
+    req<DynamicStatus>('GET', `/v1/organizations/${orgId}/websites/${websiteId}/dynamic`),
+  setEnabled: (orgId: string, websiteId: string, enabled: boolean) =>
+    req<{ enabled: boolean; tier: number; state: string }>('PATCH', `/v1/organizations/${orgId}/websites/${websiteId}/dynamic`, { enabled }),
+  restore: (orgId: string, websiteId: string) =>
+    req<{ state: string; tier: number }>('POST', `/v1/organizations/${orgId}/websites/${websiteId}/dynamic/restore`),
+  assignPerk: (orgId: string, websiteId: string) =>
+    req<{ free_perk: boolean }>('POST', `/v1/organizations/${orgId}/websites/${websiteId}/free-perk`),
+  removePerk: (orgId: string, websiteId: string) =>
+    req<{ free_perk: boolean }>('DELETE', `/v1/organizations/${orgId}/websites/${websiteId}/free-perk`),
+  orgPerk: (orgId: string) => req<FreePerkStatus>('GET', `/v1/organizations/${orgId}/free-perk`),
+  adminConfig: () => req<DynamicAdminConfig>('GET', '/v1/admin/dynamic'),
+  patchAdminConfig: (body: Partial<{ enabled: boolean; floor_memory_mb: number; attack_windows: number; recover_windows: number; auto_resume_minutes: number; free_perk_max_per_org: number }>) =>
+    req<DynamicAdminConfig>('PATCH', '/v1/admin/dynamic', body),
 }

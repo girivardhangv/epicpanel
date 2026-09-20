@@ -116,6 +116,10 @@ type LiveStore struct {
 	// OnSample fans each ingested frame out to the WebSocket hub. Set by
 	// the api wiring; must not block.
 	OnSample func(serverID uuid.UUID, frame map[string]any)
+	// OnTraffic receives completed per-site traffic windows (dynamic
+	// resources feature). Called while the store lock is held with a fresh
+	// slice — must not block or re-lock the LiveStore.
+	OnTraffic func(frames []agentproto.SiteTraffic)
 }
 
 func NewLiveStore() *LiveStore {
@@ -209,6 +213,9 @@ func (s *LiveStore) Ingest(serverID uuid.UUID, frame agentproto.Frame) bool {
 	}
 	lv.Containers = sample.Containers
 	lv.Apps = sample.Apps
+	if len(sample.Traffic) > 0 && s.OnTraffic != nil {
+		s.OnTraffic(sample.Traffic)
+	}
 
 	memPct := 0.0
 	if sample.Node.MemoryTotal > 0 {

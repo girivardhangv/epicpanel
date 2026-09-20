@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { api } from '@/lib/api'
+import { api, dynamicApi } from '@/lib/api'
+import type { DynamicAdminConfig } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
 import { Card, CardHeader, EmptyState, SkeletonRows } from '@/components/cards'
 import { Modal, Field, ErrorNote } from '@/components/ui'
@@ -28,6 +29,9 @@ export function SettingsPage() {
   const [hostnameDraft, setHostnameDraft] = useState('')
   const [hostnameBusy, setHostnameBusy] = useState(false)
   const [hostnameMsg, setHostnameMsg] = useState('')
+  const [dyn, setDyn] = useState<DynamicAdminConfig | null>(null)
+  const [dynBusy, setDynBusy] = useState(false)
+  const [dynMsg, setDynMsg] = useState('')
   const isAdmin = !!user?.is_platform_admin
 
   const load = async () => {
@@ -48,7 +52,22 @@ export function SettingsPage() {
         setHostnameDraft(r.hostname ?? '')
       })
       .catch(() => setHostname(''))
+    dynamicApi.adminConfig().then(setDyn).catch(() => setDyn(null))
   }, [isAdmin])
+
+  const saveDynamic = async (patch: Partial<DynamicAdminConfig>) => {
+    setDynBusy(true)
+    setDynMsg('')
+    try {
+      const r = await dynamicApi.patchAdminConfig(patch)
+      setDyn(r)
+      setDynMsg('Saved — the allocator applies it within 30 seconds.')
+    } catch (ex: any) {
+      setDynMsg(ex.message ?? 'Failed to save')
+    } finally {
+      setDynBusy(false)
+    }
+  }
 
   const saveHostname = async () => {
     setErr('')
@@ -135,6 +154,47 @@ export function SettingsPage() {
         </Card>
       )}
 
+      {isAdmin && dyn && (
+        <Card className="mb-3.5">
+          <CardHeader
+            title="Dynamic Resources"
+            subtitle="Traffic-adaptive allocation + bot defense (panel-wide)"
+            right={
+              <label className="flex items-center gap-2 text-[11px] font-semibold text-ink">
+                <input
+                  type="checkbox"
+                  checked={dyn.enabled}
+                  disabled={dynBusy}
+                  onChange={(e) => saveDynamic({ enabled: e.target.checked })}
+                />
+                {dyn.enabled ? 'Enabled' : 'Disabled'}
+              </label>
+            }
+          />
+          <p className="mb-3 text-[13px] text-sub">
+            Sites with adaptive allocation scale up on legitimate traffic and are throttled or suspended automatically
+            under bot/attack traffic. Turning the panel-wide toggle off restores every dynamic site to its package
+            limits.
+          </p>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+            <NumField label="Floor RAM (MB)" value={dyn.floor_memory_mb} onCommit={(v) => saveDynamic({ floor_memory_mb: v })} disabled={dynBusy} />
+            <NumField label="Attack windows" value={dyn.attack_windows} onCommit={(v) => saveDynamic({ attack_windows: v })} disabled={dynBusy} />
+            <NumField label="Recover windows" value={dyn.recover_windows} onCommit={(v) => saveDynamic({ recover_windows: v })} disabled={dynBusy} />
+            <NumField label="Auto-resume (min)" value={dyn.auto_resume_minutes} onCommit={(v) => saveDynamic({ auto_resume_minutes: v })} disabled={dynBusy} />
+            <NumField label="Free perk / org" value={dyn.free_perk_max_per_org} onCommit={(v) => saveDynamic({ free_perk_max_per_org: v })} disabled={dynBusy} />
+          </div>
+          {dyn.free_perk_package && (
+            <p className="mt-3 text-[11.5px] text-muted">
+              Free Perk package: <span className="font-semibold text-ink">{dyn.free_perk_package.name}</span> —{' '}
+              {dyn.free_perk_package.memory_limit_mb}MB RAM, {(dyn.free_perk_package.max_disk_mb / 1024).toFixed(0)}GB SSD,{' '}
+              {Math.round(dyn.free_perk_package.cpu_cores * 100)}% CPU (edit on the{' '}
+              <a className="link" href="/packages">Packages</a> page).
+            </p>
+          )}
+          {dynMsg && <p className="mt-2 text-[12.5px] font-semibold text-ok">{dynMsg}</p>}
+        </Card>
+      )}
+
       {isAdmin && org && (
         <Card>
           <CardHeader
@@ -200,5 +260,26 @@ function Row({ label, value }: { label: string; value: string }) {
       <span className="text-[11px] font-bold text-[#566278]">{label}</span>
       <span className="max-w-[60%] truncate text-[11px] font-semibold text-ink">{value}</span>
     </div>
+  )
+}
+
+function NumField({ label, value, onCommit, disabled }: { label: string; value: number; onCommit: (v: number) => void; disabled?: boolean }) {
+  const [draft, setDraft] = useState(String(value))
+  useEffect(() => setDraft(String(value)), [value])
+  return (
+    <label className="block">
+      <span className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-muted">{label}</span>
+      <input
+        className="input"
+        type="number"
+        value={draft}
+        disabled={disabled}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => {
+          const n = Number(draft)
+          if (!Number.isNaN(n) && n !== value) onCommit(n)
+        }}
+      />
+    </label>
   )
 }

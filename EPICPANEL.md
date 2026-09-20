@@ -1712,6 +1712,49 @@ customer site-detail page finally exists (route was missing entirely) and hosts 
 manager + installers + command runner; env secrets stay write-only (PATCH with env_vars
 omitted preserves stored values).
 
+ADR-062 — Dynamic resources: traffic-adaptive allocation + bot defense + Free Perk (2026-09-21).
+(1) OBSERVATION stays agent-side (data plane): internal/agent/traffic.go delta-reads each
+site's nginx access log (combined format), aggregates 60s windows and attaches completed
+windows to the metrics Sample frame (agentproto.SiteTraffic) — raw FEATURES only
+(requests, bytes, unique/top-IP shares, status/method/UA-class mixes, path cardinality,
+IP-cap saturation), never verdicts; agent restarts seek to EOF so stale log is never
+replayed as an attack; rotation detected via size shrink; partial lines held back.
+(2) DECISION stays control-plane (internal/traffic): multi-factor window scoring — flood
+vs EWMA baseline, IP concentration, scanner/library UA share, 404 storms + path churn,
+POST floods, IP-cap saturation; verified-crawler traffic DAMPENS the score. Classes:
+legit < 3 <= busy < 6 <= attack, with consecutive-window hysteresis streaks.
+(3) STATE MACHINE (internal/api/dynamic.go, 30s allocator tick): active → busy (2
+suspect windows) → floor allocation (32MB default), still served; attack confirmed
+(2 consecutive attack windows) → suspended_attack: floor enforce + idempotent
+suspend_website (the SAME lifecycle job as manual suspension — one suspension
+mechanism). Recovery is manual (restore endpoint) or after dynamic_auto_resume_minutes
+(0 = manual); recovery goes through resume_website + base-tier enforce. Scale-up needs
+allocation pressure (cgroup usage >= 80% of the CURRENT ceiling) + legit class +
+cooldown (2min up / 5min down); idle (no windows 3min + low usage) steps down toward
+the floor — tiers 0=floor 1=base 2/3/4=2x/4x/8x (internal/traffic.Scale; CPU/pids/fpm
+scale, disk/bw do not). (4) ONE PAYLOAD: dynamicEffectivePayload (plan or perk base ×
+tier) is shared by the allocator AND the hourly enforce convergence — the two writers
+cannot disagree. (5) TOGGLES: system_settings dynamic_resources_enabled (panel-wide;
+OFF sweeps all dynamic sites back to base INCLUDING resuming attack-suspended sites) +
+websites.dynamic_enabled (per-site; settable at creation via free_perk/dynamic_enabled
+body flags or later via PATCH .../dynamic). (6) FREE PERK: a hosting_packages row
+(kind 'free_perk', seeded 64MB RAM/1GB disk/20% CPU — admin-editable via the existing
+package CRUD, data not code) applied as a per-site overlay (websites.free_perk) with a
+per-org cap (free_perk_max_sites_per_user, default 1; enforced at creation AND at
+assignment, fail-closed). (7) DEFAULT PAGES: agent writes busy.html/notfound.html into
+/srv/epicpanel/default_pages (wired into every live vhost: nginx-generated 404 →
+"Sorry, Wrong Page", origin 502/504 → "Server Busy"; app-generated errors pass
+through — intercept_errors stays off), the suspended stub keeps its page, and freshly
+provisioned empty docroots get the branded "Website Ready to Be Served" placeholder.
+(8) API: GET/PATCH .../websites/{id}/dynamic, POST .../dynamic/restore, POST/DELETE
+.../websites/{id}/free-perk, GET .../{org}/free-perk, GET/PATCH /v1/admin/dynamic
+(config + fleet overview); all in phase12Routes + openapi.json (225 ops). Audit:
+website.attack_suspended / dynamic toggles / settings change; events:
+website.attack_suspended, website.dynamic_busy/restored; every transition lands in
+dynamic_resource_events (rendered in the site detail card; shared DynamicResourcesCard
+in packages/core consumed by both site pages; panel config card on Settings page;
+create-form flags).
+
 Coordinator notes (wave execution): subagents ran with exclusive file ownership
 (phases/wave-contract.md); shared files (server.go routes, worker dispatch, App.tsx) were
 wired centrally. Two crash interruptions were healed by the coordinator (agent

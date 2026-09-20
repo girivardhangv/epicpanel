@@ -53,20 +53,23 @@ type agentBreach struct {
 
 // enqueueEnforceLimits re-enqueues the unified enforcement job for every
 // ready website (idempotent: one pending job per site). This converges node
-// state after plan changes, agent restarts or drift.
+// state after plan changes, agent restarts or drift. Dynamic-resource sites
+// converge to their CURRENT TIER (base × tier scaling, Free Perk overlay),
+// not the raw plan — the payload builder is shared with the allocator so
+// both writers produce identical numbers.
 func (s *Server) enqueueEnforceLimits(ctx context.Context) {
 	sites, err := s.Websites.ReadyForLimits(ctx, 200)
 	if err != nil {
 		slog.Warn("limits convergence scan failed", "err", err)
 		return
 	}
-	for _, ws := range sites {
-		payload, err := s.ResourceLimits.EnforcePayloadFor(ctx, ws.Organization, ws.ID)
+	for i := range sites {
+		ws := &sites[i]
+		payload, err := s.dynamicEffectivePayload(ctx, ws)
 		if err != nil {
 			slog.Warn("enforce payload build failed", "website", ws.ID, "err", err)
 			continue
 		}
-		payload.Counts = s.countOrgResources(ctx, ws.Organization)
 		if _, err := s.Jobs.EnqueueIdempotent(ctx, ws.ServerID, &ws.ID, jobs.TypeEnforceLimits, payload, "enforce_limits_"+ws.ID.String()); err != nil {
 			slog.Warn("enforce_limits enqueue failed", "website", ws.ID, "err", err)
 		}

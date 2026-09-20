@@ -1570,6 +1570,182 @@
     "parameters": []
    }
   },
+  "/v1/organizations/{org_id}/websites/{website_id}/dynamic": {
+   "get": {
+    "summary": "Dynamic resources status (traffic trend, tier, state, decisions)",
+    "tags": [
+     "Websites"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:read",
+    "parameters": []
+   },
+   "patch": {
+    "summary": "Enable/disable traffic-adaptive allocation on a site (developer+)",
+    "tags": [
+     "Websites"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/dynamic/restore": {
+   "post": {
+    "summary": "Restore a site suspended/throttled by the allocator (developer+)",
+    "tags": [
+     "Websites"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/free-perk": {
+   "post": {
+    "summary": "Assign the Free Perk resource overlay (developer+; per-org cap)",
+    "tags": [
+     "Websites"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
+    "parameters": []
+   },
+   "delete": {
+    "summary": "Remove the Free Perk overlay (admin+)",
+    "tags": [
+     "Websites"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/free-perk": {
+   "get": {
+    "summary": "Free Perk status for the org (cap/used/package)",
+    "tags": [
+     "Websites"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:read",
+    "parameters": []
+   }
+  },
   "/v1/organizations/{org_id}/websites/{website_id}/files": {
    "get": {
     "summary": "List directory (path query)",
@@ -5131,6 +5307,62 @@
     },
     "x_scope": "admin:write",
     "parameters": []
+   }
+  },
+  "/v1/admin/dynamic": {
+   "get": {
+    "summary": "Dynamic resources: panel config + fleet overview (platform admin)",
+    "tags": [
+     "Admin WHM Console"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:read"
+   },
+   "patch": {
+    "summary": "Update dynamic-resources config (toggle, floor, windows, perk cap) (platform admin)",
+    "tags": [
+     "Admin WHM Console"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "admin:write"
    }
   },
   "/v1/adminview/accounts/{website_id}/resume": {

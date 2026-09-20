@@ -5,7 +5,7 @@ import {
   Database as DatabaseIcon, Lock, History, Network, Pause, Play, Plus, RefreshCw, ShieldQuestion,
   Trash2, FileText, GitBranch, X,
 } from 'lucide-react'
-import { api, domainsApi, ftpApi, redirectsApi, lifecycleApi } from '@/lib/api'
+import { api, domainsApi, ftpApi, redirectsApi, lifecycleApi, DynamicResourcesCard } from '@/lib/api'
 import type { FtpAccount, Redirect } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
 import { confirmAction } from '@/lib/confirm'
@@ -644,6 +644,17 @@ export function SiteDetailPage() {
           </div>
         )}
       </Card>
+
+      {/* Dynamic resources (traffic-adaptive allocation + bot defense) */}
+      {org && site && (
+        <DynamicResourcesCard
+          orgId={org.id}
+          website={site}
+          canManage={isAdmin}
+          toast={(kind, message) => setWsMsg(message)}
+          onChanged={load}
+        />
+      )}
 
       {/* Redirects */}
       <Card className="mb-4 overflow-hidden !p-0">

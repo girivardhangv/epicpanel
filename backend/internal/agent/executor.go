@@ -12,6 +12,8 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+
+	"github.com/epicbyte/epicpanel/backend/internal/agent/pages"
 )
 
 // Executor performs typed infrastructure operations on the local machine.
@@ -195,8 +197,9 @@ func (e *Executor) ProvisionWebsite(ctx context.Context, payload ProvisionPayloa
 			}
 		}
 		if !hasApp {
-			page := fmt.Sprintf("<!doctype html><html><body><h1>%s</h1><p>Provisioned by EpicPanel.</p></body></html>\n", payload.Name)
-			if err := os.WriteFile(indexPath, []byte(page), 0o644); err != nil {
+			// Branded "Website Ready to Be Served" placeholder (default
+			// pages set); the first deploy or upload shadows it.
+			if err := os.WriteFile(indexPath, []byte(pages.WelcomeHTML), 0o644); err != nil {
 				return nil, fmt.Errorf("write index.html: %w", err)
 			}
 			_ = os.Chown(indexPath, uid, gid)

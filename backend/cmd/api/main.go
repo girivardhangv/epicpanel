@@ -32,6 +32,8 @@ import (
 	"github.com/epicbyte/epicpanel/backend/internal/metrics"
 	"github.com/epicbyte/epicpanel/backend/internal/monitoring"
 	"github.com/epicbyte/epicpanel/backend/internal/organizations"
+
+	agentproto "github.com/epicbyte/epicpanel/backend/internal/agentproto"
 	"github.com/epicbyte/epicpanel/backend/internal/packages"
 	"github.com/epicbyte/epicpanel/backend/internal/resourcelimits"
 	"github.com/epicbyte/epicpanel/backend/internal/runtimes"
@@ -39,6 +41,7 @@ import (
 	"github.com/epicbyte/epicpanel/backend/internal/settings"
 	"github.com/epicbyte/epicpanel/backend/internal/sshkeys"
 	"github.com/epicbyte/epicpanel/backend/internal/terminal"
+	"github.com/epicbyte/epicpanel/backend/internal/traffic"
 	"github.com/epicbyte/epicpanel/backend/internal/users"
 	"github.com/epicbyte/epicpanel/backend/internal/websites"
 	"github.com/google/uuid"
@@ -223,6 +226,15 @@ func run() error {
 		}
 	}
 	srv.LiveStore = liveStore
+	// Dynamic resources: completed per-site traffic windows ride the metrics
+	// stream; decouple ingest from the store lock with a bounded hand-off.
+	srv.Traffic = traffic.NewStore()
+	liveStore.OnTraffic = func(frames []agentproto.SiteTraffic) {
+		go func(f []agentproto.SiteTraffic) {
+			defer func() { _ = recover() }() // never let analytics kill ingest
+			srv.Traffic.Ingest(f)
+		}(frames)
+	}
 	historyWriter := metrics.NewWriter(pool, liveStore)
 	srv.History = historyWriter
 	go historyWriter.Run(ctx)

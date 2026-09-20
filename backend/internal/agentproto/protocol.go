@@ -122,6 +122,53 @@ type Sample struct {
 	Containers []ContainerSample `json:"containers,omitempty"`
 	// Managed app workloads (systemd transient units or containers).
 	Apps []AppSample `json:"apps,omitempty"`
+	// Completed per-site traffic windows (dynamic resources feature). A site
+	// appears only in the sample right after its aggregation window closed,
+	// so this is usually empty or tiny — never a full fleet per frame.
+	Traffic []SiteTraffic `json:"traffic,omitempty"`
+}
+
+// SiteTraffic is one completed access-log aggregation window for a website.
+// It carries the raw features the control-plane analyzer scores (bot
+// detection is intentionally a control-plane decision so thresholds are
+// tunable without agent updates).
+type SiteTraffic struct {
+	WebsiteID string `json:"website_id"`
+	// WindowS is the aggregation window length in seconds.
+	WindowS int `json:"window_s"`
+	// Requests/Bytes totals parsed from the access log delta.
+	Requests int64 `json:"requests"`
+	Bytes    int64 `json:"bytes"`
+	// Client-IP diversity: uniques seen, the top talker and its share of
+	// requests, and the combined share of the top-3 talkers.
+	UniqueIPs  int     `json:"unique_ips"`
+	TopIP      string  `json:"top_ip,omitempty"`
+	TopIPShare float64 `json:"top_ip_share"`
+	Top3Share  float64 `json:"top3_share"`
+	// Status mix (counts per class).
+	Status2xx int64 `json:"status_2xx"`
+	Status3xx int64 `json:"status_3xx"`
+	Status4xx int64 `json:"status_4xx"`
+	Status5xx int64 `json:"status_5xx"`
+	// Method mix (subset that matters for abuse detection).
+	GetReqs  int64 `json:"get_reqs"`
+	PostReqs int64 `json:"post_reqs"`
+	// User-agent classes: search-engine/verified crawlers, known hostile
+	// tooling, headless browsers, empty/absent UA, everything else.
+	UAGoodBot  int64 `json:"ua_good_bot"`
+	UABadTool  int64 `json:"ua_bad_tool"`
+	UAHeadless int64 `json:"ua_headless"`
+	UAEmpty    int64 `json:"ua_empty"`
+	UAOther    int64 `json:"ua_other"`
+	// Path behavior: distinct paths requested vs how many request lines were
+	// examined for cardinality (capped sample), and referer presence.
+	UniquePaths  int   `json:"unique_paths"`
+	PathSamples  int   `json:"path_samples"`
+	RefererReqs  int64 `json:"referer_reqs"`
+	NotFoundReqs int64 `json:"not_found_reqs"` // 404s specifically
+	// TruncatedIPs: requests dropped from per-IP accounting after the cap —
+	// a saturation signal for distributed floods.
+	TruncatedIPs int64 `json:"truncated_ips,omitempty"`
 }
 
 // NodeSample is the host-wide snapshot.

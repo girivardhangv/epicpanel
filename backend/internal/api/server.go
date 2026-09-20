@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"sync"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -40,6 +41,7 @@ import (
 	"github.com/epicbyte/epicpanel/backend/internal/secretbox"
 	"github.com/epicbyte/epicpanel/backend/internal/servers"
 	"github.com/epicbyte/epicpanel/backend/internal/settings"
+	"github.com/epicbyte/epicpanel/backend/internal/traffic"
 
 	agentpkg "github.com/epicbyte/epicpanel/backend/internal/agent"
 	"github.com/epicbyte/epicpanel/backend/internal/sshkeys"
@@ -86,6 +88,12 @@ type Server struct {
 	// ResourceLimits is the Phase 9 unified resource engine adapter: plan
 	// limits, enforce payloads and count gates all resolve through it.
 	ResourceLimits *resourcelimits.Engine
+	// Traffic is the dynamic-resources in-memory window store (fed from the
+	// agent stream via LiveStore.OnTraffic). Lazily built when nil.
+	Traffic *traffic.Store
+
+	dyn         *dynamicRuntime
+	dynInitOnce sync.Once
 }
 
 func (s *Server) Handler() http.Handler {
@@ -172,6 +180,18 @@ func (s *Server) Handler() http.Handler {
 				return nil, err
 			}
 			return &websites.PackageRef{MemoryLimitMB: p.MemoryLimitMB, CPUCores: p.CPUCores}, nil
+		},
+		FreePerkPackage: func(ctx context.Context) (*packages.Package, bool) {
+			p, err := s.Packages.ByKind(ctx, "free_perk")
+			if err != nil {
+				return nil, false
+			}
+			return p, true
+		},
+		FreePerkLimit: func(ctx context.Context, orgID uuid.UUID) (int, int, error) {
+			capn := s.dynIntSettingCtx(ctx, "free_perk_max_sites_per_user", 1)
+			used, err := s.Websites.CountFreePerk(ctx, orgID)
+			return capn, used, err
 		},
 		AppPortLookup: func(ctx context.Context, websiteID uuid.UUID) (int, bool) {
 			app, err := s.Apps.GetByWebsite(ctx, websiteID)
@@ -450,6 +470,10 @@ func (s *Server) Handler() http.Handler {
 		}
 		wsH.RunSiteCommand(w, r.WithContext(context.WithValue(r.Context(), websites.OrgKeyType{}, orgID)))
 	}))
+
+	// Dynamic resources (traffic-adaptive allocation + bot defense) and the
+	// Free Perk overlay — per-site toggles, panel-wide config, perk API.
+	s.RegisterDynamicRoutes(mux, srvH.ResolveOrg)
 
 	// Fanout: every finished job is routed to the subsystems that own its
 	// state machine (websites lifecycle, runtime registry, databases).

@@ -157,6 +157,30 @@ func (e *Engine) EnforcePayloadFor(ctx context.Context, orgID, websiteID uuid.UU
 	}), nil
 }
 
+// PerkPayload builds the agent enforce payload for the Free Perk resource
+// set (the hosting_packages row with kind 'free_perk', admin-editable via
+// the package CRUD). ok=false when no perk row exists.
+func (e *Engine) PerkPayload(ctx context.Context) (resources.EnforcePayload, bool, error) {
+	if e.Pool == nil {
+		return resources.EnforcePayload{}, false, nil
+	}
+	row := e.Pool.QueryRow(ctx, `
+		SELECT `+planRowCols+`
+		FROM hosting_packages hp
+		WHERE hp.kind = 'free_perk'
+		ORDER BY hp.created_at
+		LIMIT 1`)
+	ref, err := scanPlanRow(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return resources.EnforcePayload{}, false, nil
+	}
+	if err != nil {
+		return resources.EnforcePayload{}, false, err
+	}
+	p := e.res.EnforcePlan(resources.Workload{Kind: resources.KindWeb, Plan: ref.ToPlanInput()})
+	return p, true, nil
+}
+
 func orWeb(k string) string {
 	if k == "" {
 		return string(resources.KindWeb)

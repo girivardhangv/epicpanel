@@ -73,6 +73,9 @@ func (s *Server) StartBackground(ctx context.Context) {
 			}
 		}
 	}()
+	// Dynamic resources allocator: traffic-adaptive allocation + bot defense
+	// decision loop (internal/traffic scoring → enforce/suspend jobs).
+	go s.StartDynamicAllocator(ctx)
 	// Run once shortly after boot so restarts converge immediately.
 	go func() {
 		time.Sleep(10 * time.Second)

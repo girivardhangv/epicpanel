@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
@@ -58,6 +59,14 @@ type Handler struct {
 	// PackageForOrg resolves the org's effective hosting package (nil = no
 	// quota information; agent defaults apply).
 	PackageForOrg PackageForOrgFunc
+	// FreePerkPackage resolves the free_perk hosting_packages row (the
+	// Free Perk resource set, admin-editable via package CRUD). nil = perk
+	// overlay has no dedicated package and leaves agent defaults.
+	FreePerkPackage func(ctx context.Context) (*packages.Package, bool)
+	// FreePerkLimit returns (cap, used) for the org's Free Perk sites —
+	// cap comes from the panel setting (implemented by the api layer;
+	// nil = unlimited).
+	FreePerkLimit func(ctx context.Context, orgID uuid.UUID) (int, int, error)
 	// AppPortLookup reports the loopback port of the site's configured
 	// application process (node/python/go), if any (nil-safe; implemented by
 	// the api layer over the applications store to avoid a package cycle).
@@ -238,6 +247,11 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		InstallIfMissing bool   `json:"install_if_missing"`
 		StartupCommand   string `json:"startup_command"`
 		BuildCommand     string `json:"build_command"`
+		// Dynamic resources: opt the new site into traffic-adaptive
+		// allocation and/or the Free Perk overlay at creation time (both
+		// can also be changed later via the dedicated endpoints).
+		FreePerk        bool `json:"free_perk"`
+		DynamicEnabled  bool `json:"dynamic_enabled"`
 	}
 	if apiErr := httpapi.Read(r, &req); apiErr != nil {
 		httpapi.RespondError(w, apiErr)
@@ -343,6 +357,21 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Free Perk cap: check BEFORE creating so a rejected request leaves no
+	// site row behind (fail-closed on lookup errors, like other gates).
+	if req.FreePerk && h.FreePerkLimit != nil {
+		capn, used, err := h.FreePerkLimit(r.Context(), orgID)
+		if err != nil {
+			httpapi.RespondError(w, httpapi.ErrForbidden("free perk availability unavailable; creation blocked"))
+			return
+		}
+		if used >= capn {
+			httpapi.RespondError(w, httpapi.ErrConflict(fmt.Sprintf(
+				"free perk limit reached (%d of %d sites); raise the limit in panel settings", used, capn)))
+			return
+		}
+	}
+
 	ws, unixUser, err := h.Websites.Create(r.Context(), orgID, serverID, createdBy, req.Name, req.PrimaryDomain, rt, req.RuntimeVersion, req.WebServer)
 	if err == ErrNameTaken {
 		httpapi.RespondError(w, httpapi.ErrConflict("a website with that name already exists on this server"))
@@ -351,6 +380,19 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		httpapi.RespondError(w, httpapi.ErrInternal(err))
 		return
+	}
+	// Creation-time dynamic-resources flags: set BEFORE the desired state is
+	// built so the provision job already carries perk pool sizing.
+	if req.FreePerk {
+		if err := h.Websites.SetFreePerk(r.Context(), ws.ID, true); err == nil {
+			ws.FreePerk = true
+		}
+	}
+	if req.DynamicEnabled {
+		if err := h.Websites.SetDynamicEnabled(r.Context(), ws.ID, true); err == nil {
+			ws.DynamicEnabled = true
+			_ = h.Websites.SetDynamicState(r.Context(), ws.ID, 1, DynStateActive)
+		}
 	}
 
 	// Proxy mode: allocate the private backend port before enqueueing so the
@@ -872,7 +914,18 @@ func (h *Handler) buildDesiredPayload(ctx context.Context, ws *Website, orgID uu
 	}
 	// FPM pool sizing: the single call-site for package -> pool limits (the
 	// limits seam). Missing package or zero values leave agent defaults.
-	if h.PackageForOrg != nil {
+	// Free Perk sites size their pool from the free_perk package row instead
+	// of the org plan (the perk replaces the plan for this site).
+	perkApplied := false
+	if ws.FreePerk && h.FreePerkPackage != nil {
+		if pkg, ok := h.FreePerkPackage(ctx); ok && pkg != nil {
+			pl := limitsForPackage(&PackageRef{MemoryLimitMB: pkg.MemoryLimitMB, CPUCores: pkg.CPUCores})
+			payload.FpmMemoryLimitMB = pl.MemoryLimitMB
+			payload.FpmMaxChildren = pl.MaxChildren
+			perkApplied = true
+		}
+	}
+	if !perkApplied && h.PackageForOrg != nil {
 		if pkg, err := h.PackageForOrg(ctx, orgID); err == nil && pkg != nil {
 			pl := limitsForPackage(pkg)
 			payload.FpmMemoryLimitMB = pl.MemoryLimitMB

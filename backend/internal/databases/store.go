@@ -107,8 +107,9 @@ func CreatePassword() (string, error) {
 
 // Create inserts a pending database row; password must be encrypted by the
 // caller (fanout after agent success). Password is stored immediately so the
-// job outcome handler can persist it on success.
-func (s *Store) Create(ctx context.Context, orgID, serverID, createdBy uuid.UUID, websiteID *uuid.UUID, engine Engine, name, dbUser string) (*Database, error) {
+// job outcome handler can persist it on success. createdBy may be nil for
+// system-initiated databases (e.g. the WordPress auto-provisioning flow).
+func (s *Store) Create(ctx context.Context, orgID, serverID uuid.UUID, createdBy *uuid.UUID, websiteID *uuid.UUID, engine Engine, name, dbUser string) (*Database, error) {
 	row := s.Pool.QueryRow(ctx, `
 		INSERT INTO databases (organization_id, server_id, website_id, engine, name, db_user, status, created_by)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)

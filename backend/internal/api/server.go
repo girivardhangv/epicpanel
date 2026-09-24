@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"sync"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -12,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -169,6 +169,8 @@ func (s *Server) Handler() http.Handler {
 		Servers:        s.Servers,
 		Audit:          s.Audit,
 		Runtimes:       runtimeChecker{s.Runtimes},
+		DBs:            dbProvisioner{dbs: s.Databases, js: s.Jobs},
+		WPPending:      s.WPPending,
 		Domains:        domainLister{s.Domains},
 		Redirects:      redirectLister{s.Domains},
 		Ports:          &websites.BackendPortAllocator{Websites: s.Websites},
@@ -979,6 +981,7 @@ func (s *Server) onDatabaseReady(ctx context.Context, dbID uuid.UUID, password s
 		"unix_user":       ws.UnixUser,
 		"document_root":   docRoot,
 		"site_url":        siteURL,
+		"runtime_version": ws.RuntimeVersion,
 		"title":           pend.Title,
 		"admin_user":      pend.AdminUser,
 		"admin_email":     pend.AdminEmail,
@@ -1007,7 +1010,14 @@ func (p dbProvisioner) CreateWPSiteDB(ctx context.Context, orgID, serverID, webs
 	if err != nil {
 		return websites.DBInfo{}, err
 	}
-	createdBy := uuid.Nil
+	// Attribute the auto-created DB to the requesting user when the call
+	// carries one; system-initiated installs store NULL.
+	var createdBy *uuid.UUID
+	if usr, ok := httpapi.UserFrom(ctx); ok {
+		if uid, err := uuid.Parse(usr.ID); err == nil {
+			createdBy = &uid
+		}
+	}
 	db, err := p.dbs.Create(ctx, orgID, serverID, createdBy, &websiteID, databases.EngineMariaDB, name, user)
 	if err != nil {
 		return websites.DBInfo{}, err

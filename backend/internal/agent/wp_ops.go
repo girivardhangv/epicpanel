@@ -13,18 +13,21 @@ import (
 	"github.com/google/uuid"
 )
 
+const defaultWPTheme = "twentytwentyfive"
+
 // WPPayload describes a WordPress installation request.
 type WPPayload struct {
-	WebsiteID    string `json:"website_id"`
-	UnixUser     string `json:"unix_user"`
-	DocumentRoot string `json:"document_root"`
-	SiteURL      string `json:"site_url"`
-	Title        string `json:"title"`
-	AdminUser    string `json:"admin_user"`
-	AdminEmail   string `json:"admin_email"`
-	DBName       string `json:"db_name"`
-	DBUser       string `json:"db_user"`
-	DBPassword   string `json:"db_password"`
+	WebsiteID      string `json:"website_id"`
+	UnixUser       string `json:"unix_user"`
+	DocumentRoot   string `json:"document_root"`
+	SiteURL        string `json:"site_url"`
+	RuntimeVersion string `json:"runtime_version"`
+	Title          string `json:"title"`
+	AdminUser      string `json:"admin_user"`
+	AdminEmail     string `json:"admin_email"`
+	DBName         string `json:"db_name"`
+	DBUser         string `json:"db_user"`
+	DBPassword     string `json:"db_password"`
 	// DBPasswordEnc carries the credential secretbox-encrypted (control plane
 	// never stores it in plaintext in the jobs table).
 	DBPasswordEnc string `json:"db_password_enc"`
@@ -91,7 +94,13 @@ func (e *Executor) InstallWordPress(ctx context.Context, p WPPayload) (*WPOutcom
 		return nil, fmt.Errorf("site owner: %w", err)
 	}
 
-	phpMinor := latestInstalledPHPMinor(e)
+	// Run wp-cli under the SITE's selected PHP (the version the site serves
+	// with), not the newest installed one — extensions and compatibility
+	// differ per build. Fall back for legacy payloads without the field.
+	phpMinor := p.RuntimeVersion
+	if phpMinor == "" {
+		phpMinor = latestInstalledPHPMinor(e)
+	}
 	wp := func(args ...string) (string, error) {
 		c, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
@@ -104,8 +113,8 @@ func (e *Executor) InstallWordPress(ctx context.Context, p WPPayload) (*WPOutcom
 	}
 
 	slog.Info("downloading wordpress core", "site", p.WebsiteID)
-	if _, err := wp("core", "download", "--skip-content"); err != nil {
-		return nil, fmt.Errorf("wp core download: %w", err)
+	if out, err := wp("core", "download", "--skip-content"); err != nil {
+		return nil, fmt.Errorf("wp core download: %s (%w)", tailString(out, 400), err)
 	}
 
 	adminPass := randomToken(16)
@@ -133,6 +142,13 @@ func (e *Executor) InstallWordPress(ctx context.Context, p WPPayload) (*WPOutcom
 		"--skip-email",
 	); err != nil {
 		return nil, fmt.Errorf("wp core install: %w", err)
+	}
+
+	// core download --skip-content ships no theme; without one the front
+	// page renders empty. Best-effort install of the bundled-era default.
+	if out, err := wp("theme", "install", defaultWPTheme, "--activate"); err != nil {
+		slog.Warn("wp default theme install failed", "site", p.WebsiteID,
+			"out", tailString(out, 300), "err", err)
 	}
 
 	// Ownership + sane perms.

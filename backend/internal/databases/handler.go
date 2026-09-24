@@ -205,7 +205,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db, err := h.Databases.Create(r.Context(), orgID, serverID, createdBy, websiteID, Engine(req.Engine), dbName, dbUser)
+	db, err := h.Databases.Create(r.Context(), orgID, serverID, &createdBy, websiteID, Engine(req.Engine), dbName, dbUser)
 	if err == ErrDuplicate {
 		httpapi.RespondError(w, httpapi.ErrConflict("a database with that name already exists on this server"))
 		return

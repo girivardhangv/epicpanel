@@ -120,10 +120,12 @@ func (e *Executor) RunSiteCommand(ctx context.Context, p CommandPayload) (*Comma
 	}
 
 	// setpriv drops to the site user; argv is exec'd directly (no shell).
+	// No --inh-caps: setpriv variants reject numeric specs ("unknown
+	// capability 0"), and dropping uid/gid already sheds capabilities.
 	c, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	full := append([]string{"--reuid", fmt.Sprint(uid), "--regid", fmt.Sprint(gid),
-		"--clear-groups", "--inh-caps", "-0", "--",
+		"--clear-groups", "--",
 		"env", "HOME=" + workDir, "USER=" + fmt.Sprint(uid), "TERM=xterm",
 		"PATH=/usr/local/bin:/usr/bin:/bin"}, argv...)
 	cmd := exec.CommandContext(c, "setpriv", full...)

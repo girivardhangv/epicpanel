@@ -159,8 +159,10 @@ func (e *Executor) runAsSite(ctx context.Context, uid, gid int, dir string, name
 func (e *Executor) runAsSiteEnv(ctx context.Context, uid, gid int, dir string, env []string, name string, args ...string) (string, error) {
 	c, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
+	// No --inh-caps: setpriv variants reject numeric specs ("unknown
+	// capability 0"), and dropping uid/gid already sheds capabilities.
 	full := append([]string{"--reuid", strconv.Itoa(uid), "--regid", strconv.Itoa(gid),
-		"--clear-groups", "--inh-caps", "-0", "--",
+		"--clear-groups", "--",
 		"env", "HOME=" + dir, "USER=" + fmt.Sprint(uid), "TERM=xterm",
 		"PATH=/usr/local/bin:/usr/bin:/bin"},
 		env...)

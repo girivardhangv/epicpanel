@@ -113,8 +113,19 @@ func userLookupID(uidOrName string) (string, error) {
 	return u.Username, nil
 }
 
-// phpBinary resolves the CLI php for a minor version.
+// phpBinary resolves the CLI php for a minor version. Distro packages live
+// in /usr/bin; panel-provisioned runtimes (runtime_php_source) symlink their
+// versioned CLIs into /usr/local/bin. Falls back to the distro path so the
+// caller's existence check reports "php X is not installed".
+var phpBinaryDirs = []string{"/usr/bin", "/usr/local/bin"}
+
 func phpBinary(minor string) string {
+	for _, dir := range phpBinaryDirs {
+		cand := filepath.Join(dir, "php"+minor)
+		if _, err := os.Stat(cand); err == nil {
+			return cand
+		}
+	}
 	return "/usr/bin/php" + minor
 }
 

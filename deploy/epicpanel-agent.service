@@ -44,7 +44,10 @@ RestartSec=3
 TimeoutStopSec=15
 
 # --- Sandboxing (relaxed where the agent's job demands it) ----------------
-NoNewPrivileges=true
+# No NoNewPrivileges here: on recent systemd it strips CAP_SETUID from the
+# service, breaking the agent's setpriv drop-to-site-user for all site
+# execs (one-click Laravel/WordPress, site commands). The agent never runs
+# user code as root — it needs setuid precisely to drop privileges.
 ProtectHome=true
 # /home reads happen via capabilities (CAP_DAC_READ_SEARCH), so files stay
 # mode-hidden from every other process on the box.

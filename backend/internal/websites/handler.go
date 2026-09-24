@@ -190,9 +190,14 @@ func withOrgID(ctx context.Context, id uuid.UUID) context.Context {
 	return context.WithValue(ctx, orgIDCtxKey{}, id)
 }
 
+// OrgIDFromRequest resolves the org id regardless of which wrapper set it:
+// routes behind requireOrg carry orgIDCtxKey, while routes registered inline
+// in the api layer (one-click installs, site commands) inject OrgKeyType.
 func OrgIDFromRequest(r *http.Request) (uuid.UUID, bool) {
-	id, ok := r.Context().Value(orgIDCtxKey{}).(uuid.UUID)
-	return id, ok
+	if id, ok := r.Context().Value(orgIDCtxKey{}).(uuid.UUID); ok {
+		return id, true
+	}
+	return OrgIDFromStagingContext(r)
 }
 
 func (h *Handler) auditUser(r *http.Request, orgID *uuid.UUID, action, resourceType, resourceID string, meta map[string]any) {

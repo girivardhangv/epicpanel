@@ -95,6 +95,12 @@ func TestDynamicResourcesLifecycle(t *testing.T) {
 	if v, _ := resp.body["state"].(string); v != "active" {
 		t.Fatalf("state = %v, want active", resp.body["state"])
 	}
+	// Regression (ADR-062a): the perk payload build must not fail — the
+	// PerkPayload SELECT was missing its is_legacy column and every enforce
+	// build for a perk site died with "got 15 and 16" (limits unavailable).
+	if eff, _ := resp.body["effective_limits"].(map[string]any); eff == nil || eff["error"] != nil {
+		t.Fatalf("perk site effective limits must build: %v", resp.body["effective_limits"])
+	}
 
 	// Free Perk cap: a second site cannot take the perk while cap = 1.
 	secondID := newDynamicSite(t, admin, agent, orgID, serverID, "dyn-second", nil)

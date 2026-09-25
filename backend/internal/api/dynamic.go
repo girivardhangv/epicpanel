@@ -445,6 +445,9 @@ func (s *Server) dynamicRestore(ctx context.Context, ws *websites.Website, reaso
 	if ws.DynamicState != websites.DynStateAttacked && ws.DynamicState != websites.DynStateBusy {
 		return
 	}
+	// A manual restore is an operator decision: clear stale busy/attack
+	// streaks so the site doesn't bounce straight back on the next tick.
+	s.trafficStore().ResetStreaks(ws.ID)
 	if ws.Status == websites.StatusSuspended {
 		if _, err := s.Jobs.EnqueueIdempotent(ctx, ws.ServerID, &ws.ID, jobs.TypeResumeWebsite,
 			websites.ResumePayload{WebsiteID: ws.ID.String()}, "dyn_restore_"+ws.ID.String()); err != nil {
@@ -470,6 +473,16 @@ func (s *Server) dynamicRestore(ctx context.Context, ws *websites.Website, reaso
 func (s *Server) dynamicEngineStep(ctx context.Context, ws *websites.Website) {
 	now := time.Now()
 	e := s.dyn.engineFor(ws.ID, traffic.ClampTier(ws.DynamicTier))
+	// Convergence: the pre-ADR-062a engine let ACTIVE sites idle down to
+	// tier 0; active sites now floor at tier 1 (tier 0 is the busy/attacked
+	// floor state). Heal legacy rows on first sight.
+	if ws.DynamicTier < 1 {
+		if err := s.Websites.SetDynamicState(ctx, ws.ID, 1, websites.DynStateActive); err == nil {
+			ws.DynamicTier = 1
+			s.recordDynamicEvent(ctx, ws, "scale_up", 0, 1, 0, "active sites floor at tier 1 (engine upgrade convergence)")
+			s.enqueueDynamicEnforce(ctx, ws)
+		}
+	}
 
 	sample := s.liveSiteSample(ws)
 	pressures := e.Observe(sample.Observation())
@@ -523,6 +536,9 @@ func (s *Server) dynamicEngineStep(ctx context.Context, ws *websites.Website) {
 		s.dyn.recordScaleUp(now)
 	}
 	ws.DynamicTier = v.EffectiveTier
+	// Sync the engine's own tier BEFORE the next engineFor: a mismatch would
+	// re-seed a fresh engine and wipe the EWMA history + cooldown state.
+	e.Tier = v.EffectiveTier
 	reason := d.Reason
 	if v.EffectiveTier != d.ToTier {
 		reason += fmt.Sprintf(" (capped at tier %d by the governor)", v.EffectiveTier)
@@ -582,6 +598,14 @@ func (s *Server) nodeMemory(serverID uuid.UUID) (total, avail int64) {
 func (s *Server) publishResourceUpdate(ctx context.Context, ws *websites.Website, e *dynres.Engine, sample liveSample) {
 	now := time.Now()
 	s.dyn.mu.Lock()
+	// Throttle maps are lazily created: dynamicRuntime starts empty and the
+	// first tick of a fresh process lands here (nil-map panic otherwise).
+	if s.dyn.lastPush == nil {
+		s.dyn.lastPush = map[uuid.UUID]time.Time{}
+	}
+	if s.dyn.lastPushedMax == nil {
+		s.dyn.lastPushedMax = map[uuid.UUID]float64{}
+	}
 	last := s.dyn.lastPush[ws.ID]
 	lastMax := s.dyn.lastPushedMax[ws.ID]
 	changed := sample.found && absf(e.Smoothed()-lastMax) >= 0.02
@@ -591,9 +615,6 @@ func (s *Server) publishResourceUpdate(ctx context.Context, ws *websites.Website
 		return
 	}
 	s.dyn.lastPush[ws.ID] = now
-	if s.dyn.lastPushedMax == nil {
-		s.dyn.lastPushedMax = map[uuid.UUID]float64{}
-	}
 	s.dyn.lastPushedMax[ws.ID] = e.Smoothed()
 	s.dyn.mu.Unlock()
 
@@ -644,7 +665,12 @@ func (s *Server) liveSiteSample(ws *websites.Website) liveSample {
 		ls.nodeTotal = int64(lv.Sample.Node.MemoryTotal)
 		ls.nodeAvail = int64(lv.Sample.Node.MemoryAvailable)
 	}
-	site, ok := lv.Sites[ws.ID.String()]
+	site, ok := lv.Sites[ws.UnixUser]
+	if !ok {
+		// Newer sites may key by website UUID (agent slice-name evolution);
+		// try both before giving up.
+		site, ok = lv.Sites[ws.ID.String()]
+	}
 	if !ok {
 		return ls
 	}

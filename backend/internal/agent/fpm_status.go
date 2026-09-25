@@ -220,7 +220,7 @@ func healFpmStatusPath(p fpmPool) error {
 	if err := os.WriteFile(p.ConfPath, []byte(patched), 0o644); err != nil {
 		return err
 	}
-	check := exec.Command(phpFpmBinary(p.Version), "-t")
+	check := exec.Command(phpFpmBinary(p.Version), "--fpm-config", fpmMainConfig(p.Version), "--test")
 	if out, err := check.CombinedOutput(); err != nil {
 		_ = os.WriteFile(p.ConfPath, backup, 0o644)
 		return fmt.Errorf("fpm config invalid after status_path patch: %v: %s", err, out)

@@ -165,7 +165,7 @@ func (e *Engine) PerkPayload(ctx context.Context) (resources.EnforcePayload, boo
 		return resources.EnforcePayload{}, false, nil
 	}
 	row := e.Pool.QueryRow(ctx, `
-		SELECT `+planRowCols+`
+		SELECT `+planRowCols+`, `+isLegacyRowSQL+`
 		FROM hosting_packages hp
 		WHERE hp.kind = 'free_perk'
 		ORDER BY hp.created_at

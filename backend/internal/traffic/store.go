@@ -177,3 +177,17 @@ func (s *Store) Forget(id uuid.UUID) {
 	delete(s.windows, id)
 	delete(s.trends, id)
 }
+
+// ResetStreaks clears the per-site class streaks (busy/attack history) while
+// keeping the request baseline. A manual restore must not bounce straight
+// back to busy/attack off stale streaks — the operator's call resets the
+// clock; new traffic re-accumulates from zero.
+func (s *Store) ResetStreaks(id uuid.UUID) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if t, ok := s.trends[id]; ok {
+		t.AttackStreak = 0
+		t.BusyStreak = 0
+		t.CleanStreak = 0
+	}
+}

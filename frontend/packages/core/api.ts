@@ -115,6 +115,45 @@ export interface Website {
   dynamic_tier?: number
   dynamic_state?: 'active' | 'busy' | 'suspended_attack'
   free_perk?: boolean
+  // Lifecycle reasons (suspension data next to the status; termination).
+  suspension_reason?: string | null
+  suspended_at?: string | null
+  terminated_at?: string | null
+  termination_reason?: string | null
+}
+
+export type SiteSuspensionReason =
+  | 'manual'
+  | 'bandwidth_exhausted'
+  | 'abuse'
+  | 'payment'
+  | 'admin'
+  | 'system'
+  | 'attack'
+
+export interface BandwidthSummary {
+  site_id: string
+  status: string
+  suspension?: { reason: string; suspended_at?: string } | null
+  quota: {
+    limit_bytes: number
+    period: string
+    used_bytes: number
+    remaining_bytes: number | null
+    percentage: number | null
+    resets_at: string
+    source: 'plan' | 'site'
+  }
+  traffic: { rx_bytes: number; tx_bytes: number; total_bytes: number }
+  rate: { rx_bps: number; tx_bps: number; total_bps: number }
+}
+
+export interface BandwidthHistoryPoint {
+  timestamp: string
+  rx_bytes: number
+  tx_bytes: number
+  total_bytes: number
+  requests?: number
 }
 
 export interface Database {
@@ -875,10 +914,35 @@ export const dnsApi = {
 }
 
 export const lifecycleApi = {
-  suspend: (orgId: string, websiteId: string) =>
-    req<{ job_id: string }>('POST', `/v1/organizations/${orgId}/websites/${websiteId}/suspend`),
-  resume: (orgId: string, websiteId: string) =>
-    req<{ job_id: string }>('POST', `/v1/organizations/${orgId}/websites/${websiteId}/resume`),
+  suspend: (orgId: string, websiteId: string, body?: { reason?: SiteSuspensionReason; message?: string }) =>
+    req<{ job_id: string }>('POST', `/v1/organizations/${orgId}/websites/${websiteId}/suspend`, body ?? {}),
+  resume: (orgId: string, websiteId: string, body?: { force?: boolean }) =>
+    req<{ job_id: string }>('POST', `/v1/organizations/${orgId}/websites/${websiteId}/resume`, body ?? {}),
+  terminate: (orgId: string, websiteId: string, body: { reason?: string; confirm: true }) =>
+    req<{ job_id: string }>('POST', `/v1/organizations/${orgId}/websites/${websiteId}/terminate`, body),
+  purge: (orgId: string, websiteId: string) =>
+    req<{ job_id: string }>('POST', `/v1/organizations/${orgId}/websites/${websiteId}/purge`, { confirm: true }),
+}
+
+// Bandwidth accounting + per-site quota (migration 0050 era).
+export const bandwidthApi = {
+  summary: (orgId: string, websiteId: string) =>
+    req<BandwidthSummary>('GET', `/v1/organizations/${orgId}/websites/${websiteId}/bandwidth`),
+  history: (orgId: string, websiteId: string, params?: { from?: string; to?: string; interval?: 'hour' | 'day' }) => {
+    const qs = new URLSearchParams()
+    if (params?.from) qs.set('from', params.from)
+    if (params?.to) qs.set('to', params.to)
+    if (params?.interval) qs.set('interval', params.interval)
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    return req<{ site_id: string; from: string; to: string; interval: string; data: BandwidthHistoryPoint[] }>(
+      'GET', `/v1/organizations/${orgId}/websites/${websiteId}/bandwidth/history${suffix}`)
+  },
+  getQuota: (orgId: string, websiteId: string) =>
+    req<{ site_id: string; bandwidth: BandwidthSummary['quota'] }>(
+      'GET', `/v1/organizations/${orgId}/websites/${websiteId}/quota`),
+  patchQuota: (orgId: string, websiteId: string, body: { bandwidth_limit_mb: number | null }) =>
+    req<{ site_id: string; bandwidth: BandwidthSummary['quota'] }>(
+      'PATCH', `/v1/organizations/${orgId}/websites/${websiteId}/quota`, body),
 }
 
 // ------------------------------------------------------------- app stack

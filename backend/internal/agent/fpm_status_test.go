@@ -191,3 +191,21 @@ func fakePhpEtc(t *testing.T) func() {
 	phpEtcBase = filepath.Join(t.TempDir(), "php")
 	return func() { phpEtcBase = old }
 }
+
+// The panel's own requests (health checker, probes) must never count as
+// site traffic: a quiet site polled once a minute would otherwise look like
+// a single-IP concentration pattern and could never present a clean window.
+func TestTrafficSamplerSkipsPanelSelfTraffic(t *testing.T) {
+	s := NewTrafficSampler()
+	st := &siteTrafficState{ips: map[string]int64{}, paths: map[string]struct{}{}}
+	s.fold(st, "127.0.0.1", "GET / HTTP/1.1", 200, 1024, "-", "EpicPanel-HealthCheck/1.0")
+	s.fold(st, "127.0.0.1", "GET / HTTP/1.1", 200, 1024, "-", "EpicPanel-Uptime/1.0")
+	if st.agg.Requests != 0 || st.agg.UniqueIPs != 0 || st.agg.Bytes != 0 {
+		t.Fatalf("panel self-traffic must be ignored entirely: %+v", st.agg)
+	}
+	// Any other UA still counts.
+	s.fold(st, "9.9.9.9", "GET / HTTP/1.1", 200, 512, "-", "Mozilla/5.0 (X11; Linux x86_64) Firefox/155.0")
+	if st.agg.Requests != 1 || st.agg.UniqueIPs != 1 {
+		t.Fatalf("real traffic must still count: %+v", st.agg)
+	}
+}

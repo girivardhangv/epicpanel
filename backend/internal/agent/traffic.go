@@ -298,6 +298,13 @@ func (t *TrafficSampler) parseLine(st *siteTrafficState, line string) {
 
 // fold aggregates one request.
 func (t *TrafficSampler) fold(st *siteTrafficState, ip, request string, status int, bytesSent int64, referer, ua string) {
+	// The panel's own requests to its sites (health checker, uptime probes)
+	// are infrastructure, not site traffic. Counting them would poison every
+	// feature: a quiet site polled once a minute looks like a single-IP
+	// concentration attack and can never present a clean window.
+	if strings.HasPrefix(ua, "EpicPanel-") {
+		return
+	}
 	agg := &st.agg
 	agg.Requests++
 	agg.Bytes += bytesSent

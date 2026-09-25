@@ -36,11 +36,18 @@ const (
 type Thresholds struct {
 	Busy   float64
 	Attack float64
+	// MinRequests is the classification floor: a window with fewer requests
+	// than this is ALWAYS legit, whatever the score — there is nothing worth
+	// defending at trivia volume, and false-protecting a quiet site costs
+	// more trust than missing one window of a slow attacker.
+	MinRequests int64
 }
 
 // DefaultThresholds: below 3 = legit; 3..6 = busy (protective throttling);
-// >= 6 = attack (contributes to suspension streaks).
-func DefaultThresholds() Thresholds { return Thresholds{Busy: 3, Attack: 6} }
+// >= 6 = attack (contributes to suspension streaks). Windows under 20
+// requests never classify hostile — a single person browsing must never
+// look like an attack (live-panel false-positive review, 2026-09-25).
+func DefaultThresholds() Thresholds { return Thresholds{Busy: 3, Attack: 6, MinRequests: 20} }
 
 // Factor is one scored signal in a verdict.
 type Factor struct {

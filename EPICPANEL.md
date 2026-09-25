@@ -1723,6 +1723,16 @@ replayed as an attack; rotation detected via size shrink; partial lines held bac
 vs EWMA baseline, IP concentration, scanner/library UA share, 404 storms + path churn,
 POST floods, IP-cap saturation; verified-crawler traffic DAMPENS the score. Classes:
 legit < 3 <= busy < 6 <= attack, with consecutive-window hysteresis streaks.
+ADR-062b (2026-09-25, live false-positive review) hardened the classifier: (a) windows
+under MinRequests=20 classify LEGIT regardless of score — trivia volume is never
+hostile; (b) every factor carries an ABSOLUTE evidence floor (concentration >=30 reqs,
+tooling/empty-UA/headless >=10, scanning >=15 404s, moderate flood tiers 3-10x >=60
+reqs — a human's first visit bursts 30-50 reqs vs a cold baseline; only a 10x surge
+classifies alone); (c) concentration weight 3->2.5 = CORROBORATING evidence only, it
+cannot reach busy without hostile company; (d) the agent's sampler EXCLUDES panel
+self-traffic (UA prefix EpicPanel-: health checker/probes) — counting it kept quiet
+sites in busy forever (a 1-req/min health check is a permanent "100% single-IP
+concentration"). Regression tests pin the single-human + health-check-only patterns.
 (3) STATE MACHINE (internal/api/dynamic.go, 30s allocator tick): active → busy (2
 suspect windows) → floor allocation (32MB default), still served; attack confirmed
 (2 consecutive attack windows) → suspended_attack: floor enforce + idempotent

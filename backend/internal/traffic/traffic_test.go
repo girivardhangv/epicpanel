@@ -218,3 +218,86 @@ func TestTrendLastWindowAtUsesClock(t *testing.T) {
 		t.Fatalf("LastWindowAt = %v, want ~now", trend.LastWindowAt)
 	}
 }
+
+// ============================================================================
+// False-positive regression (live-panel review 2026-09-25): wptest.example
+// was floored by "concentration" because ONE person browsed their site from
+// one IP — and the panel's own health checker kept the site in busy
+// forever. A quiet site with a human behind it must always classify legit.
+// ============================================================================
+
+func TestAnalyzeWindowSingleHumanNeverBusy(t *testing.T) {
+	// The exact live false positive: 14 reqs/min, one IP, a real Firefox.
+	w := win(
+		func(x *agentproto.SiteTraffic) { x.Requests = 14 },
+		func(x *agentproto.SiteTraffic) { x.UniqueIPs = 1; x.Top3Share = 1.0 },
+		func(x *agentproto.SiteTraffic) { x.Status2xx = 14 },
+	)
+	v := AnalyzeWindow(w, 4.9, DefaultThresholds(), 30)
+	if v.Class != ClassLegit {
+		t.Fatalf("single human browsing scored %.1f (%s), want legit: %+v", v.Score, v.Class, v.Factors)
+	}
+	// Even a chatty human (30 reqs from one IP) must stay legit —
+	// concentration alone (2.5) cannot reach the busy threshold (3).
+	w = win(
+		func(x *agentproto.SiteTraffic) { x.Requests = 30 },
+		func(x *agentproto.SiteTraffic) { x.UniqueIPs = 1; x.Top3Share = 1.0 },
+		func(x *agentproto.SiteTraffic) { x.Status2xx = 30 },
+	)
+	if v = AnalyzeWindow(w, 4.9, DefaultThresholds(), 30); v.Class != ClassLegit {
+		t.Fatalf("one heavy human scored %.1f (%s), want legit: %+v", v.Score, v.Class, v.Factors)
+	}
+	// The classification floor: an absurd score on a tiny window is still
+	// trivia (2 reqs, both 404, empty UA) — no class above legit.
+	w = win(
+		func(x *agentproto.SiteTraffic) { x.Requests = 2 },
+		func(x *agentproto.SiteTraffic) { x.Status4xx = 2; x.NotFoundReqs = 2 },
+		func(x *agentproto.SiteTraffic) { x.UAEmpty = 2 },
+		func(x *agentproto.SiteTraffic) { x.UniqueIPs = 1; x.Top3Share = 1.0 },
+	)
+	if v = AnalyzeWindow(w, 1, DefaultThresholds(), 30); v.Class != ClassLegit {
+		t.Fatalf("trivia window classified %s (score %.1f) — MinRequests floor failed", v.Class, v.Score)
+	}
+}
+
+func TestAnalyzeWindowConcentrationNeedsCompany(t *testing.T) {
+	// 50 reqs from one IP with a normal browser: above every evidence floor,
+	// but concentration (2.5) alone stays below busy (3) — it corroborates,
+	// it does not classify.
+	w := win(
+		func(x *agentproto.SiteTraffic) { x.Requests = 50 },
+		func(x *agentproto.SiteTraffic) { x.UniqueIPs = 1; x.Top3Share = 1.0 },
+		func(x *agentproto.SiteTraffic) { x.Status2xx = 50 },
+	)
+	v := AnalyzeWindow(w, 50, DefaultThresholds(), 30)
+	if v.Class != ClassLegit {
+		t.Fatalf("one-IP browsing at volume scored %.1f (%s), want legit", v.Score, v.Class)
+	}
+
+	// The same shape WITH hostile tooling (scanner UAs) is real bot traffic:
+	// 2.5 + 3 = 5.5 → busy, and sustained it floors protectively.
+	w = win(
+		func(x *agentproto.SiteTraffic) { x.Requests = 50 },
+		func(x *agentproto.SiteTraffic) { x.UniqueIPs = 1; x.Top3Share = 1.0 },
+		func(x *agentproto.SiteTraffic) { x.UABadTool = 30 },
+	)
+	if v = AnalyzeWindow(w, 50, DefaultThresholds(), 30); v.Class != ClassBusy {
+		t.Fatalf("concentration + scanner tooling scored %.1f (%s), want busy", v.Score, v.Class)
+	}
+}
+
+func TestAnalyzeWindowRatioFactorsNeedAbsoluteEvidence(t *testing.T) {
+	// Ratios without volume are anecdote: 3 requests with 1 empty UA (33%),
+	// 2 of 4 404s (50%), 3 of 10 scanner UAs — every ratio trips, nothing
+	// reaches its absolute floor → legit.
+	w := win(
+		func(x *agentproto.SiteTraffic) { x.Requests = 10 },
+		func(x *agentproto.SiteTraffic) { x.UAEmpty = 3; x.UABadTool = 3 },
+		func(x *agentproto.SiteTraffic) { x.NotFoundReqs = 4 },
+		func(x *agentproto.SiteTraffic) { x.Status4xx = 7 },
+	)
+	v := AnalyzeWindow(w, 10, DefaultThresholds(), 30)
+	if v.Class != ClassLegit {
+		t.Fatalf("anecdote-ratio window scored %.1f (%s), want legit: %+v", v.Score, v.Class, v.Factors)
+	}
+}

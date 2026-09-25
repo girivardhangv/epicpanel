@@ -480,6 +480,8 @@ func (s *Server) Handler() http.Handler {
 	// Dynamic resources (traffic-adaptive allocation + bot defense) and the
 	// Free Perk overlay — per-site toggles, panel-wide config, perk API.
 	s.RegisterDynamicRoutes(mux, srvH.ResolveOrg)
+	// Bandwidth summary/history + per-site quota override (migration 0050).
+	s.RegisterBandwidthRoutes(mux, srvH.ResolveOrg)
 
 	// Fanout: every finished job is routed to the subsystems that own its
 	// state machine (websites lifecycle, runtime registry, databases).

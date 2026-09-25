@@ -169,8 +169,18 @@ func (e *Executor) EnforceLimits(ctx context.Context, p EnforceJobPayload) (*Enf
 
 	// ---- Usage from the SAME layer that just enforced ----
 	out.Usage = e.measureEnforcedUsage(slice, user, p)
-	if rxBytes > 0 || txBytes > 0 {
-		out.Usage[resources.ResBandwidth] = float64(rxBytes+txBytes) / (1024 * 1024)
+	// Bandwidth period usage = per-uid direct egress (nft counter) + the
+	// access-log egress month-to-date (reverse-proxied responses). Both
+	// sides rotate with the UTC month; the high-water upsert control-plane
+	// side keeps the billed period monotonic across counter resets.
+	periodBytes := rxBytes + txBytes
+	if e.TrafficMonthEgress != nil {
+		if eg, month := e.TrafficMonthEgress(p.WebsiteID); month == bwMonth(e.now()) {
+			periodBytes += eg
+		}
+	}
+	if periodBytes > 0 {
+		out.Usage[resources.ResBandwidth] = float64(periodBytes) / (1024 * 1024)
 	}
 
 	// ---- Over-limit evaluation (same numbers as usage) ----
@@ -422,11 +432,16 @@ func nftAvailable() bool {
 	return err == nil
 }
 
-// enforceBandwidth ensures the per-account nft counter exists and reports
-// the accounted period usage. Rate shaping (throttle) is applied as a
-// meter/rate limit when the payload carries a non-zero budget AND the
-// default policy requests it; default is accounted-only with control-plane
-// suspend on breach (policy.go).
+// enforceBandwidth ensures the per-account nft egress counter exists and
+// reports the accounted period usage. The chain hooks OUTPUT and matches
+// the site's unix uid (meta skuid, loopback excluded): the web server
+// terminates ingress at the edge and reverse-proxied responses leave via
+// the web-server user, so this counter covers the site's DIRECT external
+// egress; the proxied direction is accounted from access-log windows
+// (TrafficSampler month-to-date, composed by EnforceLimits). Rate shaping
+// (throttle) is applied as a meter/rate limit when the payload carries a
+// non-zero budget AND the default policy requests it; default is
+// accounted-only with control-plane suspend on breach (policy.go).
 func (e *Executor) enforceBandwidth(ctx context.Context, p EnforceJobPayload, user string) (MechanismOutcome, int64, int64) {
 	if !nftAvailable() {
 		return MechanismOutcome{Resource: "bandwidth", Mode: "accounted", Mechanism: "proc-net-dev",
@@ -436,22 +451,95 @@ func (e *Executor) enforceBandwidth(ctx context.Context, p EnforceJobPayload, us
 		return MechanismOutcome{Resource: "bandwidth", Mode: "accounted", Mechanism: "nftables",
 			Detail: "unix user unresolved; no per-account chain"}, 0, 0
 	}
-	chain := "acct_" + sanitizeNFTIdent(user)
-	cmds := [][]string{
-		{"nft", "add", "table", epicTable},
-		{"nft", "add", "chain", epicTable, chain, "{ type filter hook forward priority -300 ; }"},
+	uid, ok := unixUID(user)
+	if !ok {
+		return MechanismOutcome{Resource: "bandwidth", Mode: "accounted", Mechanism: "nftables",
+			Detail: fmt.Sprintf("unix user %s has no uid; no per-account counter", user)}, 0, 0
 	}
-	for _, c := range cmds {
-		_ = exec.CommandContext(ctx, c[0], c[1:]...).Run() // idempotent: exists-errors ignored
+	chain := "acct_" + sanitizeNFTIdent(user)
+	if detail, ok := e.ensureBwChain(ctx, chain, uid); !ok {
+		return MechanismOutcome{Resource: "bandwidth", Mode: "accounted", Mechanism: "nftables",
+			Detail: detail}, 0, 0
 	}
 	out, err := exec.CommandContext(ctx, "nft", "list", "chain", epicTable, chain).CombinedOutput()
 	if err != nil {
 		return MechanismOutcome{Resource: "bandwidth", Mode: "accounted", Mechanism: "nftables",
-			Detail: fmt.Sprintf("chain create failed: %v (%s)", err, tail(out, 200))}, 0, 0
+			Detail: fmt.Sprintf("chain list failed: %v (%s)", err, tail(out, 200))}, 0, 0
 	}
 	rx, tx := parseNFTCounter(out)
 	return MechanismOutcome{Resource: "bandwidth", Mode: "accounted", Mechanism: "nftables",
-		Detail: fmt.Sprintf("chain %s counters rx=%d tx=%d (period), budget=%dMB", chain, rx, tx, p.BandwidthMB)}, rx, tx
+		Detail: fmt.Sprintf("chain %s skuid-%d egress counter bytes=%d (period, direct egress; proxied egress via access log), budget=%dMB",
+			chain, uid, rx+tx, p.BandwidthMB)}, rx, tx
+}
+
+// bwChainHook is the output-hook declaration for a per-account chain.
+const bwChainHook = "{ type filter hook output priority -300 ; }"
+
+// bwChainRuleArgs renders the per-uid egress counter rule: packets owned by
+// the site's unix user leaving via a non-loopback interface. Loopback is
+// excluded so app->web-server local hops are never double-counted against
+// the access-log view.
+func bwChainRuleArgs(chain string, uid int) []string {
+	return []string{"nft", "add", "rule", "inet", epicTable, chain,
+		"meta", "skuid", strconv.Itoa(uid), "oifname", "!=", `"lo"`, "counter"}
+}
+
+// bwChainNeedsRecreate reports whether an existing chain must be replaced:
+// pre-0051 builds hooked acct_ chains at FORWARD, which sees no site
+// traffic on a shared host (the web server terminates ingress locally), so
+// those chains counted nothing forever.
+func bwChainNeedsRecreate(listOut []byte) bool {
+	return strings.Contains(string(listOut), "hook forward")
+}
+
+// bwChainNeedsRule reports whether the per-uid counter rule is missing
+// (chains were created empty before the lifecycle-reasons migration —
+// parseNFTCounter read zeros forever).
+func bwChainNeedsRule(listOut []byte, uid int) bool {
+	return !strings.Contains(string(listOut), fmt.Sprintf("skuid %d", uid))
+}
+
+// ensureBwChain converges the per-account output-hook chain: create when
+// missing, replace when legacy-hooked or rule-less, and rotate (delete +
+// recreate = zeroed counters) at UTC month boundaries. The rotation stamp
+// is persisted so periods survive agent restarts; a lost state file
+// rotates deterministically (fresh period), which the control-plane
+// GREATEST high-water keeps monotonic for billing.
+func (e *Executor) ensureBwChain(ctx context.Context, chain string, uid int) (string, bool) {
+	run := func(args ...string) ([]byte, bool) {
+		out, err := exec.CommandContext(ctx, args[0], args[1:]...).CombinedOutput()
+		return out, err == nil
+	}
+	cur := bwMonth(e.now())
+	st := loadBwState(e.bwStatePath)
+	out, ok := run("nft", "list", "chain", epicTable, chain)
+	if ok && !bwNeedsRotate(st.Chains[chain], cur) && !bwChainNeedsRecreate(out) && !bwChainNeedsRule(out, uid) {
+		if e.TrafficSnapshot != nil {
+			st.Sites = e.TrafficSnapshot()
+		}
+		// Persistence failure must not fail enforcement: worst case the
+		// next run re-rotates (counter restarts; the control-plane
+		// GREATEST high-water keeps the billed period monotonic).
+		_ = st.save(e.bwStatePath)
+		return "", true
+	}
+	// Recreate from scratch — the delete covers rotation and the legacy
+	// FORWARD hook in one path; a delete error on an absent chain is fine.
+	_, _ = run("nft", "delete", "chain", epicTable, chain)
+	_, _ = run("nft", "add", "table", epicTable)
+	if _, chainOK := run("nft", "add", "chain", epicTable, chain, bwChainHook); !chainOK {
+		return "chain create failed (see agent log)", false
+	}
+	ruleOut, ruleOK := run(bwChainRuleArgs(chain, uid)...)
+	if !ruleOK {
+		return fmt.Sprintf("skuid counter rule failed: %s", tail(ruleOut, 200)), false
+	}
+	st.Chains[chain] = cur
+	if e.TrafficSnapshot != nil {
+		st.Sites = e.TrafficSnapshot()
+	}
+	_ = st.save(e.bwStatePath)
+	return "", true
 }
 
 // parseNFTCounter extracts byte counters from `nft list chain` output.

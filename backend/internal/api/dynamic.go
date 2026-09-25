@@ -273,6 +273,14 @@ func (s *Server) dynamicEffectivePayload(ctx context.Context, ws *websites.Websi
 	if err != nil {
 		return agentpkg.EnforceJobPayload{}, err
 	}
+	// Per-site bandwidth override (migration 0050) rides the shared payload
+	// so the agent-side budget, the quota API, the resume guard and the
+	// suspension-page metadata all resolve the SAME number (ADR-049
+	// anti-drift). Bandwidth is never tier-scaled (traffic.Scale does not
+	// touch it), so injecting here covers every downstream path.
+	if ws.BandwidthLimitMB != nil {
+		base.BandwidthMB = *ws.BandwidthLimitMB
+	}
 	if !ws.DynamicEnabled || !s.dynEnabled(ctx) {
 		return base, nil
 	}

@@ -1362,7 +1362,7 @@
   },
   "/v1/organizations/{org_id}/websites/{website_id}/suspend": {
    "post": {
-    "summary": "Suspend site (admin+)",
+    "summary": "Suspend site with optional reason (admin+); bandwidth_exhausted/attack are system-reserved",
     "tags": [
      "Websites"
     ],
@@ -1392,7 +1392,125 @@
   },
   "/v1/organizations/{org_id}/websites/{website_id}/resume": {
    "post": {
-    "summary": "Resume site (admin+)",
+    "summary": "Resume site (admin+); blocked with 409 while the bandwidth quota stays exhausted unless force",
+    "tags": [
+     "Websites"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/bandwidth": {
+   "get": {
+    "summary": "Current bandwidth state: quota surface, period usage, live egress rate (billing+)",
+    "tags": [
+     "Websites"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:read",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/bandwidth/history": {
+   "get": {
+    "summary": "Bucketed bandwidth history (interval=hour|day; hourly retained 90d, daily indefinite)",
+    "tags": [
+     "Websites"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:read",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/quota": {
+   "get": {
+    "summary": "Site quota: monthly bandwidth budget (per-site override or plan), used, reset (billing+)",
+    "tags": [
+     "Websites"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:read",
+    "parameters": []
+   },
+   "patch": {
+    "summary": "Set/clear the per-site bandwidth override: bandwidth_limit_mb (0=unlimited, null=plan) (admin+)",
     "tags": [
      "Websites"
     ],

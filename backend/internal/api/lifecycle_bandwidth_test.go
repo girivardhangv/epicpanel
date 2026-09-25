@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -431,4 +432,164 @@ func drainResume(t *testing.T, srv *Server, agent *testClient, websiteID string)
 	}
 	_ = agent.do("POST", "/v1/agent/jobs/claim", nil)
 	_ = agent.do("POST", "/v1/agent/jobs/"+jobID+"/result", map[string]any{"success": true, "result": map[string]any{}})
+}
+
+// TestPhaseQuotaEndpoints covers the quota read/patch surface: plan default,
+// per-site override set/clear, validation, and the bandwidth summary shape.
+func TestPhaseQuotaEndpoints(t *testing.T) {
+	orgID, _, websiteID, admin, _, srv := phase4SetupWithServer(t)
+	base := "/v1/organizations/" + orgID + "/websites/" + websiteID
+
+	// Default: plan-sourced (whatever the fixture package carries).
+	resp := admin.do("GET", base+"/quota", nil)
+	if resp.status != http.StatusOK {
+		t.Fatalf("quota: %d %v", resp.status, resp.body)
+	}
+	q, _ := resp.body["bandwidth"].(map[string]any)
+	if q == nil || q["period"] != "monthly" || q["source"] != "plan" {
+		t.Fatalf("quota block: %v", resp.body)
+	}
+
+	// PATCH sets the override; GET reports source=site and the byte math.
+	resp = admin.do("PATCH", base+"/quota", map[string]any{"bandwidth_limit_mb": 10240})
+	if resp.status != http.StatusOK {
+		t.Fatalf("patch quota: %d %v", resp.status, resp.body)
+	}
+	resp = admin.do("GET", base+"/quota", nil)
+	q, _ = resp.body["bandwidth"].(map[string]any)
+	if q == nil || q["source"] != "site" {
+		t.Fatalf("override source: %v", resp.body)
+	}
+	if q["limit_bytes"].(float64) != float64(10240*1024*1024) {
+		t.Fatalf("limit_bytes: %v", q["limit_bytes"])
+	}
+
+	// Negative limit rejected; null clears back to plan.
+	if resp := admin.do("PATCH", base+"/quota", map[string]any{"bandwidth_limit_mb": -1}); resp.status == http.StatusOK {
+		t.Fatalf("negative limit must not be accepted: %v", resp.body)
+	}
+	resp = admin.do("PATCH", base+"/quota", map[string]any{"bandwidth_limit_mb": nil})
+	if resp.status != http.StatusOK {
+		t.Fatalf("clear override: %d %v", resp.status, resp.body)
+	}
+	resp = admin.do("GET", base+"/quota", nil)
+	q, _ = resp.body["bandwidth"].(map[string]any)
+	if q == nil || q["source"] != "plan" {
+		t.Fatalf("cleared override must fall back to plan: %v", resp.body)
+	}
+
+	// Bandwidth summary: shape + usage reflection.
+	setBandwidthUsage(t, srv, websiteID, 5*1024*1024*1024)
+	resp = admin.do("GET", base+"/bandwidth", nil)
+	if resp.status != http.StatusOK {
+		t.Fatalf("bandwidth: %d %v", resp.status, resp.body)
+	}
+	if _, ok := resp.body["rate"]; !ok {
+		t.Fatalf("bandwidth summary missing rate: %v", resp.body)
+	}
+	tr, _ := resp.body["traffic"].(map[string]any)
+	if tr == nil || tr["total_bytes"].(float64) != float64(5*1024*1024*1024) {
+		t.Fatalf("traffic totals: %v", resp.body)
+	}
+}
+
+// mustServerFromSetup re-fetches the Server for direct store access in
+// tests that only carry the HTTP clients.
+func TestPhaseBandwidthHistory(t *testing.T) {
+	orgID, _, websiteID, admin, _, srv := phase4SetupWithServer(t)
+	base := "/v1/organizations/" + orgID + "/websites/" + websiteID
+	ctx := context.Background()
+
+	h1 := time.Now().UTC().Truncate(time.Hour).Add(-2 * time.Hour)
+	h2 := time.Now().UTC().Truncate(time.Hour).Add(-1 * time.Hour)
+	for _, h := range []time.Time{h1, h2} {
+		if _, err := srv.Pool.Exec(ctx, `
+			INSERT INTO website_bandwidth_samples (website_id, hour_bucket, tx_bytes, requests)
+			VALUES ($1, $2, 1000, 10) ON CONFLICT (website_id, hour_bucket)
+			DO UPDATE SET tx_bytes = website_bandwidth_samples.tx_bytes + 1000`,
+			uuid.MustParse(websiteID), h); err != nil {
+			t.Fatalf("seed sample: %v", err)
+		}
+		if _, err := srv.Pool.Exec(ctx, `
+			INSERT INTO website_bandwidth_daily (website_id, day, tx_bytes, requests)
+			VALUES ($1, $2::date, 2000, 20) ON CONFLICT (website_id, day)
+			DO UPDATE SET tx_bytes = website_bandwidth_daily.tx_bytes + 2000`,
+			uuid.MustParse(websiteID), h.Format("2006-01-02")); err != nil {
+			t.Fatalf("seed daily: %v", err)
+		}
+	}
+
+	from := h1.Add(-time.Hour).Format(time.RFC3339)
+	to := h2.Add(2 * time.Hour).Format(time.RFC3339)
+	resp := admin.do("GET", base+"/bandwidth/history?from="+from+"&to="+to+"&interval=hour", nil)
+	if resp.status != http.StatusOK {
+		t.Fatalf("history hour: %d %v", resp.status, resp.body)
+	}
+	data, _ := resp.body["data"].([]any)
+	if len(data) != 2 {
+		t.Fatalf("hour buckets: %d (%v)", len(data), resp.body)
+	}
+	total := 0.0
+	for _, d := range data {
+		total += d.(map[string]any)["total_bytes"].(float64)
+	}
+	if total != 2000 {
+		t.Fatalf("hourly total: %v", total)
+	}
+
+	resp = admin.do("GET", base+"/bandwidth/history?from="+from+"&to="+to+"&interval=day", nil)
+	if resp.status != http.StatusOK {
+		t.Fatalf("history day: %d %v", resp.status, resp.body)
+	}
+	data, _ = resp.body["data"].([]any)
+	if len(data) != 1 {
+		t.Fatalf("daily buckets must fold one day: %d (%v)", len(data), resp.body)
+	}
+	if data[0].(map[string]any)["total_bytes"].(float64) != 4000 {
+		t.Fatalf("daily total: %v", data[0])
+	}
+
+	if resp := admin.do("GET", base+"/bandwidth/history?interval=minute", nil); resp.status == http.StatusOK {
+		t.Fatalf("invalid interval must be rejected")
+	}
+	if resp := admin.do("GET", base+"/bandwidth/history?from=nonsense", nil); resp.status == http.StatusOK {
+		t.Fatalf("invalid from must be rejected")
+	}
+}
+
+// TestPhaseQuotaOverrideReachesEnforcePayload is the anti-drift proof: the
+// per-site override must flow into THE shared enforce payload builder so
+// agent-side budget == quota API == resume guard.
+func TestPhaseQuotaOverrideReachesEnforcePayload(t *testing.T) {
+	orgID, _, websiteID, admin, _, srv := phase4SetupWithServer(t)
+	base := "/v1/organizations/" + orgID + "/websites/" + websiteID
+	ctx := context.Background()
+
+	resp := admin.do("PATCH", base+"/quota", map[string]any{"bandwidth_limit_mb": 5120})
+	if resp.status != http.StatusOK {
+		t.Fatalf("patch: %d %v", resp.status, resp.body)
+	}
+	ws, err := srv.Websites.GetByIDAny(ctx, uuid.MustParse(websiteID))
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	payload, err := srv.dynamicEffectivePayload(ctx, ws)
+	if err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	if payload.BandwidthMB != 5120 {
+		t.Fatalf("enforce payload bandwidth: %d want 5120", payload.BandwidthMB)
+	}
+	// Clearing the override returns the payload to the plan budget.
+	if resp := admin.do("PATCH", base+"/quota", map[string]any{"bandwidth_limit_mb": nil}); resp.status != http.StatusOK {
+		t.Fatalf("clear: %d", resp.status)
+	}
+	ws, _ = srv.Websites.GetByIDAny(ctx, ws.ID)
+	payload2, err := srv.dynamicEffectivePayload(ctx, ws)
+	if err != nil {
+		t.Fatalf("payload2: %v", err)
+	}
+	if payload2.BandwidthMB == 5120 {
+		t.Fatalf("cleared override must not pin the payload budget")
+	}
 }

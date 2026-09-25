@@ -177,7 +177,15 @@ func requiredScope(method, path string) (string, bool) {
 				return "websites:read", true
 			}
 			return "websites:write", true
-		case "suspend", "resume":
+		case "suspend", "resume", "terminate", "purge":
+			return "websites:write", true
+		case "bandwidth":
+			// bandwidth + bandwidth/history are read-only surfaces.
+			return "websites:read", true
+		case "quota":
+			if method == http.MethodGet {
+				return "websites:read", true
+			}
 			return "websites:write", true
 		case "dns-zone":
 			if method == http.MethodGet {

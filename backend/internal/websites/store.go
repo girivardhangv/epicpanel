@@ -246,6 +246,24 @@ func (s *Store) ListForOrg(ctx context.Context, orgID uuid.UUID) ([]Website, err
 	return out, rows.Err()
 }
 
+// SetBandwidthLimitMB writes the per-site monthly bandwidth override
+// (migration 0050): NULL = follow the hosting plan, 0 = unlimited,
+// > 0 = MB. Enforcement, the quota API, the resume guard and the
+// suspension-page metadata all resolve through this single column.
+func (s *Store) SetBandwidthLimitMB(ctx context.Context, websiteID uuid.UUID, limitMB *int64) error {
+	tag, err := s.Pool.Exec(ctx, `
+		UPDATE websites SET bandwidth_limit_mb = $2, updated_at = now()
+		WHERE id = $1
+	`, websiteID, limitMB)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) SetStatus(ctx context.Context, websiteID uuid.UUID, status Status, errMsg string) error {
 	tag, err := s.Pool.Exec(ctx, `
 		UPDATE websites SET status = $2, error_message = $3, updated_at = now()

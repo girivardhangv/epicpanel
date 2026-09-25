@@ -285,10 +285,17 @@ func (h *Handler) ApplyWebsiteTransition(job *jobs.Job, resultJSON json.RawMessa
 		case jobs.StatusSuccess:
 			// Guarded: only ready/failed/suspended move; never resurrects
 			// deleting/deleted. Failure keeps the previous status (the
-			// error is recorded on the job) and the queue retries.
-			if err := h.Websites.MarkSuspended(ctx, *job.WebsiteID); err != nil && !errors.Is(err, ErrNotFound) {
+			// error is recorded on the job) and the queue retries. The
+			// payload's reason (absent on legacy payloads = manual) is
+			// persisted with the transition so pages/API/audit agree.
+			var sp SuspendPayload
+			_ = json.Unmarshal(job.Payload, &sp) // legacy payloads carry website_id only
+			if err := h.Websites.MarkSuspended(ctx, *job.WebsiteID, sp.EffectiveReason(), sp.Metadata); err != nil && !errors.Is(err, ErrNotFound) {
 				slog.Error("website mark suspended failed", "website", job.WebsiteID, "err", err)
 			}
+			h.publishLifecycleEvent(ctx, "website.suspended", job, map[string]any{
+				"reason": string(sp.EffectiveReason()),
+			})
 		}
 	case TypeResumeWebsite:
 		switch job.Status {
@@ -298,6 +305,7 @@ func (h *Handler) ApplyWebsiteTransition(job *jobs.Job, resultJSON json.RawMessa
 			if err := h.Websites.MarkResumed(ctx, *job.WebsiteID); err != nil && !errors.Is(err, ErrNotFound) {
 				slog.Error("website mark resumed failed", "website", job.WebsiteID, "err", err)
 			}
+			h.publishLifecycleEvent(ctx, "website.resumed", job, nil)
 		}
 	case jobs.TypeInstallLaravel:
 		// One-click Laravel: the agent reports the new serving docroot

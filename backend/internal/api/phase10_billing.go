@@ -312,7 +312,8 @@ func (s *Server) billingSuspend(ctx context.Context, sub *billing.Subscription) 
 			return nil // idempotent: already offline
 		}
 		_, err = s.Jobs.EnqueueIdempotent(ctx, ws.ServerID, &ws.ID, jobs.TypeSuspendWebsite,
-			websites.SuspendPayload{WebsiteID: ws.ID.String()}, "suspend_"+ws.ID.String())
+			websites.SuspendPayload{WebsiteID: ws.ID.String(), Reason: string(websites.ReasonPayment)},
+			"suspend_"+ws.ID.String())
 		return err
 	}
 	return errors.New("subscription has no workload to suspend")
@@ -326,6 +327,13 @@ func (s *Server) billingResume(ctx context.Context, sub *billing.Subscription) e
 		}
 		if ws.Status != websites.StatusSuspended {
 			return nil // idempotent
+		}
+		// Resume guard (migration 0050): a site suspended for
+		// bandwidth_exhausted stays down while the quota is exhausted —
+		// payment restored the subscription, not the monthly byte budget.
+		if apiErr := s.resumeBandwidthGuard(ctx, ws, false); apiErr != nil {
+			slog.Warn("billing resume blocked: bandwidth quota still exhausted", "website", ws.ID)
+			return nil // remain suspended; the quota engine owns the policy
 		}
 		_, err = s.Jobs.EnqueueIdempotent(ctx, ws.ServerID, &ws.ID, jobs.TypeResumeWebsite,
 			websites.ResumePayload{WebsiteID: ws.ID.String()}, "resume_"+ws.ID.String())

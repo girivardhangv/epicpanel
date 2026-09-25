@@ -202,7 +202,11 @@ func (s *Server) Handler() http.Handler {
 			}
 			return app.Port, true
 		},
-		RequireOrg: srvH.ResolveOrg,
+		// Resume guard (migration 0050): a site suspended for
+		// bandwidth_exhausted stays down while the quota is exhausted unless
+		// the admin forces the resume (audited website.resume_forced).
+		ResumeGuard: s.resumeBandwidthGuard,
+		RequireOrg:  srvH.ResolveOrg,
 	}
 	wsH.Register(mux, srvH.RequireAgent)
 	wsH.Ext = &websites.HandlerExtensions{

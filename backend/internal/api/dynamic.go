@@ -419,9 +419,12 @@ func (s *Server) dynamicSuspendUnderAttack(ctx context.Context, ws *websites.Web
 		}
 	}
 	// Disable: the 503 stub vhost (same idempotent lifecycle job as manual
-	// suspension — one suspension mechanism, no second control loop).
+	// suspension — one suspension mechanism, no second control loop). The
+	// 'attack' reason rides the payload (migration 0050) so the persisted
+	// suspension reason and the stub page match the dynamic_state machinery.
 	if _, err := s.Jobs.EnqueueIdempotent(ctx, ws.ServerID, &ws.ID, jobs.TypeSuspendWebsite,
-		websites.SuspendPayload{WebsiteID: ws.ID.String()}, "dyn_attack_suspend_"+ws.ID.String()); err != nil {
+		websites.SuspendPayload{WebsiteID: ws.ID.String(), Reason: string(websites.ReasonAttack)},
+		"dyn_attack_suspend_"+ws.ID.String()); err != nil {
 		slog.Error("attack suspension enqueue failed", "website", ws.ID, "err", err)
 		return
 	}
@@ -446,6 +449,14 @@ func (s *Server) dynamicRestore(ctx context.Context, ws *websites.Website, reaso
 		return
 	}
 	if ws.Status == websites.StatusSuspended {
+		// Resume guard (migration 0050): never auto-restore a site that is
+		// actually suspended for bandwidth_exhausted with the quota still
+		// exhausted — an API outage or stale dynamic state must not bring a
+		// quota-exhausted site back (agent retains the last enforced state).
+		if apiErr := s.resumeBandwidthGuard(ctx, ws, false); apiErr != nil {
+			slog.Warn("dynamic restore blocked: bandwidth quota still exhausted", "website", ws.ID)
+			return
+		}
 		if _, err := s.Jobs.EnqueueIdempotent(ctx, ws.ServerID, &ws.ID, jobs.TypeResumeWebsite,
 			websites.ResumePayload{WebsiteID: ws.ID.String()}, "dyn_restore_"+ws.ID.String()); err != nil {
 			slog.Warn("dynamic restore resume enqueue failed", "website", ws.ID, "err", err)

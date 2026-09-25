@@ -26,8 +26,25 @@ import (
 // ============================================================================
 
 // LifecycleJobPayload matches the suspend_website / resume_website payload.
+// Reason/Metadata are optional (migration 0050 era): legacy payloads carry
+// website_id only and mean "manual". Reason selects the stub page the agent
+// renders (suspended.html vs the bandwidth-exhausted page) and Metadata
+// fills the page's templated values ({{USED}} / {{LIMIT}} / {{RESETS}} /
+// {{PERCENT}}) — the control plane measures, the agent never re-estimates.
 type LifecycleJobPayload struct {
-	WebsiteID string `json:"website_id"`
+	WebsiteID string         `json:"website_id"`
+	Reason    string         `json:"reason,omitempty"`
+	Message   string         `json:"message,omitempty"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
+}
+
+// EffectiveReason normalizes the payload reason: absent = manual (backward
+// compatible with pre-0050 producers).
+func (p LifecycleJobPayload) EffectiveReason() string {
+	if p.Reason == "" {
+		return "manual"
+	}
+	return p.Reason
 }
 
 // LifecycleOutcome is the job result reported back to the control plane.

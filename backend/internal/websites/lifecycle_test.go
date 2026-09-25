@@ -199,13 +199,89 @@ func TestWebsiteSuspendResumeLifecycle(t *testing.T) {
 	}
 }
 
+// TestWebsiteSuspensionReasonPersistence covers migration 0050 semantics:
+// the fanout persists WHY a site was suspended (reason + timestamp +
+// metadata) and resume clears all of it. Legacy payloads (no reason) mean
+// manual.
+func TestWebsiteSuspensionReasonPersistence(t *testing.T) {
+	f := newLifecycleFixture(t)
+	defer f.cleanup()
+	ctx := context.Background()
+
+	ws := f.createWebsite(t, "lc-reason")
+	if ws.Status != StatusReady {
+		t.Fatalf("expected ready, got %s", ws.Status)
+	}
+
+	// Fanout path: a suspend job carrying a reason + metadata persists them.
+	meta := map[string]any{"used_bytes": 9223231298, "limit_bytes": 10737418240}
+	job, err := f.jobStore.EnqueueIdempotent(ctx, ws.ServerID, &ws.ID, TypeSuspendWebsite,
+		SuspendPayload{WebsiteID: ws.ID.String(), Reason: string(ReasonBandwidthExhausted), Metadata: meta},
+		"overlimit_suspend_bandwidth_"+ws.ID.String())
+	if err != nil {
+		t.Fatalf("enqueue suspend: %v", err)
+	}
+	updated := f.runJob(t, job.ID, true, "")
+	f.handler.ApplyWebsiteTransition(updated, nil)
+
+	got, err := f.store.GetByIDAny(ctx, ws.ID)
+	if err != nil {
+		t.Fatalf("get website: %v", err)
+	}
+	if got.Status != StatusSuspended {
+		t.Fatalf("status: %s want suspended", got.Status)
+	}
+	if got.SuspensionReason == nil || *got.SuspensionReason != string(ReasonBandwidthExhausted) {
+		t.Fatalf("suspension reason: %v want bandwidth_exhausted", got.SuspensionReason)
+	}
+	if got.SuspendedAt == nil {
+		t.Fatalf("suspended_at not recorded")
+	}
+	if got.SuspensionMetadata == nil || got.SuspensionMetadata["limit_bytes"] != float64(10737418240) {
+		t.Fatalf("suspension metadata: %+v", got.SuspensionMetadata)
+	}
+
+	// Legacy payload (no reason) refreshes an existing suspension as manual
+	// (backward compatible producer behavior).
+	job2, err := f.jobStore.EnqueueIdempotent(ctx, ws.ServerID, &ws.ID, TypeSuspendWebsite,
+		SuspendPayload{WebsiteID: ws.ID.String()}, "manual_suspend_"+ws.ID.String())
+	if err != nil {
+		t.Fatalf("enqueue manual suspend: %v", err)
+	}
+	updated = f.runJob(t, job2.ID, true, "")
+	f.handler.ApplyWebsiteTransition(updated, nil)
+	if got, _ = f.store.GetByIDAny(ctx, ws.ID); got.SuspensionReason == nil || *got.SuspensionReason != string(ReasonManual) {
+		t.Fatalf("legacy payload must persist manual reason, got %v", got.SuspensionReason)
+	}
+
+	// Resume clears reason + timestamp + metadata.
+	rjob, err := f.jobStore.EnqueueIdempotent(ctx, ws.ServerID, &ws.ID, TypeResumeWebsite,
+		ResumePayload{WebsiteID: ws.ID.String()}, "resume_"+ws.ID.String())
+	if err != nil {
+		t.Fatalf("enqueue resume: %v", err)
+	}
+	updated = f.runJob(t, rjob.ID, true, "")
+	f.handler.ApplyWebsiteTransition(updated, nil)
+	got, err = f.store.GetByIDAny(ctx, ws.ID)
+	if err != nil {
+		t.Fatalf("get website: %v", err)
+	}
+	if got.Status != StatusReady {
+		t.Fatalf("status after resume: %s want ready", got.Status)
+	}
+	if got.SuspensionReason != nil || got.SuspendedAt != nil || got.SuspensionMetadata != nil {
+		t.Fatalf("resume must clear suspension data: reason=%v at=%v meta=%v",
+			got.SuspensionReason, got.SuspendedAt, got.SuspensionMetadata)
+	}
+}
+
 func TestWebsiteDeleteFromSuspended(t *testing.T) {
 	f := newLifecycleFixture(t)
 	defer f.cleanup()
 	ctx := context.Background()
 
 	ws := f.createWebsite(t, "lc-del")
-	if err := f.store.MarkSuspended(ctx, ws.ID); err != nil {
+	if err := f.store.MarkSuspended(ctx, ws.ID, ReasonManual, nil); err != nil {
 		t.Fatalf("suspend: %v", err)
 	}
 	// Delete of a suspended site is allowed (mirrors the handler path).
@@ -235,7 +311,7 @@ func TestWebsiteMarkReadyGuard(t *testing.T) {
 	if err := f.store.MarkReady(ctx, ws.ID, ws.UnixUser, DocumentRootFor(ws.ID)); err != ErrMarkReadyBlocked {
 		t.Fatalf("expected ErrMarkReadyBlocked for deleting site, got %v", err)
 	}
-	if err := f.store.MarkSuspended(ctx, ws.ID); err != ErrNotFound {
+	if err := f.store.MarkSuspended(ctx, ws.ID, ReasonManual, nil); err != ErrNotFound {
 		t.Fatalf("MarkSuspended must not resurrect deleting site, got %v", err)
 	}
 }

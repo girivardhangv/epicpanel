@@ -5,7 +5,7 @@ import {
   Database as DatabaseIcon, Lock, History, Network, Pause, Play, Plus, RefreshCw, ShieldQuestion,
   Trash2, FileText, GitBranch, X,
 } from 'lucide-react'
-import { api, domainsApi, ftpApi, redirectsApi, lifecycleApi, DynamicResourcesCard } from '@/lib/api'
+import { api, domainsApi, ftpApi, redirectsApi, lifecycleApi, DynamicResourcesCard, BandwidthCard, suspensionReasonLabel } from '@/lib/api'
 import type { FtpAccount, Redirect } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
 import { confirmAction } from '@/lib/confirm'
@@ -71,7 +71,7 @@ export function SiteDetailPage() {
   const [aliasBusy, setAliasBusy] = useState(false)
   const [busyDomain, setBusyDomain] = useState('')
   const [lifeBusy, setLifeBusy] = useState(false)
-  const [lifeAction, setLifeAction] = useState<'' | 'suspend' | 'resume'>('')
+  const [lifeAction, setLifeAction] = useState<'' | 'suspend' | 'resume' | 'terminate'>('')
   const isAdmin = !!user?.is_platform_admin
 
   const load = async () => {
@@ -322,11 +322,50 @@ export function SiteDetailPage() {
     }
   }
 
+  const terminateSite = async () => {
+    if (!org || !site) return
+    if (!(await confirmAction({
+      title: 'Terminate Website',
+      message: `Terminate "${site.primary_domain || site.name}"? The site will serve a 410 page, its processes stop and it cannot be resumed — only purged. Site files are kept for audit until a purge.`,
+      confirmLabel: 'Terminate',
+    }))) return
+    setErr('')
+    setLifeBusy(true)
+    try {
+      await lifecycleApi.terminate(org.id, site.id, { reason: 'admin request', confirm: true })
+      setWsMsg('Terminate queued — the site is being taken offline permanently.')
+      setTimeout(() => setWsMsg(''), 4000)
+      setLifeAction('terminate')
+    } catch (ex: any) {
+      setErr(ex.message)
+    } finally {
+      setLifeBusy(false)
+    }
+  }
+
+  const purgeSite = async () => {
+    if (!org || !site) return
+    if (!(await confirmAction({
+      title: 'Purge Terminated Website',
+      message: `Permanently destroy "${site.primary_domain || site.name}"? This removes the site tree, PHP pool and configs. This cannot be undone.`,
+      confirmLabel: 'Purge permanently',
+    }))) return
+    setErr('')
+    setLifeBusy(true)
+    try {
+      await lifecycleApi.purge(org.id, site.id)
+      navigate('/sites')
+    } catch (ex: any) {
+      setErr(ex.message)
+      setLifeBusy(false)
+    }
+  }
+
   // Suspend/resume return 202 with a job id — poll until the status flips.
   useEffect(() => {
     if (!lifeAction || !org) return
     let tries = 0
-    const target = lifeAction === 'suspend' ? 'suspended' : 'ready'
+    const target = lifeAction === 'suspend' ? 'suspended' : lifeAction === 'terminate' ? 'terminated' : 'ready'
     const t = setInterval(async () => {
       tries += 1
       try {
@@ -451,6 +490,7 @@ export function SiteDetailPage() {
             <h1 className="truncate text-[23px] font-bold tracking-[-.025em] text-ink">{site.primary_domain || site.name}</h1>
             {site.is_staging && <span className="status-chip status-warning">STAGING</span>}
             {site.status === 'suspended' && <span className="status-chip status-warning">SUSPENDED</span>}
+            {site.status === 'terminated' && <span className="status-chip status-danger">TERMINATED</span>}
             <StatusBadge status={site.status} />
           </div>
           <div className="mt-0.5 text-[11px] text-muted">
@@ -471,6 +511,19 @@ export function SiteDetailPage() {
               <Play size={13} /> {lifeBusy ? 'Working…' : 'Resume'}
             </button>
           )}
+          {isAdmin && (site.status === 'ready' || site.status === 'failed' || site.status === 'suspended') && (
+            <button
+              className="btn-ghost hover:!border-[#ffd0d7] hover:!bg-danger-soft hover:!text-danger"
+              onClick={terminateSite} disabled={lifeBusy} title="Terminate this website (410 + processes stopped; purge to destroy)"
+            >
+              <Ban size={13} /> Terminate
+            </button>
+          )}
+          {isAdmin && site.status === 'terminated' && (
+            <button className="btn-primary" onClick={purgeSite} disabled={lifeBusy} title="Permanently destroy this terminated site">
+              <Trash2 size={13} /> Purge permanently
+            </button>
+          )}
           {isAdmin && (
             <button className="icon-btn !h-[36px] !w-[36px] hover:!border-[#ffd0d7] hover:!bg-danger-soft hover:!text-danger" title="Delete site" aria-label="Delete site" onClick={() => setShowDelete(true)}>
               <Trash2 size={15} />
@@ -485,12 +538,26 @@ export function SiteDetailPage() {
       {site.status === 'suspended' && (
         <div className="mb-4 flex flex-wrap items-center gap-2.5 rounded-[10px] border border-[#ffe8b1] bg-warn-soft px-4 py-3 text-[11.5px] font-semibold text-warn">
           <Ban size={15} />
-          <span>This website is suspended — the web server and FTP logins are disabled until an administrator resumes it.</span>
+          <span>
+            {suspensionReasonLabel[site.suspension_reason ?? 'manual'] ?? 'This website is suspended.'} The site serves a
+            suspension page until an administrator resumes it.
+          </span>
           {isAdmin && (
             <button className="btn-primary !min-h-[28px] !px-2.5 !text-[10.5px] ml-auto" onClick={resumeSite} disabled={lifeBusy}>
               <Play size={12} /> Resume now
             </button>
           )}
+        </div>
+      )}
+
+      {/* Terminated banner — the site answers 410 and cannot be resumed */}
+      {site.status === 'terminated' && (
+        <div className="mb-4 flex flex-wrap items-center gap-2.5 rounded-[10px] border border-[#ffd0d7] bg-danger-soft px-4 py-3 text-[11.5px] font-semibold text-danger">
+          <Ban size={15} />
+          <span>
+            This website has been terminated{site.termination_reason ? ` (${site.termination_reason})` : ''} — it serves a
+            410 page and its services are stopped. Files are retained until the site is purged.
+          </span>
         </div>
       )}
 
@@ -519,6 +586,11 @@ export function SiteDetailPage() {
           />
         </div>
       )}
+
+      {/* Bandwidth accounting + lifecycle state (authoritative, WS-refreshed) */}
+      <div className="mb-4">
+        <BandwidthCard orgId={org?.id ?? ''} website={site} onChanged={load} />
+      </div>
 
       <div className="mb-4 flex justify-end">
         <button className="btn-ghost !min-h-[30px] !px-2.5 !text-[10.5px]" onClick={() => void loadUsage()} disabled={usageBusy}>

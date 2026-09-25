@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/epicbyte/epicpanel/backend/internal/agent/pages"
 )
 
 // ============================================================================
@@ -26,18 +29,111 @@ import (
 // ============================================================================
 
 // LifecycleJobPayload matches the suspend_website / resume_website payload.
+// Reason/Metadata are optional (migration 0050 era): legacy payloads carry
+// website_id only and mean "manual". Reason selects the stub page the agent
+// renders (suspended.html vs the bandwidth-exhausted page) and Metadata
+// fills the page's templated values ({{USED}} / {{LIMIT}} / {{RESETS}} /
+// {{PERCENT}}) — the control plane measures, the agent never re-estimates.
 type LifecycleJobPayload struct {
-	WebsiteID string `json:"website_id"`
+	WebsiteID string         `json:"website_id"`
+	Reason    string         `json:"reason,omitempty"`
+	Message   string         `json:"message,omitempty"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
+}
+
+// EffectiveReason normalizes the payload reason: absent = manual (backward
+// compatible with pre-0050 producers).
+func (p LifecycleJobPayload) EffectiveReason() string {
+	if p.Reason == "" {
+		return "manual"
+	}
+	return p.Reason
 }
 
 // LifecycleOutcome is the job result reported back to the control plane.
 type LifecycleOutcome struct {
 	Suspended      bool     `json:"suspended,omitempty"`
 	Resumed        bool     `json:"resumed,omitempty"`
+	Terminated     bool     `json:"terminated,omitempty"`
 	AlreadyInState bool     `json:"already_in_state,omitempty"`
 	Providers      []string `json:"providers,omitempty"`
 	Reloaded       []string `json:"reloaded,omitempty"`
 	Notes          []string `json:"notes,omitempty"`
+}
+
+// lifeStub selects the placeholder a lifecycle op swaps in: the plain
+// suspended 503, the reason-aware bandwidth-exhausted page (templated per
+// site from the suspension metadata), or the terminated 410.
+type lifeStub struct {
+	Terminated bool
+	Page       string            // "" = suspended.html
+	Vars       map[string]string // bandwidth page template values
+}
+
+// lifeSuspendedStubFor maps a suspend payload to its stub: bandwidth
+// exhaustion renders the templated quota page (control-plane measured —
+// the agent never re-estimates), everything else the generic page.
+func lifeSuspendedStubFor(payload LifecycleJobPayload) lifeStub {
+	if payload.EffectiveReason() == "bandwidth_exhausted" {
+		return lifeStub{Page: bandwidthStubPage, Vars: bandwidthStubVars(payload.Metadata)}
+	}
+	return lifeStub{}
+}
+
+// bandwidthStubVars humanizes the quota metadata for the stub page.
+func bandwidthStubVars(metadata map[string]any) map[string]string {
+	vars := map[string]string{"USED": "—", "LIMIT": "—", "RESETS": "—", "PERCENT": "—"}
+	num := func(k string) (float64, bool) {
+		v, ok := metadata[k]
+		if !ok {
+			return 0, false
+		}
+		f, ok := v.(float64)
+		return f, ok
+	}
+	if used, ok := num("used_bytes"); ok {
+		vars["USED"] = humanBytes(int64(used))
+		if limit, ok := num("limit_bytes"); ok && limit > 0 {
+			vars["LIMIT"] = humanBytes(int64(limit))
+			vars["PERCENT"] = fmt.Sprintf("%.0f", math.Min(used/limit*100, 100))
+		}
+	}
+	if r, ok := metadata["resets_at"].(string); ok && r != "" {
+		vars["RESETS"] = r
+	}
+	return vars
+}
+
+// humanBytes renders a byte count for display (page precision only).
+func humanBytes(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+// ensureBandwidthStubPage writes the site's templated bandwidth-exhausted
+// page under <siteBase>/<id>/pages/ (per-site on purpose: the shared
+// default_pages dir must never carry site-specific quota numbers). The
+// rendered vhosts reference the production location; docRootBase is the
+// injectable site base (/srv/epicpanel/websites in prod, temp dirs in
+// tests).
+func (e *Executor) ensureBandwidthStubPage(websiteID string, vars map[string]string) error {
+	out := pages.BandwidthExhaustedHTML
+	for k, v := range vars {
+		out = strings.ReplaceAll(out, "{{"+k+"}}", v)
+	}
+	dir := filepath.Join(e.docRootBase, websiteID, "pages")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create pages dir: %w", err)
+	}
+	return AtomicWriteFile(filepath.Join(dir, bandwidthStubPage), []byte(out), 0o644)
 }
 
 // lifeSuspendBakSuffix marks the on-disk backup of the pre-suspension config,
@@ -78,14 +174,43 @@ func lifeActivePaths() lifePaths {
 }
 
 // SuspendWebsite replaces the serving config of every web server currently
-// hosting the site with a 503 stub. Idempotent and reversible: an already
-// suspended site is detected and left untouched, and the original config is
-// kept in <file>.epicpanel-suspend-bak for ResumeWebsite.
+// hosting the site with a lifecycle stub: the generic 503 "Account
+// suspended" page, or — when the payload reason is bandwidth_exhausted —
+// the templated quota page built from the suspension metadata. Idempotent
+// and reversible: an already suspended site is detected and left
+// untouched, and the original config is kept in
+// <file>.epicpanel-suspend-bak for ResumeWebsite.
 func (e *Executor) SuspendWebsite(ctx context.Context, payload LifecycleJobPayload) (*LifecycleOutcome, error) {
 	if _, err := uuid.Parse(payload.WebsiteID); err != nil {
 		return nil, fmt.Errorf("invalid website id: %w", err)
 	}
-	return e.lifeSuspend(ctx, payload.WebsiteID, lifeActivePaths())
+	stub := lifeSuspendedStubFor(payload)
+	if stub.Page == bandwidthStubPage {
+		if err := e.ensureBandwidthStubPage(payload.WebsiteID, stub.Vars); err != nil {
+			return nil, err
+		}
+	}
+	return e.lifeSuspend(ctx, payload.WebsiteID, lifeActivePaths(), stub)
+}
+
+// TerminateWebsite swaps every serving config to the 410 terminated stub
+// (same backup + validated-reload pipeline as suspension) and stops the
+// site's application processes. Site files, the unix user, databases, DNS
+// and FPM pools are deliberately KEPT (retention for audit — purge owns
+// destruction); resume of a terminated site is rejected control-plane side.
+func (e *Executor) TerminateWebsite(ctx context.Context, payload LifecycleJobPayload) (*LifecycleOutcome, error) {
+	if _, err := uuid.Parse(payload.WebsiteID); err != nil {
+		return nil, fmt.Errorf("invalid website id: %w", err)
+	}
+	out, err := e.lifeSuspend(ctx, payload.WebsiteID, lifeActivePaths(), lifeStub{Terminated: true})
+	if err != nil {
+		return out, err
+	}
+	if stopErr := e.StopApp(ctx, payload.WebsiteID); stopErr != nil {
+		out.Notes = append(out.Notes, "app stop: "+stopErr.Error())
+	}
+	out.Terminated = true
+	return out, nil
 }
 
 // ResumeWebsite restores the pre-suspension config of every web server that
@@ -163,7 +288,7 @@ func lifeEnsureSuspendBak(t lifeTarget, current string) (bool, error) {
 	return true, f.Close()
 }
 
-func (e *Executor) lifeSuspend(ctx context.Context, id string, p lifePaths) (*LifecycleOutcome, error) {
+func (e *Executor) lifeSuspend(ctx context.Context, id string, p lifePaths, stub lifeStub) (*LifecycleOutcome, error) {
 	targets := lifeTargets(id, p)
 	out := &LifecycleOutcome{}
 	if len(targets) == 0 {
@@ -174,7 +299,7 @@ func (e *Executor) lifeSuspend(ctx context.Context, id string, p lifePaths) (*Li
 	changed := false
 	for _, t := range targets {
 		out.Providers = append(out.Providers, t.name)
-		already, reloaded, notes, err := e.lifeSuspendTarget(ctx, id, t, p)
+		already, reloaded, notes, err := e.lifeSuspendTarget(ctx, id, t, p, stub)
 		if err != nil {
 			return nil, err
 		}
@@ -219,14 +344,14 @@ func (e *Executor) lifeResume(ctx context.Context, id string, p lifePaths) (*Lif
 	return out, nil
 }
 
-func (e *Executor) lifeSuspendTarget(ctx context.Context, id string, t lifeTarget, p lifePaths) (already, reloaded bool, notes []string, err error) {
+func (e *Executor) lifeSuspendTarget(ctx context.Context, id string, t lifeTarget, p lifePaths, stub lifeStub) (already, reloaded bool, notes []string, err error) {
 	switch t.name {
 	case "nginx":
-		return e.lifeSuspendNginx(ctx, id, t, p)
+		return e.lifeSuspendNginx(ctx, id, t, p, stub)
 	case "apache":
-		return e.lifeSuspendApache(ctx, id, t, p)
+		return e.lifeSuspendApache(ctx, id, t, p, stub)
 	default:
-		return e.lifeSuspendOLS(ctx, id, t, p)
+		return e.lifeSuspendOLS(ctx, id, t, p, stub)
 	}
 }
 
@@ -248,16 +373,16 @@ func (e *Executor) lifeResumeTarget(ctx context.Context, id string, t lifeTarget
 // lifeSuspendNginx backs up the vhost, swaps in the suspended stub under
 // nginx -t validation and reloads. A missing nginx binary means the config
 // file is an orphan: the stub is written without validation or reload.
-func (e *Executor) lifeSuspendNginx(ctx context.Context, id string, t lifeTarget, p lifePaths) (bool, bool, []string, error) {
+func (e *Executor) lifeSuspendNginx(ctx context.Context, id string, t lifeTarget, p lifePaths, stub lifeStub) (bool, bool, []string, error) {
 	current, err := os.ReadFile(t.conf)
 	if err != nil {
 		return false, false, nil, fmt.Errorf("read %s: %w", t.conf, err)
 	}
-	stub, err := lifeNginxStub(id, string(current))
+	stubVhost, err := lifeNginxStub(id, string(current), stub)
 	if err != nil {
 		return false, false, nil, err
 	}
-	if string(current) == stub {
+	if string(current) == stubVhost {
 		return true, false, nil, nil
 	}
 	newBak, err := lifeEnsureSuspendBak(t, string(current))
@@ -266,7 +391,7 @@ func (e *Executor) lifeSuspendNginx(ctx context.Context, id string, t lifeTarget
 	}
 	notes := []string{}
 	if _, lookErr := exec.LookPath("nginx"); lookErr != nil {
-		if err := AtomicWriteFile(t.conf, []byte(stub), 0o644); err != nil {
+		if err := AtomicWriteFile(t.conf, []byte(stubVhost), 0o644); err != nil {
 			return false, false, nil, err
 		}
 		notes = append(notes, "nginx binary missing; stub written without validation or reload (orphan config)")
@@ -276,7 +401,7 @@ func (e *Executor) lifeSuspendNginx(ctx context.Context, id string, t lifeTarget
 	if err := enableSiteFile(t.enabled, t.conf); err != nil {
 		return false, false, nil, err
 	}
-	if err := SwapValidated(t.conf, []byte(stub), 0o644, func() error {
+	if err := SwapValidated(t.conf, []byte(stubVhost), 0o644, func() error {
 		return ValidateCmd(ctx, 120*time.Second, "nginx", "-t")
 	}); err != nil {
 		if !wasEnabled {
@@ -338,16 +463,16 @@ func (e *Executor) lifeResumeNginx(ctx context.Context, t lifeTarget) (bool, boo
 // lifeSuspendApache backs up the vhost, swaps in the suspended stub under
 // apache2ctl configtest validation and reloads. The stub keeps the original
 // loopback Listen port so the edge-proxy contract is unchanged.
-func (e *Executor) lifeSuspendApache(ctx context.Context, id string, t lifeTarget, p lifePaths) (bool, bool, []string, error) {
+func (e *Executor) lifeSuspendApache(ctx context.Context, id string, t lifeTarget, p lifePaths, stub lifeStub) (bool, bool, []string, error) {
 	current, err := os.ReadFile(t.conf)
 	if err != nil {
 		return false, false, nil, fmt.Errorf("read %s: %w", t.conf, err)
 	}
-	stub, err := lifeApacheStub(id, string(current))
+	stubVhost, err := lifeApacheStub(id, string(current), stub)
 	if err != nil {
 		return false, false, nil, err
 	}
-	if string(current) == stub {
+	if string(current) == stubVhost {
 		return true, false, nil, nil
 	}
 	newBak, err := lifeEnsureSuspendBak(t, string(current))
@@ -356,7 +481,7 @@ func (e *Executor) lifeSuspendApache(ctx context.Context, id string, t lifeTarge
 	}
 	notes := []string{}
 	if _, lookErr := exec.LookPath("apache2ctl"); lookErr != nil {
-		if err := AtomicWriteFile(t.conf, []byte(stub), 0o644); err != nil {
+		if err := AtomicWriteFile(t.conf, []byte(stubVhost), 0o644); err != nil {
 			return false, false, nil, err
 		}
 		notes = append(notes, "apache2ctl missing; stub written without validation or reload (orphan config)")
@@ -366,7 +491,7 @@ func (e *Executor) lifeSuspendApache(ctx context.Context, id string, t lifeTarge
 	if err := enableSiteFile(t.enabled, t.conf); err != nil {
 		return false, false, nil, err
 	}
-	if err := SwapValidated(t.conf, []byte(stub), 0o644, func() error {
+	if err := SwapValidated(t.conf, []byte(stubVhost), 0o644, func() error {
 		return ValidateCmd(ctx, 120*time.Second, "apache2ctl", "configtest")
 	}); err != nil {
 		if !wasEnabled {
@@ -426,13 +551,13 @@ func (e *Executor) lifeResumeApache(ctx context.Context, t lifeTarget) (bool, bo
 // lifeSuspendOLS backs up the vhconf, swaps in the suspended stub and
 // restarts OLS (no validator exists for OLS). On restart failure the original
 // content is restored and the restart retried, mirroring EnsureOLSSite.
-func (e *Executor) lifeSuspendOLS(ctx context.Context, id string, t lifeTarget, p lifePaths) (bool, bool, []string, error) {
+func (e *Executor) lifeSuspendOLS(ctx context.Context, id string, t lifeTarget, p lifePaths, stub lifeStub) (bool, bool, []string, error) {
 	current, err := os.ReadFile(t.conf)
 	if err != nil {
 		return false, false, nil, fmt.Errorf("read %s: %w", t.conf, err)
 	}
-	stub := RenderOLSVhconf(VhostSpec{WebsiteID: id, Suspended: true}, 0)
-	if string(current) == stub {
+	stubVhost := RenderOLSVhconf(VhostSpec{WebsiteID: id, Suspended: !stub.Terminated, Terminated: stub.Terminated}, 0)
+	if string(current) == stubVhost {
 		return true, false, nil, nil
 	}
 	newBak, err := lifeEnsureSuspendBak(t, string(current))
@@ -442,7 +567,7 @@ func (e *Executor) lifeSuspendOLS(ctx context.Context, id string, t lifeTarget, 
 	notes := []string{}
 	httpd, herr := os.ReadFile(p.OLSHTTPD)
 	if herr != nil {
-		if err := AtomicWriteFile(t.conf, []byte(stub), 0o644); err != nil {
+		if err := AtomicWriteFile(t.conf, []byte(stubVhost), 0o644); err != nil {
 			return false, false, nil, err
 		}
 		notes = append(notes, "httpd_config.conf missing; stub written without restart (orphan config)")
@@ -453,7 +578,7 @@ func (e *Executor) lifeSuspendOLS(ctx context.Context, id string, t lifeTarget, 
 	if domains := lifeParseOLSDomains(string(httpd), id); len(domains) == 0 {
 		return false, false, nil, fmt.Errorf("suspend openlitespeed: no domains mapped for site %s in %s (config not agent-rendered)", id, p.OLSHTTPD)
 	}
-	if err := AtomicWriteFile(t.conf, []byte(stub), 0o644); err != nil {
+	if err := AtomicWriteFile(t.conf, []byte(stubVhost), 0o644); err != nil {
 		return false, false, nil, err
 	}
 	prov := &OLSProvider{Ex: e, HTTPDConfig: p.OLSHTTPD, VhostDir: p.OLSVhosts, LSWSCtrl: p.LSWSCtrl}
@@ -581,12 +706,12 @@ func lifeParseOLSDomains(httpdConf, websiteID string) []string {
 // lifeNginxStub renders the suspended nginx vhost for the domains parsed from
 // the current agent-rendered config. Zero parsed domains means the config was
 // not written by EpicPanel — refuse (retryable) rather than guess.
-func lifeNginxStub(id, current string) (string, error) {
+func lifeNginxStub(id, current string, stub lifeStub) (string, error) {
 	domains := lifeParseNginxDomains(current)
 	if len(domains) == 0 {
 		return "", fmt.Errorf("suspend nginx: no server_name found in %s (config not agent-rendered)", currentName(id))
 	}
-	spec := VhostSpec{WebsiteID: id, Suspended: true}
+	spec := VhostSpec{WebsiteID: id, Suspended: !stub.Terminated, Terminated: stub.Terminated, StubPage: stub.Page, StubVars: stub.Vars}
 	for _, d := range domains {
 		spec.Domains = append(spec.Domains, DomainSpec{Domain: d})
 	}
@@ -595,7 +720,7 @@ func lifeNginxStub(id, current string) (string, error) {
 
 // lifeApacheStub renders the suspended Apache vhost, preserving the loopback
 // Listen port and DocumentRoot of the current agent-rendered config.
-func lifeApacheStub(id, current string) (string, error) {
+func lifeApacheStub(id, current string, stub lifeStub) (string, error) {
 	domains := lifeParseApacheDomains(current)
 	if len(domains) == 0 {
 		return "", fmt.Errorf("suspend apache: no ServerName found in vhost %s (config not agent-rendered)", id)
@@ -605,7 +730,7 @@ func lifeApacheStub(id, current string) (string, error) {
 	if m := lifeApacheDocrootRe.FindStringSubmatch(current); m != nil {
 		docRoot = m[1]
 	}
-	spec := VhostSpec{WebsiteID: id, Suspended: true, DocumentRoot: docRoot, BackendPort: port}
+	spec := VhostSpec{WebsiteID: id, Suspended: !stub.Terminated, Terminated: stub.Terminated, StubPage: stub.Page, StubVars: stub.Vars, DocumentRoot: docRoot, BackendPort: port}
 	for _, d := range domains {
 		spec.Domains = append(spec.Domains, DomainSpec{Domain: d})
 	}

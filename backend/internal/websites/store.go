@@ -2,6 +2,7 @@ package websites
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -22,6 +23,7 @@ const (
 	StatusDeleting     Status = "deleting"
 	StatusDeleted      Status = "deleted"
 	StatusSuspended    Status = "suspended"
+	StatusTerminated   Status = "terminated"
 )
 
 type Runtime string
@@ -61,6 +63,16 @@ type Website struct {
 	DocumentRoot     string     `json:"document_root"`
 	ErrorMessage     string     `json:"error_message,omitempty"`
 	IsStaging        bool       `json:"is_staging"`
+	// Lifecycle reasons (migration 0050): suspension carries WHY + when;
+	// termination is its own status with a timestamp + free-form reason.
+	SuspensionReason   *string        `json:"suspension_reason,omitempty"`
+	SuspendedAt        *time.Time     `json:"suspended_at,omitempty"`
+	SuspensionMetadata map[string]any `json:"suspension_metadata,omitempty"`
+	TerminatedAt       *time.Time     `json:"terminated_at,omitempty"`
+	TerminationReason  *string        `json:"termination_reason,omitempty"`
+	// BandwidthLimitMB is the per-site monthly override: NULL = use the
+	// hosting plan, 0 = unlimited, > 0 = override in MB.
+	BandwidthLimitMB   *int64 `json:"bandwidth_limit_mb"`
 	CreatedBy        uuid.UUID  `json:"created_by,omitempty"`
 	BackupSchedule   string     `json:"backup_schedule"`
 	BackupRetention  int        `json:"backup_retention"`
@@ -132,18 +144,28 @@ type Store struct {
 	Pool *pgxpool.Pool
 }
 
-const cols = `id, organization_id, server_id, name, primary_domain, runtime, runtime_version, web_server, backend_port, docroot_suffix, app_startup_command, app_build_command, app_port, app_desired_state, usage_cpu_percent, usage_memory_bytes, usage_disk_mb, usage_processes, usage_sampled_at, status, unix_user, document_root, error_message, is_staging, staging_of, backup_schedule, backup_retention, deploy_repo_url, deploy_branch, last_backup_at, provisioned_at, created_at, created_by, dynamic_enabled, dynamic_tier, dynamic_state, free_perk`
+const cols = `id, organization_id, server_id, name, primary_domain, runtime, runtime_version, web_server, backend_port, docroot_suffix, app_startup_command, app_build_command, app_port, app_desired_state, usage_cpu_percent, usage_memory_bytes, usage_disk_mb, usage_processes, usage_sampled_at, status, unix_user, document_root, error_message, is_staging, staging_of, backup_schedule, backup_retention, deploy_repo_url, deploy_branch, last_backup_at, provisioned_at, created_at, created_by, dynamic_enabled, dynamic_tier, dynamic_state, free_perk, suspension_reason, suspended_at, suspension_metadata, terminated_at, termination_reason, bandwidth_limit_mb`
 
 func scanRow(row pgx.Row) (*Website, error) {
 	var w Website
+	var suspensionMeta []byte
 	err := row.Scan(&w.ID, &w.Organization, &w.ServerID, &w.Name, &w.PrimaryDomain, &w.Runtime, &w.RuntimeVersion, &w.WebServer, &w.BackendPort, &w.DocrootSuffix,
 		&w.AppStartupCommand, &w.AppBuildCommand, &w.AppPort, &w.AppDesiredState,
 		&w.UsageCPUPercent, &w.UsageMemoryBytes, &w.UsageDiskMB, &w.UsageProcesses, &w.UsageSampledAt,
 		&w.Status, &w.UnixUser, &w.DocumentRoot, &w.ErrorMessage, &w.IsStaging, &w.StagingOf, &w.BackupSchedule, &w.BackupRetention,
 		&w.DeployRepoURL, &w.DeployBranch, &w.LastBackupAt, &w.ProvisionedAt, &w.CreatedAt, &w.CreatedBy,
-		&w.DynamicEnabled, &w.DynamicTier, &w.DynamicState, &w.FreePerk)
+		&w.DynamicEnabled, &w.DynamicTier, &w.DynamicState, &w.FreePerk,
+		&w.SuspensionReason, &w.SuspendedAt, &suspensionMeta, &w.TerminatedAt, &w.TerminationReason, &w.BandwidthLimitMB)
 	if err != nil {
 		return nil, err
+	}
+	if len(suspensionMeta) > 0 {
+		if js := json.Unmarshal(suspensionMeta, &w.SuspensionMetadata); js != nil {
+			// A malformed metadata blob must never break site reads; it is
+			// advisory page-template data, so it is dropped silently here
+			// and the raw JSONB stays inspectable in the DB.
+			w.SuspensionMetadata = nil
+		}
 	}
 	return &w, nil
 }
@@ -224,6 +246,24 @@ func (s *Store) ListForOrg(ctx context.Context, orgID uuid.UUID) ([]Website, err
 	return out, rows.Err()
 }
 
+// SetBandwidthLimitMB writes the per-site monthly bandwidth override
+// (migration 0050): NULL = follow the hosting plan, 0 = unlimited,
+// > 0 = MB. Enforcement, the quota API, the resume guard and the
+// suspension-page metadata all resolve through this single column.
+func (s *Store) SetBandwidthLimitMB(ctx context.Context, websiteID uuid.UUID, limitMB *int64) error {
+	tag, err := s.Pool.Exec(ctx, `
+		UPDATE websites SET bandwidth_limit_mb = $2, updated_at = now()
+		WHERE id = $1
+	`, websiteID, limitMB)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) SetStatus(ctx context.Context, websiteID uuid.UUID, status Status, errMsg string) error {
 	tag, err := s.Pool.Exec(ctx, `
 		UPDATE websites SET status = $2, error_message = $3, updated_at = now()
@@ -240,13 +280,13 @@ func (s *Store) SetStatus(ctx context.Context, websiteID uuid.UUID, status Statu
 
 // MarkReady sets the website ready and records the document root reported by
 // the agent (actual state wins over desired state). It never resurrects a
-// site that is deleting/deleted (ErrMarkReadyBlocked) and leaves a suspended
-// site suspended (no-op nil).
+// site that is deleting/deleted/terminated (ErrMarkReadyBlocked) and leaves
+// a suspended site suspended (no-op nil).
 func (s *Store) MarkReady(ctx context.Context, websiteID uuid.UUID, unixUser, documentRoot string) error {
 	tag, err := s.Pool.Exec(ctx, `
 		UPDATE websites SET status = 'ready', unix_user = $2, document_root = $3,
 		       provisioned_at = now(), error_message = '', updated_at = now()
-		WHERE id = $1 AND status NOT IN ('deleting', 'deleted', 'suspended')
+		WHERE id = $1 AND status NOT IN ('deleting', 'deleted', 'suspended', 'terminated')
 	`, websiteID, unixUser, documentRoot)
 	if err != nil {
 		return err

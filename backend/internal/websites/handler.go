@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"regexp"
 	"strings"
@@ -54,6 +56,11 @@ type Handler struct {
 	Redirects RedirectLister
 	// Events publishes lifecycle events to the platform event bus (nil-safe).
 	Events *events.Bus
+	// ResumeGuard can veto a resume (e.g. bandwidth quota still exhausted →
+	// 409 bandwidth_quota_exhausted). Implemented by the api layer over the
+	// effective-limit + usage seams; nil = allow every resume. force=true
+	// requests the bypass (the route is admin-gated; bypasses are audited).
+	ResumeGuard func(ctx context.Context, ws *Website, force bool) *httpapi.APIError
 	// Ports allocates private backend ports for proxy web-server modes.
 	Ports *BackendPortAllocator
 	// PackageForOrg resolves the org's effective hosting package (nil = no
@@ -163,6 +170,8 @@ func (h *Handler) Register(mux *http.ServeMux, requireAgent func(http.HandlerFun
 	mux.HandleFunc("PUT /v1/organizations/{org_id}/websites/{website_id}/php-settings", h.requireOrg(organizations.RoleDeveloper, h.SetPHPSettings))
 	mux.HandleFunc("POST /v1/organizations/{org_id}/websites/{website_id}/suspend", h.requireOrg(organizations.RoleAdmin, h.Suspend))
 	mux.HandleFunc("POST /v1/organizations/{org_id}/websites/{website_id}/resume", h.requireOrg(organizations.RoleAdmin, h.Resume))
+	mux.HandleFunc("POST /v1/organizations/{org_id}/websites/{website_id}/terminate", h.requireOrg(organizations.RoleAdmin, h.Terminate))
+	mux.HandleFunc("POST /v1/organizations/{org_id}/websites/{website_id}/purge", h.requireOrg(organizations.RoleAdmin, h.Purge))
 
 	mux.HandleFunc("POST /v1/agent/jobs/claim", requireAgent(h.AgentClaim))
 	mux.HandleFunc("POST /v1/agent/jobs/{job_id}/result", requireAgent(h.AgentResult))
@@ -531,6 +540,10 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		httpapi.RespondError(w, httpapi.ErrConflict("website is suspended (resume it first)"))
 		return
 	}
+	if ws.Status == StatusTerminated {
+		httpapi.RespondError(w, httpapi.ErrConflict("website is terminated"))
+		return
+	}
 
 	var req struct {
 		Runtime        string `json:"runtime"`
@@ -759,6 +772,13 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		httpapi.RespondError(w, httpapi.ErrConflict("website deletion already in progress"))
 		return
 	}
+	if ws.Status == StatusTerminated {
+		// Terminated sites are destroyed through the explicit purge flow,
+		// never through the plain delete path (two doors to the shredder
+		// is how accidental destruction happens).
+		httpapi.RespondError(w, httpapi.ErrConflict("terminated websites are removed via the purge endpoint"))
+		return
+	}
 
 	payload, apiErr := h.buildDesiredPayload(r.Context(), ws, orgID, ws.UnixUser, ws.RuntimeVersion)
 	if apiErr != nil {
@@ -779,28 +799,186 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 // POST /v1/organizations/{org_id}/websites/{website_id}/suspend — enqueues a
-// suspend job. Status flips to suspended only on agent success (retryable,
-// idempotent, reversible via resume).
+// suspend job. Body (optional): {"reason": "manual|admin|abuse|payment|system",
+// "message": "<operator note>"} — default reason is manual; the
+// bandwidth_exhausted and attack reasons are system-reserved (the quota
+// engine and the attack defense own them; a dashboard must not forge them).
+// Status flips to suspended only on agent success (retryable, idempotent,
+// reversible via resume).
 func (h *Handler) Suspend(w http.ResponseWriter, r *http.Request) {
+	body, apiErr := parseLifecycleBody(r)
+	if apiErr != nil {
+		httpapi.RespondError(w, apiErr)
+		return
+	}
+	reason := ReasonManual
+	if body.Reason != "" {
+		reason = SuspensionReason(body.Reason)
+		if !UserSuspensionReasons[reason] {
+			httpapi.RespondError(w, httpapi.ErrValidationDetails(
+				"invalid suspension reason (bandwidth_exhausted and attack are system-reserved)",
+				map[string]any{"allowed": []string{string(ReasonManual), string(ReasonAdmin), string(ReasonAbuse), string(ReasonPayment), string(ReasonSystem)}}))
+			return
+		}
+	}
 	h.enqueueLifecycle(w, r, lifecycleOp{
 		jobType:      TypeSuspendWebsite,
 		idemPrefix:   "suspend_",
 		auditAction:  "website.suspend",
 		expectStatus: StatusReady,
 		conflictMsg:  "only ready websites can be suspended",
+		reason:       reason,
+		message:      body.Message,
 	})
 }
 
 // POST /v1/organizations/{org_id}/websites/{website_id}/resume — enqueues a
-// resume job for a suspended website.
+// resume job for a suspended website. Body (optional): {"force": true}
+// bypasses the bandwidth resume guard (this route is admin-gated; the bypass
+// is audited as website.resume_forced by the guard implementation).
 func (h *Handler) Resume(w http.ResponseWriter, r *http.Request) {
+	body, apiErr := parseLifecycleBody(r)
+	if apiErr != nil {
+		httpapi.RespondError(w, apiErr)
+		return
+	}
 	h.enqueueLifecycle(w, r, lifecycleOp{
 		jobType:      TypeResumeWebsite,
 		idemPrefix:   "resume_",
 		auditAction:  "website.resume",
 		expectStatus: StatusSuspended,
 		conflictMsg:  "only suspended websites can be resumed",
+		force:        body.Force,
 	})
+}
+
+// POST /v1/organizations/{org_id}/websites/{website_id}/terminate — enqueues
+// the terminate job: the agent swaps every serving config to a 410 stub and
+// stops app processes; files/user/DBs/DNS are kept (retention for audit).
+// Requires {"confirm": true} — termination is destructive enough that a
+// fat-fingered POST must not reach the queue. The status flips to
+// terminated only on agent success; purge (which reuses the destructive
+// delete job) is only reachable from terminated.
+func (h *Handler) Terminate(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := OrgIDFromRequest(r)
+	if !ok {
+		httpapi.RespondError(w, httpapi.ErrInternal(errOrgContext))
+		return
+	}
+	var req struct {
+		Reason  string `json:"reason"`
+		Confirm bool   `json:"confirm"`
+	}
+	if apiErr := httpapi.Read(r, &req); apiErr != nil {
+		httpapi.RespondError(w, apiErr)
+		return
+	}
+	if !req.Confirm {
+		httpapi.RespondError(w, httpapi.ErrValidationDetails(
+			"termination requires confirm: true",
+			map[string]any{"field": "confirm"}))
+		return
+	}
+	ws, apiErr := h.websiteFromPath(r, orgID)
+	if apiErr != nil {
+		httpapi.RespondError(w, apiErr)
+		return
+	}
+	switch ws.Status {
+	case StatusReady, StatusFailed, StatusSuspended:
+		// terminable
+	default:
+		httpapi.RespondError(w, httpapi.ErrConflict(
+			"only ready, failed or suspended websites can be terminated (deleting/deleted/terminated cannot)"))
+		return
+	}
+	job, err := h.Jobs.EnqueueIdempotent(r.Context(), ws.ServerID, &ws.ID, TypeTerminateWebsite,
+		TerminatePayload{WebsiteID: ws.ID.String(), Reason: req.Reason}, "terminate_"+ws.ID.String())
+	if err != nil {
+		httpapi.RespondError(w, httpapi.ErrInternal(err))
+		return
+	}
+	meta := map[string]any{"job_id": job.ID.String()}
+	if req.Reason != "" {
+		meta["reason"] = req.Reason
+	}
+	h.auditUser(r, &orgID, "website.terminate_requested", "website", ws.ID.String(), meta)
+	httpapi.WriteJSON(w, http.StatusAccepted, map[string]any{"job_id": job.ID})
+}
+
+// POST /v1/organizations/{org_id}/websites/{website_id}/purge — destroys a
+// TERMINATED site (site tree, FPM pool, vhosts; the row is then removed by
+// the delete fanout). Heavily gated: admin role, confirm: true, and only
+// reachable from the terminated status — suspension and termination are
+// reversible-by-design states, purge is not.
+func (h *Handler) Purge(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := OrgIDFromRequest(r)
+	if !ok {
+		httpapi.RespondError(w, httpapi.ErrInternal(errOrgContext))
+		return
+	}
+	var req struct {
+		Confirm bool `json:"confirm"`
+	}
+	if apiErr := httpapi.Read(r, &req); apiErr != nil {
+		httpapi.RespondError(w, apiErr)
+		return
+	}
+	if !req.Confirm {
+		httpapi.RespondError(w, httpapi.ErrValidationDetails(
+			"purge requires confirm: true",
+			map[string]any{"field": "confirm"}))
+		return
+	}
+	ws, apiErr := h.websiteFromPath(r, orgID)
+	if apiErr != nil {
+		httpapi.RespondError(w, apiErr)
+		return
+	}
+	if ws.Status != StatusTerminated {
+		httpapi.RespondError(w, httpapi.ErrConflict("only terminated websites can be purged (terminate first)"))
+		return
+	}
+	payload, apiErr := h.buildDesiredPayload(r.Context(), ws, orgID, ws.UnixUser, ws.RuntimeVersion)
+	if apiErr != nil {
+		httpapi.RespondError(w, apiErr)
+		return
+	}
+	job, err := h.Jobs.EnqueueIdempotent(r.Context(), ws.ServerID, &ws.ID, jobs.TypeDeleteWebsite, payload, "purge_"+ws.ID.String())
+	if err != nil {
+		httpapi.RespondError(w, httpapi.ErrInternal(err))
+		return
+	}
+	if err := h.Websites.SetStatus(r.Context(), ws.ID, StatusDeleting, ""); err != nil {
+		httpapi.RespondError(w, httpapi.ErrInternal(err))
+		return
+	}
+	h.auditUser(r, &orgID, "website.purge_requested", "website", ws.ID.String(), nil)
+	httpapi.WriteJSON(w, http.StatusAccepted, map[string]any{"job_id": job.ID})
+}
+
+// lifecycleBody is the optional JSON request body of suspend/resume.
+type lifecycleBody struct {
+	Reason  string `json:"reason"`
+	Message string `json:"message"`
+	Force   bool   `json:"force"`
+}
+
+// parseLifecycleBody reads the optional body. An empty body (and an empty
+// or malformed Content-Type) is valid — suspend/resume bodies are optional.
+func parseLifecycleBody(r *http.Request) (lifecycleBody, *httpapi.APIError) {
+	var body lifecycleBody
+	if r.Body == nil {
+		return body, nil
+	}
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(&body); err != nil {
+		if errors.Is(err, io.EOF) {
+			return body, nil // empty body = defaults
+		}
+		return body, httpapi.ErrValidation("invalid JSON body")
+	}
+	return body, nil
 }
 
 // lifecycleOp parameterizes the suspend/resume enqueue flow.
@@ -810,6 +988,9 @@ type lifecycleOp struct {
 	auditAction  string
 	expectStatus Status
 	conflictMsg  string
+	reason       SuspensionReason
+	message      string
+	force        bool
 }
 
 // enqueueLifecycle validates the current status, enqueues the idempotent
@@ -830,10 +1011,20 @@ func (h *Handler) enqueueLifecycle(w http.ResponseWriter, r *http.Request, op li
 		httpapi.RespondError(w, httpapi.ErrConflict(op.conflictMsg))
 		return
 	}
+	// Resume guard: a bandwidth-suspended site whose quota is still
+	// exhausted must not come back (409 bandwidth_quota_exhausted) unless
+	// the admin explicitly forces it. Implemented by the api layer, which
+	// owns the effective-limit + usage seams (nil = no guard).
+	if op.jobType == TypeResumeWebsite && h.ResumeGuard != nil {
+		if apiErr := h.ResumeGuard(r.Context(), ws, op.force); apiErr != nil {
+			httpapi.RespondError(w, apiErr)
+			return
+		}
+	}
 	var payload any
 	switch op.jobType {
 	case TypeSuspendWebsite:
-		payload = SuspendPayload{WebsiteID: ws.ID.String()}
+		payload = SuspendPayload{WebsiteID: ws.ID.String(), Reason: string(op.reason), Message: op.message}
 	case TypeResumeWebsite:
 		payload = ResumePayload{WebsiteID: ws.ID.String()}
 	}
@@ -842,7 +1033,17 @@ func (h *Handler) enqueueLifecycle(w http.ResponseWriter, r *http.Request, op li
 		httpapi.RespondError(w, httpapi.ErrInternal(err))
 		return
 	}
-	h.auditUser(r, &orgID, op.auditAction, "website", ws.ID.String(), map[string]any{"job_id": job.ID.String()})
+	meta := map[string]any{"job_id": job.ID.String()}
+	if op.reason != "" {
+		meta["reason"] = string(op.reason)
+	}
+	if op.message != "" {
+		meta["message"] = op.message
+	}
+	if op.force {
+		meta["forced"] = true
+	}
+	h.auditUser(r, &orgID, op.auditAction, "website", ws.ID.String(), meta)
 	httpapi.WriteJSON(w, http.StatusAccepted, map[string]any{"job_id": job.ID})
 }
 

@@ -1809,3 +1809,70 @@ wired centrally. Two crash interruptions were healed by the coordinator (agent
 workload.go:123 empty-line panic fix; sink JSONB/sink-kind fixes; route mounts). Test DBs
 are per-agent (epicpanel_test_<suffix>). Full verification: go build/vet/test ./... -p 1
 green (22 pkgs), tsc -b clean, all three app builds green.
+
+ADR-063 — Per-site bandwidth accounting + lifecycle reasons + termination (2026-09-25).
+Implements the bandwidth/lifecycle brief through the EXISTING seams (ADR-047 lifecycle
+jobs, ADR-049 engine, ADR-050 policy); nothing duplicates them. Migration 0050
+(websites.suspension_reason/suspended_at/suspension_metadata/terminated_at/
+termination_reason/bandwidth_limit_mb + status 'terminated' + website_bandwidth_samples/
+_daily) and 0051 (job_type 'terminate_website').
+(1) ACCOUNTING FIX — the ADR-049 nft accounting never counted: acct_* chains were
+created EMPTY at the FORWARD hook (no site traffic crosses forward on a shared host).
+Chains now hook OUTPUT with a meta-skuid per-uid counter rule (direct external egress,
+loopback excluded); legacy/rule-less chains are recreated; counters rotate at UTC month
+boundaries via /var/lib/epicpanel/agent/bw_state.json (bootstrap rotates; the
+GREATEST high-water upsert keeps the billed period monotonic). Reverse-proxied
+responses (the dominant direction) are counted from the access-log windows
+(TrafficSampler month-to-date accumulator, restart-safe, composed into the
+enforce bandwidth usage). Known limits: per-site ingress is unattributed (0),
+apache/OLS sites lack the nginx access log (direct egress only), post-reboot
+traffic within a month under-counts until the counter re-passes the high-water.
+(2) REASONS: suspension is a state + a reason (manual/bandwidth_exhausted/abuse/
+payment/admin/system/attack — the last two plus bandwidth_exhausted are
+system-reserved, a dashboard can never forge them). suspend/resume APIs take
+optional {reason,message,force}; the fanout persists reason+timestamp+metadata,
+clears on resume and publishes website.suspended/website.resumed on the bus;
+over-limit suspend -> bandwidth_exhausted with used/limit/period metadata;
+billing suspend -> payment; attack -> attack.
+(3) PAGES: bandwidth_exhausted renders a per-site templated page ({{USED}}/{{LIMIT}}/
+{{PERCENT}}/{{RESETS}} humanized from the suspension metadata; written under
+/srv/epicpanel/websites/<id>/pages/ so numbers never leak via shared default_pages).
+All lifecycle stubs (nginx/apache/OLS) send Cache-Control: no-store so caches
+cannot outlive a lifecycle change. OLS keeps the generic suspended page (limitation).
+(4) RESUME GUARD: a bandwidth_exhausted site cannot resume while current-month
+usage >= effective limit (409 bandwidth_quota_exhausted, byte-exact boundary
+tested) unless admin force=true (audited website.resume_forced); wired into
+panel resume, billing resume and dynamic restore.
+(5) QUOTA: GET/PATCH .../quota expose the monthly budget; PATCH writes the
+per-site bandwidth_limit_mb override (NULL=plan, 0=unlimited) which rides THE
+shared enforce payload builder (agent budget == quota API == resume guard ==
+page metadata — ADR-049 anti-drift) and converges the node via the idempotent
+enforce job. GET .../bandwidth (quota + period usage + live egress rate) and
+GET .../bandwidth/history?from&to&interval=hour|day serve the dashboard from
+the bucket tables (hourly 90d, daily indefinite; bandwidthhistory store fed
+from the metrics OnTraffic path). Access-log bytes are response/egress-dominated.
+(6) TERMINATION: terminate is distinct from delete. POST .../terminate
+{reason, confirm:true} (admin) -> terminate_website job -> agent swaps every
+serving config to a 410 terminated.html stub (same backup + validated-reload
+pipeline as suspension), stops app processes, KEEPS files/user/DBs/DNS
+(retention for audit). status 'terminated' blocks suspend/resume/update and
+plain DELETE (409); POST .../purge {confirm:true} (admin, terminated only)
+reuses the destructive delete job. Billing's terminate intentionally NOT
+rewired (follow-up).
+(7) FRONTEND: shared BandwidthCard (packages/core/bandwidth.tsx) on both site
+pages — quota surface + live rate + reason-aware banners, refreshed by the
+website.suspended/resumed/terminated bus events (no polling); admin gains
+terminate/purge confirm actions. All new routes in phase12Routes +
+authzmatrix + openapi.json (231 ops) + tokenauth scope map.
+
+Session 2026-09-25 — bandwidth & lifecycle (worktree feature/site-lifecycle-bandwidth,
+branched @ fdab823; parallel session owned the main checkout):
+- Commits: 580ca53 (P1 reasons + resume guard), 790ce9b (P2 accounting + history +
+  quota APIs + gates), cf34c1a (P3 termination + pages), d05c8ef (P4 frontend).
+- Verified: go build/vet green; go test ./... -p 1 on a disposable PG cluster
+  (54331) green across touched packages (agent, api, websites, httpapi,
+  authzmatrix, bandwidthhistory); tsc -b clean; root/customer/admin builds green.
+- Next: deploy needs agent + api binary rebuild + restarts (user-driven);
+  billing terminate can switch to terminate_website + purge;
+  per-site ingress attribution (request_length logging / netns) is the main
+  accounting follow-up.

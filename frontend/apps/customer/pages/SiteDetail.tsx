@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Spinner } from '../loading'
 import { Link, useParams } from 'react-router-dom'
 import { Globe, ArrowLeft, Folder, Clock, Network, KeyRound, History, Plus, Trash2, ShieldQuestion, RefreshCw } from 'lucide-react'
-import { api, useAuth, domainsApi, redirectsApi, fmtBytes, timeAgo, useLiveSiteSample, DynamicResourcesCard } from '@epicpanel/core'
+import { api, useAuth, domainsApi, redirectsApi, fmtBytes, timeAgo, useLiveSiteSample, DynamicResourcesCard, BandwidthCard } from '@epicpanel/core'
 import type { Website, Domain, Redirect } from '@epicpanel/core'
 import { Card, CardHeader, StatusBadge, EmptyState, SkeletonRows, MiniItem, Breadcrumbs, RowActions, pushToast, UsageCard } from '@epicpanel/ui'
 import { Modal, Field, ErrorNote, ConfirmDialog } from '@epicpanel/forms'
@@ -168,6 +168,9 @@ export function SiteDetailPage() {
           />
         </div>
       )}
+
+      {/* Bandwidth accounting + lifecycle state (authoritative, WS-refreshed) */}
+      {site && org && <BandwidthCard orgId={org.id} website={site} onChanged={load} />}
 
       {/* Apps & tools: node/python/go app manager, one-click WordPress +
           Laravel, allowlisted command runner (composer/npm/artisan). */}

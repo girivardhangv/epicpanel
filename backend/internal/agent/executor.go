@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -24,10 +25,18 @@ type Executor struct {
 	docRootBase string
 	ctx         context.Context
 	pm          PackageManager
+	now         func() time.Time
+	bwStatePath string
+	// TrafficMonthEgress / TrafficSnapshot are wired by main to the
+	// streamer's traffic sampler (nil in tests → nft-only accounting):
+	// month-to-date access-log egress per site and the persistence
+	// snapshot for bw_state.
+	TrafficMonthEgress func(websiteID string) (int64, string)
+	TrafficSnapshot    func() map[string]int64
 }
 
 func NewExecutor() *Executor {
-	return &Executor{docRootBase: "/srv/epicpanel/websites", ctx: context.Background(), pm: DetectPackageManager()}
+	return &Executor{docRootBase: "/srv/epicpanel/websites", ctx: context.Background(), pm: DetectPackageManager(), now: time.Now, bwStatePath: bwStatePath}
 }
 
 func (e *Executor) ensureBaseDirs() error {

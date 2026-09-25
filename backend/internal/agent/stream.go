@@ -74,6 +74,13 @@ func NewStreamer(controlPlaneURL, token, agentVersion string, interval time.Dura
 	}
 }
 
+// TrafficSampler exposes the streamer's traffic sampler for wiring the
+// bandwidth accounting path (month-to-date access-log egress feeds the
+// enforce bandwidth usage; main owns the connection).
+func (s *Streamer) TrafficSampler() *TrafficSampler {
+	return s.traffic
+}
+
 // Send enqueues an asynchronous frame for delivery on the persistent stream.
 // Non-blocking: when the queue is full the frame is dropped (event frames are
 // best-effort; a producer that cannot keep up must never stall the sampling

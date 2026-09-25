@@ -202,7 +202,11 @@ func (s *Server) Handler() http.Handler {
 			}
 			return app.Port, true
 		},
-		RequireOrg: srvH.ResolveOrg,
+		// Resume guard (migration 0050): a site suspended for
+		// bandwidth_exhausted stays down while the quota is exhausted unless
+		// the admin forces the resume (audited website.resume_forced).
+		ResumeGuard: s.resumeBandwidthGuard,
+		RequireOrg:  srvH.ResolveOrg,
 	}
 	wsH.Register(mux, srvH.RequireAgent)
 	wsH.Ext = &websites.HandlerExtensions{
@@ -476,6 +480,8 @@ func (s *Server) Handler() http.Handler {
 	// Dynamic resources (traffic-adaptive allocation + bot defense) and the
 	// Free Perk overlay — per-site toggles, panel-wide config, perk API.
 	s.RegisterDynamicRoutes(mux, srvH.ResolveOrg)
+	// Bandwidth summary/history + per-site quota override (migration 0050).
+	s.RegisterBandwidthRoutes(mux, srvH.ResolveOrg)
 
 	// Fanout: every finished job is routed to the subsystems that own its
 	// state machine (websites lifecycle, runtime registry, databases).

@@ -18,6 +18,7 @@ import (
 	"github.com/epicbyte/epicpanel/backend/internal/audit"
 	"github.com/epicbyte/epicpanel/backend/internal/auth"
 	"github.com/epicbyte/epicpanel/backend/internal/backups"
+	"github.com/epicbyte/epicpanel/backend/internal/bandwidthhistory"
 	"github.com/epicbyte/epicpanel/backend/internal/config"
 	"github.com/epicbyte/epicpanel/backend/internal/crons"
 	"github.com/epicbyte/epicpanel/backend/internal/databases"
@@ -229,10 +230,15 @@ func run() error {
 	// Dynamic resources: completed per-site traffic windows ride the metrics
 	// stream; decouple ingest from the store lock with a bounded hand-off.
 	srv.Traffic = traffic.NewStore()
+	// Per-site bandwidth history (migration 0050): the same completed
+	// access-log windows feed the hourly/daily bucket tables alongside the
+	// in-memory dynamic-resources store.
+	bwHistory := bandwidthhistory.New(pool)
 	liveStore.OnTraffic = func(frames []agentproto.SiteTraffic) {
 		go func(f []agentproto.SiteTraffic) {
 			defer func() { _ = recover() }() // never let analytics kill ingest
 			srv.Traffic.Ingest(f)
+			bwHistory.Ingest(f)
 		}(frames)
 	}
 	historyWriter := metrics.NewWriter(pool, liveStore)

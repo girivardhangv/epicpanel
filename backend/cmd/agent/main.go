@@ -105,6 +105,16 @@ func serve(cfg agent.Config, log *slog.Logger) error {
 	exec := agent.NewExecutor()
 	streamer := agent.NewStreamer(cfg.ControlPlaneURL, cfg.AgentToken, agent.AgentVersion, 0)
 
+	// Bandwidth accounting wiring: the enforce path composes per-uid nft
+	// direct egress with the access-log egress month-to-date, and the
+	// sampler's accumulator survives agent restarts via bw_state.
+	sampler := streamer.TrafficSampler()
+	exec.TrafficMonthEgress = sampler.MonthEgressBytes
+	exec.TrafficSnapshot = sampler.MonthEgressSnapshot
+	if month, sites := agent.LoadBwMonthEgress(); len(sites) > 0 {
+		sampler.RestoreMonthEgress(month, sites)
+	}
+
 	log.Info("epicpanel agent starting", "control_plane", cfg.ControlPlaneURL,
 		"poll_interval", cfg.PollInterval, "metrics_interval", agent.MetricsIntervalForLog())
 

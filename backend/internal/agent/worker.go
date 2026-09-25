@@ -413,6 +413,18 @@ func PollAndExecute(ctx context.Context, c *Client, e *Executor, cfg Config) (bo
 				resultJSON = b
 			}
 		}
+	case "terminate_website":
+		var p LifecycleJobPayload
+		if err := json.Unmarshal(job.Payload, &p); err != nil {
+			execErr = err
+		} else {
+			outcome, err := e.TerminateWebsite(ctx, p)
+			if err != nil {
+				execErr = err
+			} else if b, err := json.Marshal(outcome); err == nil {
+				resultJSON = b
+			}
+		}
 	case "enforce_limits":
 		var p EnforceJobPayload
 		if err := json.Unmarshal(job.Payload, &p); err != nil {

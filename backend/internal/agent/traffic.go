@@ -102,15 +102,20 @@ func (t *TrafficSampler) CollectCompleted() []agentproto.SiteTraffic {
 		if st == nil {
 			// First sight: start observing from "now" (seek to EOF) so an
 			// agent restart never replays hours of stale log as an attack.
+			// A non-empty log means the site HAS served traffic before: mark
+			// it ever-active so idle windows still flow to the control plane
+			// (busy/protective states need clean windows to recover, even
+			// when the only recent traffic was excluded self-traffic).
 			var size int64
 			if fi, err := os.Stat(logPath); err == nil {
 				size = fi.Size()
 			}
 			t.state[id] = &siteTrafficState{
-				offset: size,
-				opened: now,
-				ips:    map[string]int64{},
-				paths:  map[string]struct{}{},
+				offset:     size,
+				opened:     now,
+				everActive: size > 0,
+				ips:        map[string]int64{},
+				paths:      map[string]struct{}{},
 			}
 			continue
 		}

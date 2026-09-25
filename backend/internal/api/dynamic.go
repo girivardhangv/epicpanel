@@ -373,6 +373,17 @@ func (s *Server) dynamicEvaluate(ctx context.Context, ws *websites.Website) {
 					fmt.Sprintf("traffic clean for %d windows; leaving protection mode", trend.CleanStreak))
 				s.enqueueDynamicEnforce(ctx, ws)
 			}
+			return
+		}
+		// No fresh traffic evidence at all (agent restart, quiet site whose
+		// only hits were excluded self-traffic): a busy site nobody is
+		// touching has no reason to stay throttled. Do not wait on a
+		// clean-window streak that may never be delivered.
+		if !seen || time.Since(trend.LastWindowAt) > 6*time.Minute {
+			if err := s.Websites.SetDynamicState(ctx, ws.ID, 1, websites.DynStateActive); err == nil {
+				s.recordDynamicEvent(ctx, ws, "scale_up", 0, 1, 0, "no traffic evidence while throttled; leaving protection mode")
+				s.enqueueDynamicEnforce(ctx, ws)
+			}
 		}
 		return
 	}

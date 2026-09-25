@@ -34,6 +34,7 @@ type Streamer struct {
 	collector *Collector
 	workloads *workloadCollector
 	traffic   *TrafficSampler
+	fpm       *fpmScraper
 
 	mu        sync.Mutex
 	sessionID string
@@ -67,6 +68,7 @@ func NewStreamer(controlPlaneURL, token, agentVersion string, interval time.Dura
 		collector:       NewCollector(),
 		workloads:       newWorkloadCollector(),
 		traffic:         NewTrafficSampler(),
+		fpm:             newFpmScraper(),
 		ring:            make([]agentproto.Frame, ringSize),
 		outCh:           make(chan agentproto.Frame, 1024),
 	}
@@ -322,6 +324,18 @@ func (s *Streamer) nextSampleFrame() (agentproto.Frame, bool, int64) {
 	node, _ := s.collector.Collect()
 	sample := agentproto.Sample{Node: *node}
 	sample.Sites = s.workloads.CollectSites()
+	if fpm := s.fpm.Collect(); len(fpm) > 0 {
+		for i := range sample.Sites {
+			if st, ok := fpm[sample.Sites[i].WebsiteID]; ok {
+				sample.Sites[i].FpmActive = st.Active
+				sample.Sites[i].FpmIdle = st.Idle
+				sample.Sites[i].FpmTotal = st.Total
+				sample.Sites[i].FpmQueue = st.Queue
+				sample.Sites[i].FpmMaxChildren = st.MaxChildren
+				sample.Sites[i].FpmMaxChildrenReached = st.MaxChildrenReached
+			}
+		}
+	}
 	sample.Apps = s.workloads.CollectApps()
 	sample.Containers = CollectContainers()
 	sample.Traffic = s.traffic.CollectCompleted()

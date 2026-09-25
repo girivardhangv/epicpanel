@@ -260,6 +260,16 @@ type SiteSample struct {
 	Processes     int     `json:"processes"`
 	IOReadBPS     float64 `json:"io_read_bps"`
 	IOWriteBPS    float64 `json:"io_write_bps"`
+	// PHP-FPM worker-pool pressure (absent/zero for non-PHP sites). Sourced
+	// from the pool's status endpoint (agent fpm_status.go); MaxChildren is
+	// the configured pm.max_children so the control plane can compute
+	// active/limit without knowing the pool config.
+	FpmActive             int  `json:"fpm_active,omitempty"`
+	FpmIdle               int  `json:"fpm_idle,omitempty"`
+	FpmTotal              int  `json:"fpm_total,omitempty"`
+	FpmQueue              int  `json:"fpm_queue,omitempty"`
+	FpmMaxChildren        int  `json:"fpm_max_children,omitempty"`
+	FpmMaxChildrenReached bool `json:"fpm_max_children_reached,omitempty"`
 }
 
 // ContainerSample is the Docker/container envelope.

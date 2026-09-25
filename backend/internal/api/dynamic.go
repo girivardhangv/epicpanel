@@ -13,6 +13,7 @@ import (
 
 	agentpkg "github.com/epicbyte/epicpanel/backend/internal/agent"
 	"github.com/epicbyte/epicpanel/backend/internal/audit"
+	"github.com/epicbyte/epicpanel/backend/internal/dynres"
 	"github.com/epicbyte/epicpanel/backend/internal/events"
 	"github.com/epicbyte/epicpanel/backend/internal/httpapi"
 	"github.com/epicbyte/epicpanel/backend/internal/jobs"
@@ -26,50 +27,93 @@ import (
 // ============================================================================
 // Dynamic resources — traffic-adaptive allocation + bot defense.
 //
-// Decision loop (30s): for every ready site opted in, read the traffic trend
-// (multi-factor window scoring, internal/traffic) and drive the state
-// machine:
+// Two INDEPENDENT analyzers combine only at the state-machine layer:
 //
-//   active  — legit traffic: scale up on allocation pressure (cgroup usage
-//             >= 80% of the current ceiling), scale down toward the floor
-//             when idle. Suspect traffic for 2 windows -> busy.
-//   busy    — protective mode: floor allocation (default 32MB), site still
-//             served. M clean windows -> active.
-//   suspended_attack — attack confirmed for 2 consecutive windows: site is
-//             deallocated (floor) and DISABLED via the idempotent
-//             suspend_website job (503 stub, no PHP, no proxy). Recovery is
-//             manual (restore endpoint) unless dynamic_auto_resume_minutes
-//             is set. A panel-wide or per-site disable also restores.
+//   SECURITY (60s windows, internal/traffic): multi-factor scoring of
+//   access-log windows drives the site state — legit / busy (protective
+//   floor) / suspended_attack (suspend_website job). It never moves tiers.
+//
+//   RESOURCES (15s decisions, internal/dynres): per-site pressure
+//   max(cpu, memory, pids, fpm) against the CURRENT ceiling, smoothed with
+//   an EWMA (α=0.25), with asymmetric hysteresis:
+//     scale up   — pressure ≥80% sustained ~30s, or ≥70% and rising fast
+//                  (prediction window); one tier at a time, 60s cooldown
+//     scale down — pressure <25% sustained 4 min; one tier, 5min cooldown
+//   Every scale-up passes the safety governor (node RAM reserve, fleet
+//   allocation cap, global scale-up rate limit, per-site ceiling).
+//
+// State machine (state in the websites table — restart-convergent):
+//
+//   active  — resource engine scales tiers 1..maxTier
+//   busy    — suspect traffic: floored, still served; N clean windows -> active
+//   suspended_attack — attack confirmed: floored + DISABLED via the
+//             idempotent suspend_website job. Recovery is manual (restore
+//             endpoint) unless dynamic_auto_resume_minutes is set.
 //
 // Resource changes always converge through the SAME enforce_limits job the
 // Phase 9 engine uses — one enforcement mechanism, no second control loop.
+// Live visibility: every tick pushes throttled website.resource_update
+// snapshots on the WS bus; tier/state changes publish immediately.
 // ============================================================================
 
 const (
-	dynamicTickInterval    = 30 * time.Second
-	dynamicScaleUpCooldown = 2 * time.Minute
-	dynamicScaleDownCooldown = 5 * time.Minute
-	dynamicIdleAfter         = 3 * time.Minute // no windows for this long = idle
+	dynamicTickInterval = 15 * time.Second // resource decision cadence
+
+	dynamicPushMinInterval = 5 * time.Second  // resource_update throttle
+	dynamicPushHeartbeat   = 30 * time.Second // periodic snapshot even when steady
 )
 
-// dynamicRuntime is per-process allocator memory (cooldowns). Tier/state
+// dynamicRuntime is per-process allocator memory: engines (EWMA + cooldown
+// state), the fleet scale-up rate limiter and push throttles. Tier/state
 // truth lives in the websites table, so a control-plane restart converges.
 type dynamicRuntime struct {
-	mu        sync.Mutex
-	lastScale map[uuid.UUID]time.Time
+	mu             sync.Mutex
+	engines        map[uuid.UUID]*dynres.Engine
+	scaleUps       []time.Time             // global rate limiter (per minute)
+	lastPush       map[uuid.UUID]time.Time // resource_update throttle
+	lastPushedMax  map[uuid.UUID]float64
 }
 
-func (d *dynamicRuntime) canScale(id uuid.UUID, cooldown time.Duration, now time.Time) bool {
+func (d *dynamicRuntime) engineFor(id uuid.UUID, tier int) *dynres.Engine {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.lastScale == nil {
-		d.lastScale = map[uuid.UUID]time.Time{}
+	if d.engines == nil {
+		d.engines = map[uuid.UUID]*dynres.Engine{}
 	}
-	if t, ok := d.lastScale[id]; ok && now.Sub(t) < cooldown {
-		return false
+	e, ok := d.engines[id]
+	if !ok || e.Tier != tier {
+		// First sight (or tier changed outside the engine): re-seed at the
+		// stored tier. Restart/tier-drift converges here.
+		e = dynres.New(tier)
+		d.engines[id] = e
 	}
-	d.lastScale[id] = now
-	return true
+	return e
+}
+
+func (d *dynamicRuntime) scaleUpsLastMinute(now time.Time) int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	kept := d.scaleUps[:0]
+	for _, t := range d.scaleUps {
+		if now.Sub(t) < time.Minute {
+			kept = append(kept, t)
+		}
+	}
+	d.scaleUps = kept
+	return len(d.scaleUps)
+}
+
+func (d *dynamicRuntime) recordScaleUp(now time.Time) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.scaleUps = append(d.scaleUps, now)
+}
+
+// peekEngine returns the site's engine without creating one (read paths).
+func (d *dynamicRuntime) peekEngine(id uuid.UUID) *dynres.Engine {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.engines[id]
 }
 
 // trafficStore lazily builds the in-memory traffic store (nil-safe for
@@ -125,6 +169,36 @@ func (s *Server) dynFloorMB(ctx context.Context) int64 {
 
 func (s *Server) dynAttackWindows(ctx context.Context) int { return s.dynIntSettingCtx(ctx, "dynamic_attack_windows", 2) }
 func (s *Server) dynRecoverWindows(ctx context.Context) int { return s.dynIntSettingCtx(ctx, "dynamic_recover_windows", 4) }
+
+// dynScaledInt reads an int setting, clamped to [min,max]; out-of-range or
+// unparseable values fall back to def (never silently disable the engine).
+func (s *Server) dynScaledInt(ctx context.Context, key string, def, min, max int) int {
+	n := s.dynIntSettingCtx(ctx, key, def)
+	if n < min || n > max {
+		return def
+	}
+	return n
+}
+
+func (s *Server) dynMaxTier(ctx context.Context) int {
+	return s.dynScaledInt(ctx, "dynamic_max_tier", traffic.MaxTier, 1, traffic.MaxTier)
+}
+
+func (s *Server) dynUpCooldown(ctx context.Context) time.Duration {
+	return time.Duration(s.dynScaledInt(ctx, "dynamic_scale_up_cooldown_s", 60, 30, 600)) * time.Second
+}
+
+func (s *Server) dynDownCooldown(ctx context.Context) time.Duration {
+	return time.Duration(s.dynScaledInt(ctx, "dynamic_scale_down_cooldown_s", 300, 60, 3600)) * time.Second
+}
+
+func (s *Server) dynGlobalCapPercent(ctx context.Context) int {
+	return s.dynScaledInt(ctx, "dynamic_global_cap_percent", 75, 0, 100)
+}
+
+func (s *Server) dynMaxScaleUpsPerMinute(ctx context.Context) int {
+	return s.dynScaledInt(ctx, "dynamic_max_scaleups_per_minute", 10, 0, 1000)
+}
 
 func (s *Server) dynAutoResumeMinutes(ctx context.Context) int64 {
 	return int64(s.dynIntSettingCtx(ctx, "dynamic_auto_resume_minutes", 0))
@@ -280,7 +354,6 @@ func (s *Server) dynamicSweepGlobalOff(ctx context.Context) {
 }
 
 func (s *Server) dynamicEvaluate(ctx context.Context, ws *websites.Website) {
-	floor := s.dynFloorMB(ctx)
 	trend, seen := s.trafficStore().Trend(ws.ID)
 
 	switch ws.DynamicState {
@@ -321,7 +394,7 @@ func (s *Server) dynamicEvaluate(ctx context.Context, ws *websites.Website) {
 		}
 		return
 	}
-	s.dynamicAutoscale(ctx, ws, trend, seen, floor)
+	s.dynamicEngineStep(ctx, ws)
 }
 
 // dynamicSuspendUnderAttack deallocates the site (floor) and DISABLES it via
@@ -390,49 +463,223 @@ func (s *Server) dynamicRestore(ctx context.Context, ws *websites.Website, reaso
 	}
 }
 
-// dynamicAutoscale: legit traffic + allocation pressure → tier up; idle →
-// tier down toward the floor. Only honest signals: cgroup usage against the
-// CURRENT ceiling (same source the agent enforces) and window staleness.
-func (s *Server) dynamicAutoscale(ctx context.Context, ws *websites.Website, trend traffic.Trend, seen bool, floor int64) {
+// dynamicEngineStep feeds the site's freshest live sample to the resource
+// engine and, on a decision, passes it through the safety governor before
+// anything touches the node. Called only for ACTIVE sites (busy/attacked
+// sites are floored by the security path, never scaled here).
+func (s *Server) dynamicEngineStep(ctx context.Context, ws *websites.Website) {
+	now := time.Now()
+	e := s.dyn.engineFor(ws.ID, traffic.ClampTier(ws.DynamicTier))
+
+	sample := s.liveSiteSample(ws)
+	pressures := e.Observe(sample.Observation())
+	d := e.Decide(now, s.dynMaxTier(ctx), s.dynUpCooldown(ctx), s.dynDownCooldown(ctx))
+	if d.Action == dynres.ActionNone {
+		s.publishResourceUpdate(ctx, ws, e, sample)
+		return
+	}
+
 	base, err := s.dynamicBasePayload(ctx, ws)
 	if err != nil {
 		return
 	}
-	tier := traffic.ClampTier(ws.DynamicTier)
-	alloc := traffic.Scale(traffic.BaseLimits{
-		MemoryMB:    base.MemoryMB,
-		CPUPercent:  base.CPUPercent,
-		PidsMax:     base.PidsMax,
-		FpmChildren: base.FpmMaxChildren,
-	}, tier, floor)
+	floor := s.dynFloorMB(ctx)
+	scaleAt := func(tier int) traffic.BaseLimits {
+		return traffic.Scale(traffic.BaseLimits{
+			MemoryMB:    base.MemoryMB,
+			CPUPercent:  base.CPUPercent,
+			PidsMax:     base.PidsMax,
+			FpmChildren: base.FpmMaxChildren,
+		}, tier, floor)
+	}
+	cur, des := scaleAt(d.FromTier), scaleAt(d.ToTier)
+	nodeTotal, nodeAvail := s.nodeMemory(ws.ServerID)
+	globalAllocMB := s.dynamicFleetAllocatedMB(ctx, ws, floor)
 
-	cpu, mem := s.liveSiteUsage(ws)
-	allocMemBytes := alloc.MemoryMB * 1024 * 1024
-	pressure := (allocMemBytes > 0 && float64(mem) >= 0.8*float64(allocMemBytes)) ||
-		(alloc.CPUPercent > 0 && cpu >= 0.8*alloc.CPUPercent)
-	idle := (!seen || time.Since(trend.LastWindowAt) > dynamicIdleAfter) &&
-		float64(mem) < 0.15*float64(allocMemBytes) && cpu < 15
+	v := dynres.Govern(dynres.GovernorInput{
+		Tier: d.FromTier, DesiredTier: d.ToTier,
+		CurrentMemBytes: cur.MemoryMB * 1024 * 1024, DesiredMemBytes: des.MemoryMB * 1024 * 1024,
+		NodeMemTotalBytes: nodeTotal, NodeMemAvailableBytes: nodeAvail,
+		GlobalDynamicAllocatedBytes: globalAllocMB * 1024 * 1024,
+		GlobalCapPercent:            s.dynGlobalCapPercent(ctx),
+		ScaleUpsLastMinute:          s.dyn.scaleUpsLastMinute(now),
+		MaxScaleUpsPerMinute:        s.dynMaxScaleUpsPerMinute(ctx),
+		MaxTier:                     s.dynMaxTier(ctx),
+	})
+	if !v.Allowed {
+		// Governor denial is an event, not an error: record it (score-free,
+		// throttled by the push path) so the UI can show WHY the site did
+		// not scale.
+		s.recordDynamicEvent(ctx, ws, "governor_denied", d.FromTier, d.FromTier, 0,
+			fmt.Sprintf("%s blocked: %s", d.Action, v.Reason))
+		s.publishResourceUpdate(ctx, ws, e, sample)
+		return
+	}
 
+	if err := s.Websites.SetDynamicState(ctx, ws.ID, v.EffectiveTier, websites.DynStateActive); err != nil {
+		return
+	}
+	if d.Action == dynres.ActionScaleUp {
+		s.dyn.recordScaleUp(now)
+	}
+	ws.DynamicTier = v.EffectiveTier
+	reason := d.Reason
+	if v.EffectiveTier != d.ToTier {
+		reason += fmt.Sprintf(" (capped at tier %d by the governor)", v.EffectiveTier)
+	}
+	s.recordDynamicEvent(ctx, ws, string(d.Action), d.FromTier, v.EffectiveTier, 0, reason)
+	s.publishDynamicEvent(ctx, ws, "website.tier_changed", map[string]any{
+		"action": string(d.Action), "from_tier": d.FromTier, "to_tier": v.EffectiveTier,
+		"reason": reason, "pressure": d.Pressure, "bottleneck": pressures.MaxName,
+	})
+	s.enqueueDynamicEnforce(ctx, ws)
+	s.publishResourceUpdate(ctx, ws, e, sample)
+}
+
+// dynamicFleetAllocatedMB sums the current-tier memory allocation of every
+// OTHER dynamic site on the same node — the governor's fleet-wide denominator.
+func (s *Server) dynamicFleetAllocatedMB(ctx context.Context, ws *websites.Website, floor int64) int64 {
+	sites, err := s.Websites.ListDynamicReady(ctx, 500)
+	if err != nil {
+		return 0
+	}
+	var total int64
+	for i := range sites {
+		w := &sites[i]
+		if w.ID == ws.ID || w.ServerID != ws.ServerID {
+			continue
+		}
+		base, err := s.dynamicBasePayload(ctx, w)
+		if err != nil {
+			continue
+		}
+		alloc := traffic.Scale(traffic.BaseLimits{
+			MemoryMB: base.MemoryMB, CPUPercent: base.CPUPercent,
+			PidsMax: base.PidsMax, FpmChildren: base.FpmMaxChildren,
+		}, traffic.ClampTier(w.DynamicTier), floor)
+		total += alloc.MemoryMB
+	}
+	return total
+}
+
+// nodeMemory returns the node's total/available RAM from the freshest agent
+// sample (0,0 when unknown — the governor then skips the capacity checks
+// rather than inventing limits).
+func (s *Server) nodeMemory(serverID uuid.UUID) (total, avail int64) {
+	if s.LiveStore == nil {
+		return 0, 0
+	}
+	lv := s.LiveStore.Snapshot(serverID)
+	if lv == nil || lv.Sample == nil {
+		return 0, 0
+	}
+	return int64(lv.Sample.Node.MemoryTotal), int64(lv.Sample.Node.MemoryAvailable)
+}
+
+// publishResourceUpdate pushes a throttled live snapshot for the site onto
+// the WS bus: on any meaningful pressure/tier change, else as a 30s
+// heartbeat. The UI renders live bars from these instead of polling.
+func (s *Server) publishResourceUpdate(ctx context.Context, ws *websites.Website, e *dynres.Engine, sample liveSample) {
 	now := time.Now()
-	switch {
-	case tier < traffic.MaxTier && pressure && s.dyn.canScale(ws.ID, dynamicScaleUpCooldown, now):
-		newTier := tier + 1
-		if err := s.Websites.SetDynamicState(ctx, ws.ID, newTier, websites.DynStateActive); err != nil {
-			return
+	s.dyn.mu.Lock()
+	last := s.dyn.lastPush[ws.ID]
+	lastMax := s.dyn.lastPushedMax[ws.ID]
+	changed := sample.found && absf(e.Smoothed()-lastMax) >= 0.02
+	due := now.Sub(last) >= dynamicPushHeartbeat || (changed && now.Sub(last) >= dynamicPushMinInterval)
+	if !due {
+		s.dyn.mu.Unlock()
+		return
+	}
+	s.dyn.lastPush[ws.ID] = now
+	if s.dyn.lastPushedMax == nil {
+		s.dyn.lastPushedMax = map[uuid.UUID]float64{}
+	}
+	s.dyn.lastPushedMax[ws.ID] = e.Smoothed()
+	s.dyn.mu.Unlock()
+
+	p := e.LastPressures()
+	payload := map[string]any{
+		"tier": traffic.ClampTier(ws.DynamicTier), "state": ws.DynamicState,
+		"pressure": map[string]any{
+			"cpu": p.CPU, "memory": p.Memory, "pids": p.Pids, "fpm": p.FPM,
+			"max": p.Max, "bottleneck": p.MaxName, "smoothed": e.Smoothed(),
+		},
+		"usage": map[string]any{
+			"cpu_percent": sample.cpuPercent, "memory_mb": sample.memBytes / (1024 * 1024),
+			"processes": sample.pids, "fpm_active": sample.fpmActive, "fpm_queue": sample.fpmQueue,
+		},
+		"limits": map[string]any{
+			"cpu_percent": sample.cpuLimitPercent, "memory_mb": sample.memLimit / (1024 * 1024),
+			"pids_max": sample.pidsLimit, "fpm_max_children": sample.fpmChildren,
+		},
+	}
+	if trend, ok := s.trafficStore().Trend(ws.ID); ok && trend.LastWindow > 0 {
+		windowS := int64(60) // defaultTrafficWindow; refined from the recent ring below
+		if recent := s.trafficStore().Recent(ws.ID); len(recent) > 0 && recent[len(recent)-1].WindowS > 0 {
+			windowS = int64(recent[len(recent)-1].WindowS)
 		}
-		ws.DynamicTier = newTier
-		s.recordDynamicEvent(ctx, ws, "scale_up", tier, newTier, 0,
-			fmt.Sprintf("allocation pressure (%d%% of memory ceiling, %.0f%% CPU)", pctOf(mem, allocMemBytes), cpu))
-		s.enqueueDynamicEnforce(ctx, ws)
-	case tier > 0 && idle && s.dyn.canScale(ws.ID, dynamicScaleDownCooldown, now):
-		newTier := tier - 1
-		if err := s.Websites.SetDynamicState(ctx, ws.ID, newTier, websites.DynStateActive); err != nil {
-			return
-		}
-		ws.DynamicTier = newTier
-		s.recordDynamicEvent(ctx, ws, "scale_down", tier, newTier, 0,
-			fmt.Sprintf("idle (floor: %dMB)", floor))
-		s.enqueueDynamicEnforce(ctx, ws)
+		payload["requests_per_sec"] = float64(trend.LastWindow) / float64(windowS)
+	}
+	s.publishDynamicEvent(ctx, ws, "website.resource_update", payload)
+}
+
+func absf(v float64) float64 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+// FPM numbers from the agent stream, with enforced limits as denominators
+// (the anti-drift rule — display source == enforcement source).
+func (s *Server) liveSiteSample(ws *websites.Website) liveSample {
+	var ls liveSample
+	if s.LiveStore == nil {
+		return ls
+	}
+	lv := s.LiveStore.Snapshot(ws.ServerID)
+	if lv == nil {
+		return ls
+	}
+	if lv.Sample != nil {
+		ls.nodeTotal = int64(lv.Sample.Node.MemoryTotal)
+		ls.nodeAvail = int64(lv.Sample.Node.MemoryAvailable)
+	}
+	site, ok := lv.Sites[ws.ID.String()]
+	if !ok {
+		return ls
+	}
+	ls.found = true
+	ls.cpuPercent = site.CPUPercent
+	ls.cpuLimitPercent = site.CPULimitCores * 100
+	ls.memBytes = site.MemoryBytes
+	ls.memLimit = site.MemoryLimit
+	ls.pids = int64(site.Processes)
+	ls.pidsLimit = site.PidsLimit
+	ls.fpmActive = site.FpmActive
+	ls.fpmChildren = site.FpmMaxChildren
+	ls.fpmQueue = site.FpmQueue
+	return ls
+}
+
+// liveSample carries the engine's inputs plus the node view for the governor.
+type liveSample struct {
+	found                          bool
+	cpuPercent, cpuLimitPercent    float64
+	memBytes, memLimit             int64
+	pids, pidsLimit                int64
+	fpmActive, fpmChildren, fpmQueue int
+	nodeTotal, nodeAvail           int64
+}
+
+// Observation reduces the sample to engine units. When the agent has no
+// live sample (agent down, site idle), all pressures read zero — the
+// engine simply sees a very idle site and never scales on missing data.
+func (l liveSample) Observation() dynres.Observation {
+	return dynres.Observation{
+		CPUPercent: l.cpuPercent, CPULimitPercent: l.cpuLimitPercent,
+		MemBytes: l.memBytes, MemLimitBytes: l.memLimit,
+		Pids: l.pids, PidsLimit: l.pidsLimit,
+		FPMActive: l.fpmActive, FPMChildren: l.fpmChildren, FPMQueue: l.fpmQueue,
 	}
 }
 
@@ -468,12 +715,6 @@ func dynamicReason(trend traffic.Trend) string {
 	return reason
 }
 
-func pctOf(v, total int64) int {
-	if total <= 0 {
-		return 0
-	}
-	return int(float64(v) / float64(total) * 100)
-}
 
 // ---------- events + audit ----------
 
@@ -586,6 +827,8 @@ type dynamicStatusResponse struct {
 	FloorMemoryMB   int64                      `json:"floor_memory_mb"`
 	FreePerk        bool                       `json:"free_perk"`
 	EffectiveLimits map[string]any             `json:"effective_limits"`
+	Pressure        map[string]any             `json:"pressure,omitempty"`
+	Usage           map[string]any             `json:"usage,omitempty"`
 	Trend           *traffic.Trend             `json:"trend,omitempty"`
 	Windows         []agentprotoWindowSnapshot `json:"recent_windows,omitempty"`
 	Events          []dynamicEventRow          `json:"recent_events,omitempty"`
@@ -633,6 +876,19 @@ func (s *Server) getDynamicStatus(w http.ResponseWriter, r *http.Request, ws *we
 		Enabled: ws.DynamicEnabled, GlobalEnabled: s.dynEnabled(ctx),
 		Tier: traffic.ClampTier(ws.DynamicTier), State: ws.DynamicState,
 		FloorMemoryMB: floor, FreePerk: ws.FreePerk, EffectiveLimits: effective,
+	}
+	// Live pressure from the resource engine (absent until the first tick).
+	if e := s.dyn.peekEngine(ws.ID); e != nil {
+		p := e.LastPressures()
+		sample := s.liveSiteSample(ws)
+		resp.Pressure = map[string]any{
+			"cpu": p.CPU, "memory": p.Memory, "pids": p.Pids, "fpm": p.FPM,
+			"max": p.Max, "bottleneck": p.MaxName, "smoothed": e.Smoothed(),
+		}
+		resp.Usage = map[string]any{
+			"cpu_percent": sample.cpuPercent, "memory_mb": sample.memBytes / (1024 * 1024),
+			"processes": sample.pids, "fpm_active": sample.fpmActive, "fpm_queue": sample.fpmQueue,
+		}
 	}
 	if trend, ok := s.trafficStore().Trend(ws.ID); ok {
 		resp.Trend = &trend
@@ -872,6 +1128,12 @@ func (s *Server) getAdminDynamic(w http.ResponseWriter, r *http.Request) {
 		"recover_windows":       s.dynRecoverWindows(ctx),
 		"auto_resume_minutes":   s.dynAutoResumeMinutes(ctx),
 		"free_perk_max_per_org": s.dynIntSettingCtx(ctx, "free_perk_max_sites_per_user", 1),
+		// Resource engine + safety governor knobs.
+		"max_tier":                   s.dynMaxTier(ctx),
+		"scale_up_cooldown_s":        s.dynUpCooldown(ctx) / time.Second,
+		"scale_down_cooldown_s":      s.dynDownCooldown(ctx) / time.Second,
+		"global_cap_percent":         s.dynGlobalCapPercent(ctx),
+		"max_scaleups_per_minute":    s.dynMaxScaleUpsPerMinute(ctx),
 	}
 	if pkg, ok, err := s.perkPackage(ctx); err == nil && ok {
 		resp["free_perk_package"] = map[string]any{
@@ -924,6 +1186,11 @@ func (s *Server) patchAdminDynamic(w http.ResponseWriter, r *http.Request) {
 		RecoverWindows     *int   `json:"recover_windows"`
 		AutoResumeMinutes  *int64 `json:"auto_resume_minutes"`
 		FreePerkMaxPerOrg  *int   `json:"free_perk_max_per_org"`
+		MaxTier            *int   `json:"max_tier"`
+		ScaleUpCooldownS   *int   `json:"scale_up_cooldown_s"`
+		ScaleDownCooldownS *int   `json:"scale_down_cooldown_s"`
+		GlobalCapPercent   *int   `json:"global_cap_percent"`
+		MaxScaleUpsPerMin  *int   `json:"max_scaleups_per_minute"`
 	}
 	if apiErr := httpapi.Read(r, &req); apiErr != nil {
 		httpapi.RespondError(w, apiErr)
@@ -977,6 +1244,41 @@ func (s *Server) patchAdminDynamic(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		set("free_perk_max_sites_per_user", strconv.Itoa(*req.FreePerkMaxPerOrg))
+	}
+	if req.MaxTier != nil {
+		if *req.MaxTier < 1 || *req.MaxTier > traffic.MaxTier {
+			httpapi.RespondError(w, httpapi.ErrValidation(fmt.Sprintf("max_tier must be between 1 and %d", traffic.MaxTier)))
+			return
+		}
+		set("dynamic_max_tier", strconv.Itoa(*req.MaxTier))
+	}
+	if req.ScaleUpCooldownS != nil {
+		if *req.ScaleUpCooldownS < 30 || *req.ScaleUpCooldownS > 600 {
+			httpapi.RespondError(w, httpapi.ErrValidation("scale_up_cooldown_s must be between 30 and 600"))
+			return
+		}
+		set("dynamic_scale_up_cooldown_s", strconv.Itoa(*req.ScaleUpCooldownS))
+	}
+	if req.ScaleDownCooldownS != nil {
+		if *req.ScaleDownCooldownS < 60 || *req.ScaleDownCooldownS > 3600 {
+			httpapi.RespondError(w, httpapi.ErrValidation("scale_down_cooldown_s must be between 60 and 3600"))
+			return
+		}
+		set("dynamic_scale_down_cooldown_s", strconv.Itoa(*req.ScaleDownCooldownS))
+	}
+	if req.GlobalCapPercent != nil {
+		if *req.GlobalCapPercent < 0 || *req.GlobalCapPercent > 100 {
+			httpapi.RespondError(w, httpapi.ErrValidation("global_cap_percent must be between 0 and 100"))
+			return
+		}
+		set("dynamic_global_cap_percent", strconv.Itoa(*req.GlobalCapPercent))
+	}
+	if req.MaxScaleUpsPerMin != nil {
+		if *req.MaxScaleUpsPerMin < 0 || *req.MaxScaleUpsPerMin > 1000 {
+			httpapi.RespondError(w, httpapi.ErrValidation("max_scaleups_per_minute out of range"))
+			return
+		}
+		set("dynamic_max_scaleups_per_minute", strconv.Itoa(*req.MaxScaleUpsPerMin))
 	}
 	s.Audit.RecordBestEffort(ctx, audit.Entry{
 		ActorType: audit.ActorUser, ActorUserID: actorID,

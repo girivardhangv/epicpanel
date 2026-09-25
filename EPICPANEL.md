@@ -1755,6 +1755,44 @@ dynamic_resource_events (rendered in the site detail card; shared DynamicResourc
 in packages/core consumed by both site pages; panel config card on Settings page;
 create-form flags).
 
+ADR-062a — Resource engine rework: pressure-driven scaling, safety governor, live push
+(2026-09-25). Supersedes the scaling half of ADR-062 point (3) (cooldown numbers, 30s
+tick, idle-based scale-down); security classification is UNCHANGED. Rationale: separate
+the two analyzers completely and make scaling deterministic + simulatable.
+(1) ENGINE (internal/dynres — pure, I/O-free, all clocks injected): per-site state
+machine fed per-decision-tick Observations; pressure = max(cpu, memory, pids, fpm)
+usage/CURRENT-ceiling ratios (unlimited dims contribute 0; a non-empty FPM listen
+queue reads as ≥0.9). EWMA α=0.25 smoothing; scale-up when raw pressure ≥80%
+sustained 2 ticks (30s) OR smoothed ≥70% AND rising (3 positive deltas, ≥0.10 rise —
+the prediction window); scale-down when smoothed <25% sustained 16 ticks (4 min).
+One tier per decision; cooldowns 60s up / 300s down (settings dynamic_scale_up_cooldown_s
+30-600 / dynamic_scale_down_cooldown_s 60-3600). Active sites floor at tier 1.
+Unit + 24h simulation tests assert the EXACT transition sequence
+(internal/dynres/simulation_test.go) — the gate before touching real cgroups.
+(2) SECURITY/RESOURCE SEPARATION: internal/traffic scoring (60s windows) decides
+active/busy/attacked ONLY; internal/dynres decides tiers ONLY; they meet in
+dynamicEvaluate (internal/api/dynamic.go, tick now 15s). Busy/attacked sites never
+run the engine (always floored).
+(3) AGENT FPM TELEMETRY (internal/agent/fpm_status.go): minimal FastCGI v1 client
+scrapes each pool's status endpoint directly over /run/epicpanel/php-fpm/<id>.sock
+(active/idle/total workers, listen queue, max_children_reached) with a 5s TTL cache;
+pools rendered with pm.status_path=/status (fpm.go), legacy pools self-heal once per
+agent process (patch + php-fpm -t + reload, restore on failure). SiteSample gained
+fpm_active/fpm_idle/fpm_total/fpm_queue/fpm_max_children/fpm_max_children_reached.
+(4) SAFETY GOVERNOR (dynres.Govern, pure): every scale-up passes — per-site ceiling
+(dynamic_max_tier 1-4), global scale-up rate limit (dynamic_max_scaleups_per_minute,
+default 10/min), fleet allocation cap (dynamic_global_cap_percent of node RAM,
+default 75%), node RAM reserve (10% of total never dynamically allocated, based on
+agent-reported MemoryAvailable vs the tier delta). Denials are recorded as
+governor_denied events with the reason. Scale-downs are never blocked.
+(5) LIVE PUSH: the tick publishes throttled website.resource_update snapshots on the
+WS bus (per site: pressure breakdown + smoothed, usage incl. FPM workers/queue,
+limits, requests_per_sec; ≥5s between pushes on change, 30s heartbeat) and immediate
+website.tier_changed (action/from/to/reason/pressure/bottleneck) — tier changes were
+previously table-only. DynamicResourcesCard subscribes via the ws singleton, renders
+live CPU/RAM/Workers pressure bars (green/amber≥70%/red≥85%) and refetches + toasts
+on tier/state events; GET .../dynamic gained pressure + usage blocks.
+
 Coordinator notes (wave execution): subagents ran with exclusive file ownership
 (phases/wave-contract.md); shared files (server.go routes, worker dispatch, App.tsx) were
 wired centrally. Two crash interruptions were healed by the coordinator (agent

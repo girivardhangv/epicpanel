@@ -5338,7 +5338,7 @@
     "x_scope": "admin:read"
    },
    "patch": {
-    "summary": "Update dynamic-resources config (toggle, floor, windows, perk cap) (platform admin)",
+    "summary": "Update dynamic-resources config (toggle, floor, windows, perk cap, engine cooldowns, max tier, governor caps) (platform admin)",
     "tags": [
      "Admin WHM Console"
     ],

@@ -941,6 +941,8 @@ export interface DynamicStatus {
   floor_memory_mb: number
   free_perk: boolean
   effective_limits?: { memory_mb?: number; cpu_percent?: number; pids_max?: number; fpm_max_children?: number; disk_mb?: number }
+  pressure?: { cpu: number; memory: number; pids: number; fpm: number; max: number; bottleneck?: string; smoothed: number }
+  usage?: { cpu_percent: number; memory_mb: number; processes: number; fpm_active: number; fpm_queue: number }
   trend?: DynamicTrend
   recent_windows?: { window_s: number; requests: number; unique_ips: number; top3_share: number; status_4xx: number; ua_bad_tool: number; ua_empty: number; ua_good_bot: number; not_found_reqs: number }[]
   recent_events?: DynamicEvent[]

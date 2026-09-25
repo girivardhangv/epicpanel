@@ -3,8 +3,14 @@
 // by both site detail pages; a pure client of the dedicated API surface so
 // the card only ever shows the backend's decisions. Lives in core (not ui)
 // because it is data-coupled; ui components stay data-free.
+//
+// LIVE updates: the control plane pushes throttled `website.resource_update`
+// snapshots (pressure, usage, tier) and immediate `website.tier_changed` /
+// `website.dynamic_busy` / `website.attack_suspended` / `website.dynamic_restored`
+// events on the /v1/ws bus. The card renders live pressure bars from the
+// snapshots and refetches on state changes — no polling.
 import { useCallback, useEffect, useState } from 'react'
-import { dynamicApi } from './api'
+import { dynamicApi, ws } from './api'
 import type { DynamicStatus, FreePerkStatus, Website } from './api'
 
 const tierLabel = (t: number) => (t <= 0 ? 'floor (minimum)' : t === 1 ? 'base (plan)' : `${[1, 1, 2, 4, 8][t] ?? t}x plan`)
@@ -47,6 +53,9 @@ export function DynamicResourcesCard({
   const [perk, setPerk] = useState<FreePerkStatus | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  // Live snapshot from website.resource_update — kept separate from `status`
+  // so bus bursts never clobber settings fetched from the REST surface.
+  const [live, setLive] = useState<DynamicStatus['pressure'] & { usage?: DynamicStatus['usage'] } | null>(null)
 
   const load = useCallback(() => {
     dynamicApi.status(orgId, website.id).then(setStatus).catch(() => setStatus(null))
@@ -56,6 +65,38 @@ export function DynamicResourcesCard({
   useEffect(() => {
     void load()
   }, [load])
+
+  useEffect(() => {
+    const off = ws.subscribe((msg: any) => {
+      if (msg?.resource_id !== website.id) return
+      switch (msg?.type) {
+        case 'website.resource_update': {
+          const p = msg.payload ?? {}
+          setLive({ ...(p.pressure ?? {}), usage: p.usage })
+          break
+        }
+        case 'website.tier_changed': {
+          const down = msg.payload?.action === 'scale_down'
+          toast?.(down ? 'success' : 'success', `Resources ${down ? 'scaled down' : 'scaled up'}: ${msg.payload?.reason ?? ''}`)
+          load()
+          break
+        }
+        case 'website.dynamic_busy':
+          toast?.('error', 'Suspect traffic detected — site moved to protective floor allocation.')
+          load()
+          break
+        case 'website.attack_suspended':
+          toast?.('error', 'Attack detected — site suspended automatically.')
+          load()
+          break
+        case 'website.dynamic_restored':
+          toast?.('success', 'Dynamic resources restored for this site.')
+          load()
+          break
+      }
+    })
+    return off
+  }, [website.id, load, toast])
 
   const act = async (fn: () => Promise<unknown>, okMsg: string) => {
     setBusy(true)
@@ -118,6 +159,35 @@ export function DynamicResourcesCard({
               />
               <Stat label="Last score" value={verdict ? `${verdict.score.toFixed(1)} (${verdict.class})` : '—'} />
             </div>
+
+            {(live || status.pressure) && (
+              <div className="mt-3 space-y-1.5">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-muted">
+                  Live pressure
+                  {(() => {
+                    const p = live ?? status.pressure
+                    return p?.smoothed != null ? (
+                      <span className="ml-2 font-normal normal-case tracking-normal">
+                        overall {Math.round(p.smoothed * 100)}% — bottleneck {p.bottleneck || '—'}
+                      </span>
+                    ) : null
+                  })()}
+                </p>
+                <PressureBar label="CPU" value={(live ?? status.pressure)?.cpu ?? 0} />
+                <PressureBar label="RAM" value={(live ?? status.pressure)?.memory ?? 0} />
+                <PressureBar label="Workers" value={(live ?? status.pressure)?.fpm ?? 0} />
+                {(() => {
+                  const u = live?.usage ?? status.usage
+                  if (!u) return null
+                  const parts = [
+                    u.fpm_active ? `${u.fpm_active} active workers` : null,
+                    u.fpm_queue ? `${u.fpm_queue} queued` : null,
+                    u.memory_mb != null ? `${u.memory_mb} MB in use` : null,
+                  ].filter(Boolean)
+                  return parts.length > 0 ? <p className="text-[10px] text-muted">{parts.join(' · ')}</p> : null
+                })()}
+              </div>
+            )}
 
             {st === 'suspended_attack' && (
               <div className="mt-3 rounded border border-red-500/30 bg-red-500/10 p-3 text-[11px] text-red-400">
@@ -186,6 +256,23 @@ function Stat({ label, value }: { label: string; value: string }) {
     <div className="rounded bg-black/20 p-2.5">
       <p className="text-[10px] uppercase tracking-wide text-muted">{label}</p>
       <p className="mt-0.5 text-[13px] font-semibold text-ink">{value}</p>
+    </div>
+  )
+}
+
+// PressureBar renders one pressure dimension (0..1) with the same color
+// language as the allocator: green → amber at 70% (scale-up watch) → red at
+// 85% (saturation territory).
+function PressureBar({ label, value }: { label: string; value: number }) {
+  const pct = Math.min(100, Math.round((value || 0) * 100))
+  const color = pct >= 85 ? 'bg-red-500' : pct >= 70 ? 'bg-amber-500' : 'bg-green-500'
+  return (
+    <div className="flex items-center gap-2">
+      <span className="w-14 shrink-0 text-[10px] text-muted">{label}</span>
+      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-black/30">
+        <div className={`h-full rounded-full transition-all duration-500 ${color}`} style={{ width: `${pct}%` }} />
+      </div>
+      <span className="w-9 shrink-0 text-right text-[10px] text-muted">{pct}%</span>
     </div>
   )
 }

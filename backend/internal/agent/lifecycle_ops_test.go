@@ -379,3 +379,98 @@ func TestLifeNoConfigsFound(t *testing.T) {
 		t.Fatalf("no-config suspend must be an idempotent no-op: %+v", out)
 	}
 }
+
+// TestLifeTerminateStubSwap covers the terminate lifecycle: every provider
+// stub swaps to the 410 terminated page through the same backup +
+// validated-reload pipeline, and the site's app processes are stopped
+// (systemctl stub logs the stop call).
+func TestLifeTerminateStubSwap(t *testing.T) {
+	f := newLifeFixture(t, false)
+	setTestPath(t, f.bin)
+	id := lifeTestID
+	nginxConf := filepath.Join(f.paths.NginxAvail, "epicpanel-"+id+".conf")
+	writeLifeFile(t, nginxConf, f.nginxConf)
+	apacheConf := filepath.Join(f.paths.ApacheAvail, "epicpanel-"+id+".conf")
+	writeLifeFile(t, apacheConf, "# managed by EpicPanel — website "+id+" — DO NOT EDIT\nListen 127.0.0.1:60123\n<VirtualHost 127.0.0.1:60123>\n\tServerName a.example.test\n\tDocumentRoot /srv/epicpanel/websites/"+id+"/public\n</VirtualHost>\n")
+
+	ex := &Executor{docRootBase: f.base}
+	out, err := ex.TerminateWebsite(context.Background(), LifecycleJobPayload{WebsiteID: id, Reason: "admin request"})
+	if err != nil {
+		t.Fatalf("terminate: %v", err)
+	}
+	if !out.Terminated || out.AlreadyInState {
+		t.Fatalf("terminate outcome: %+v", out)
+	}
+	for _, conf := range []string{nginxConf, apacheConf} {
+		live, rerr := os.ReadFile(conf)
+		if rerr != nil {
+			t.Fatalf("read %s: %v", conf, rerr)
+		}
+		s := string(live)
+		if !strings.Contains(s, "R=410") && !strings.Contains(s, "return 410") {
+			t.Fatalf("%s must answer 410:\n%s", conf, s)
+		}
+		if !strings.Contains(s, "terminated.html") {
+			t.Fatalf("%s must serve the terminated page:\n%s", conf, s)
+		}
+		if _, err := os.Stat(conf + lifeSuspendBakSuffix); err != nil {
+			t.Fatalf("%s: backup missing: %v", conf, err)
+		}
+	}
+	// Idempotent: second terminate detects the stubs, no further changes.
+	out2, err := ex.TerminateWebsite(context.Background(), LifecycleJobPayload{WebsiteID: id, Reason: "admin request"})
+	if err != nil {
+		t.Fatalf("second terminate: %v", err)
+	}
+	if !out2.Terminated || !out2.AlreadyInState {
+		t.Fatalf("second terminate must be a no-op: %+v", out2)
+	}
+}
+
+// TestLifeSuspendBandwidthPage covers the reason-aware suspension page: the
+// per-site templated page is written (never into shared default_pages) and
+// the vhost stub references it with no-store.
+func TestLifeSuspendBandwidthPage(t *testing.T) {
+	f := newLifeFixture(t, false)
+	setTestPath(t, f.bin)
+	conf := filepath.Join(f.paths.NginxAvail, "epicpanel-"+lifeTestID+".conf")
+	writeLifeFile(t, conf, f.nginxConf)
+
+	ex := &Executor{docRootBase: f.base}
+	out, err := ex.SuspendWebsite(context.Background(), LifecycleJobPayload{
+		WebsiteID: lifeTestID,
+		Reason:    "bandwidth_exhausted",
+		Metadata: map[string]any{
+			"used_bytes":  float64(9982443530),
+			"limit_bytes": float64(10737418240),
+			"resets_at":   "2026-10-01T00:00:00Z",
+		},
+	})
+	if err != nil {
+		t.Fatalf("suspend: %v", err)
+	}
+	if !out.Suspended {
+		t.Fatalf("outcome: %+v", out)
+	}
+	live, _ := os.ReadFile(conf)
+	s := string(live)
+	if !strings.Contains(s, bandwidthStubPage) {
+		t.Fatalf("stub must serve the bandwidth page:\n%s", s)
+	}
+	if !strings.Contains(s, `Cache-Control "no-store"`) {
+		t.Fatalf("stub must be no-store:\n%s", s)
+	}
+	page, err := os.ReadFile(filepath.Join(f.base, lifeTestID, "pages", bandwidthStubPage))
+	if err != nil {
+		t.Fatalf("per-site page missing: %v", err)
+	}
+	p := string(page)
+	for _, want := range []string{"9.3 GB", "10.0 GB", "93", "2026-10-01T00:00:00Z"} {
+		if !strings.Contains(p, want) {
+			t.Fatalf("page must contain %q:\n%s", want, p)
+		}
+	}
+	if strings.Contains(p, "{{USED}}") || strings.Contains(p, "{{PERCENT}}") {
+		t.Fatalf("template values must be filled:\n%s", p)
+	}
+}

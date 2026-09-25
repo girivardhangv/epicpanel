@@ -17,6 +17,16 @@ var BusyHTML string
 //go:embed notfound.html
 var NotFoundHTML string
 
+//go:embed terminated.html
+var TerminatedHTML string
+
+// BandwidthExhaustedHTML is a TEMPLATE, not a static page: {{USED}},
+// {{LIMIT}}, {{RESETS}} and {{PERCENT}} are filled per site at suspend
+// time and written to /srv/epicpanel/websites/<id>/pages/ — never into the
+// shared default_pages dir (site A's numbers must not leak to site B).
+//go:embed bandwidth_exhausted.html
+var BandwidthExhaustedHTML string
+
 //go:embed welcome.html
 var WelcomeHTML string
 

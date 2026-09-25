@@ -82,8 +82,11 @@ func webServerList(s string) []string {
 // RenderApacheSite produces an Apache vhost. The site always runs as a
 // PRIVATE backend on 127.0.0.1:<internalPort> — nginx owns the public ports.
 func RenderApacheSite(v VhostSpec, internalPort int) string {
+	if v.Terminated {
+		return renderApacheStub(v, internalPort, 410)
+	}
 	if v.Suspended {
-		return renderApacheSuspended(v, internalPort)
+		return renderApacheStub(v, internalPort, 503)
 	}
 	if v.QuotaExceeded {
 		return renderApacheQuotaExceeded(v, internalPort)
@@ -144,13 +147,29 @@ func RenderApacheSite(v VhostSpec, internalPort int) string {
 // renderApacheSuspended serves a plain 503 "Account suspended" stub for every
 // domain: a rewrite forces the 503 status, ErrorDocument supplies the body.
 // No PHP handler, no proxy — but the log locations are preserved.
-func renderApacheSuspended(v VhostSpec, internalPort int) string {
+// renderApacheStub renders the lifecycle stub (suspended 503 with optional
+// reason-aware page / terminated 410). The site answers every request with
+// the stub status; log locations are preserved. The stub response is marked
+// no-store so caches cannot outlive the lifecycle change.
+func renderApacheStub(v VhostSpec, internalPort, status int) string {
 	serverNames := make([]string, 0, len(v.Domains))
 	for _, d := range v.Domains {
 		serverNames = append(serverNames, d.Domain)
 	}
+	pagePath := "/srv/epicpanel/default_pages/suspended.html"
+	kind := "suspended"
+	if v.Terminated {
+		pagePath, kind, status = "/srv/epicpanel/default_pages/terminated.html", "terminated", 410
+	} else if v.StubPage != "" {
+		if v.StubPage == bandwidthStubPage {
+			pagePath = "/srv/epicpanel/websites/" + v.WebsiteID + "/pages/" + v.StubPage
+		} else {
+			pagePath = "/srv/epicpanel/default_pages/" + v.StubPage
+		}
+	}
+	alias := fmt.Sprintf("Alias /epicpanel_stub.html %s\n\tErrorDocument %d /epicpanel_stub.html", pagePath, status)
 	listen := fmt.Sprintf("Listen 127.0.0.1:%d\n", internalPort)
-	return fmt.Sprintf(`# managed by EpicPanel — website %s (suspended) — DO NOT EDIT
+	return fmt.Sprintf(`# managed by EpicPanel — website %s (%s) — DO NOT EDIT
 %s<VirtualHost 127.0.0.1:%d>
 	ServerName %s
 	DocumentRoot %s
@@ -162,15 +181,17 @@ func renderApacheSuspended(v VhostSpec, internalPort int) string {
 
 	<IfModule mod_rewrite.c>
 		RewriteEngine On
-		RewriteRule ^ - [R=503,L]
+		RewriteRule ^ - [R=%d,L]
 	</IfModule>
-	Alias /epicpanel_suspended.html /srv/epicpanel/default_pages/suspended.html
-	ErrorDocument 503 /epicpanel_suspended.html
+	%s
+	<IfModule mod_headers.c>
+		Header always set Cache-Control "no-store"
+	</IfModule>
 
 	ErrorLog /srv/epicpanel/websites/%s/logs/apache-error.log
 	CustomLog /srv/epicpanel/websites/%s/logs/apache-access.log combined
 </VirtualHost>
-`, v.WebsiteID, listen, internalPort, strings.Join(serverNames, " "), v.DocumentRoot, v.DocumentRoot, v.WebsiteID, v.WebsiteID)
+`, v.WebsiteID, kind, listen, internalPort, strings.Join(serverNames, " "), v.DocumentRoot, v.DocumentRoot, status, alias, v.WebsiteID, v.WebsiteID)
 }
 
 func renderApacheQuotaExceeded(v VhostSpec, internalPort int) string {
@@ -396,6 +417,9 @@ func (e *Executor) stopOLSIfUnused(ctx context.Context) {
 
 // RenderOLSVhconf produces the OLS per-vhost config (XML-ish format).
 func RenderOLSVhconf(v VhostSpec, internalPort int) string {
+	if v.Terminated {
+		return renderOLSTerminated(v)
+	}
 	if v.Suspended {
 		return renderOLSSuspended(v)
 	}
@@ -475,6 +499,43 @@ accesslog $VH_ROOT/logs/ols-access.log {
 // renderOLSSuspended serves a plain 503 "Account suspended" stub for every
 // request: the rewrite forces the status. No extProcessor (PHP), no proxy —
 // but the log locations are preserved.
+// renderOLSTerminated renders the terminated vhost: 410 for every request
+// from the shared terminated.html page. Mirrors the suspended shape (no
+// PHP, no proxy; logs preserved) so the terminate lifecycle behaves
+// consistently across providers. (Reason-aware suspension pages are an
+// nginx/Apache surface — OLS keeps the generic suspended page.)
+func renderOLSTerminated(v VhostSpec) string {
+	return fmt.Sprintf(`# managed by EpicPanel — website %s (terminated) — DO NOT EDIT
+docRoot                   $VH_ROOT
+vhDomain                  $VH_NAME
+adminEmails               admin@epicpanel.local
+enableGzip                1
+enableIpGeo               0
+errorlog $VH_ROOT/logs/ols-error.log {
+  useServer               1
+  logLevel                ERROR
+}
+accesslog $VH_ROOT/logs/ols-access.log {
+  useServer               1
+  rollingSize             10M
+}
+
+errorpage 410 {
+  url                     /srv/epicpanel/default_pages/terminated.html
+}
+
+# terminated: 410 Gone for every request (no PHP, no proxy)
+context / {
+  location                $VH_ROOT
+  allowBrowse             0
+  rewrite  {
+    enable                1
+    rewriteRule  ^/.*$  -  [R=410,L]
+  }
+}
+`, v.WebsiteID)
+}
+
 func renderOLSSuspended(v VhostSpec) string {
 	return fmt.Sprintf(`# managed by EpicPanel — website %s (suspended) — DO NOT EDIT
 docRoot                   $VH_ROOT

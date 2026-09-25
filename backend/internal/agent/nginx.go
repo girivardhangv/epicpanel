@@ -38,6 +38,16 @@ type VhostSpec struct {
 	Suspended bool
 	// QuotaExceeded serves a 509 stub when bandwidth is exceeded.
 	QuotaExceeded bool
+	// Terminated serves a 410 stub (terminate lifecycle; distinct from
+	// suspension — the site does not come back without an explicit purge).
+	Terminated bool
+	// StubPage overrides the stub file for reason-aware suspension pages
+	// ("" = suspended.html). "bandwidth_exhausted.html" is served from the
+	// PER-SITE pages dir (templated with StubVars); everything else comes
+	// from the shared default_pages dir.
+	StubPage string
+	// StubVars fills the templated stub page (bandwidth used/limit/resets).
+	StubVars map[string]string
 	// Path overrides for tests (empty = production locations).
 	AcmeWebroot string
 	LogsBase    string
@@ -89,6 +99,9 @@ func renderWSMap(websiteID string) string {
 // domains, a redirect block for secured domains, and a 443 block serving
 // them. Includes the ACME webroot location for HTTP-01 challenges.
 func RenderVhost(v VhostSpec) string {
+	if v.Terminated {
+		return renderVhostStub(v, 410)
+	}
 	if v.Suspended {
 		return renderVhostSuspended(v)
 	}
@@ -327,8 +340,35 @@ func renderVhostSuspended(v VhostSpec) string {
 	if len(names) == 0 {
 		return ""
 	}
+	return renderVhostStub(v, 503)
+}
+
+// renderVhostStub renders the lifecycle stub for every domain: the site
+// answers `status` from a static page (suspended 503 / terminated 410 /
+// bandwidth-exhausted 503 with per-site templated values). No PHP, no
+// proxy, no docroot — log locations are preserved so traffic stays
+// observable. The stub response is marked no-store so CDN/browser caches
+// cannot keep serving the site after a lifecycle change.
+func renderVhostStub(v VhostSpec, status int) string {
+	names := make([]string, 0, len(v.Domains))
+	for _, d := range v.Domains {
+		names = append(names, d.Domain)
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	page := "suspended.html"
+	root := "/srv/epicpanel/default_pages"
+	if v.Terminated {
+		page, status = "terminated.html", 410
+	} else if v.StubPage != "" {
+		page = v.StubPage
+		if page == bandwidthStubPage {
+			root = filepath.Join("/srv/epicpanel/websites", v.WebsiteID, "pages")
+		}
+	}
 	logsDir := fmt.Sprintf("%s/%s/logs", v.logsBasePath(), v.WebsiteID)
-	return fmt.Sprintf(`# managed by EpicPanel — website %s (suspended) — DO NOT EDIT
+	return fmt.Sprintf(`# managed by EpicPanel — website %s (stub %d) — DO NOT EDIT
 server {
 	listen 80;
 	server_name %s;
@@ -336,15 +376,20 @@ server {
 	access_log %s/nginx-access.log;
 	error_log %s/nginx-error.log;
 
-		return 503;
-		error_page 503 /suspended.html;
-		location = /suspended.html {
-			root /srv/epicpanel/default_pages;
-			internal;
-		}
+	return %d;
+	error_page %d /%s;
+	location = /%s {
+		root %s;
+		internal;
+		add_header Cache-Control "no-store" always;
+	}
 }
-`, v.WebsiteID, strings.Join(names, " "), logsDir, logsDir)
+`, v.WebsiteID, status, strings.Join(names, " "), logsDir, logsDir, status, status, page, page, root)
 }
+
+// bandwidthStubPage is the reason-aware suspension page for
+// bandwidth_exhausted, rendered per site from the suspend metadata.
+const bandwidthStubPage = "bandwidth_exhausted.html"
 
 // renderVhostQuotaExceeded renders the quota exceeded stub: every domain answers 509
 // (Bandwidth Limit Exceeded) immediately.

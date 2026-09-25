@@ -81,6 +81,8 @@ R("get", "/v1/organizations/{org_id}/websites/{website_id}/php-settings", "Per-s
 R("put", "/v1/organizations/{org_id}/websites/{website_id}/php-settings", "Update PHP settings -> job", t, x_scope="websites:write")
 R("post", "/v1/organizations/{org_id}/websites/{website_id}/suspend", "Suspend site with optional reason (admin+); bandwidth_exhausted/attack are system-reserved", t, x_scope="websites:write")
 R("post", "/v1/organizations/{org_id}/websites/{website_id}/resume", "Resume site (admin+); blocked with 409 while the bandwidth quota stays exhausted unless force", t, x_scope="websites:write")
+R("post", "/v1/organizations/{org_id}/websites/{website_id}/terminate", "Terminate site (admin+; confirm:true required): 410 stub + app processes stopped, files kept for audit", t, x_scope="websites:write")
+R("post", "/v1/organizations/{org_id}/websites/{website_id}/purge", "Purge a TERMINATED site (admin+; confirm:true): destructive removal via the delete job", t, x_scope="websites:write")
 R("get", "/v1/organizations/{org_id}/websites/{website_id}/bandwidth", "Current bandwidth state: quota surface, period usage, live egress rate (billing+)", t, x_scope="websites:read")
 R("get", "/v1/organizations/{org_id}/websites/{website_id}/bandwidth/history", "Bucketed bandwidth history (interval=hour|day; hourly retained 90d, daily indefinite)", t, x_scope="websites:read")
 R("get", "/v1/organizations/{org_id}/websites/{website_id}/quota", "Site quota: monthly bandwidth budget (per-site override or plan), used, reset (billing+)", t, x_scope="websites:read")

@@ -307,6 +307,21 @@ func (h *Handler) ApplyWebsiteTransition(job *jobs.Job, resultJSON json.RawMessa
 			}
 			h.publishLifecycleEvent(ctx, "website.resumed", job, nil)
 		}
+	case TypeTerminateWebsite:
+		switch job.Status {
+		case jobs.StatusSuccess:
+			// Guarded: ready/failed/suspended -> terminated; never overrides
+			// deleting/deleted. The (free-form) termination reason rides the
+			// payload and lands in terminated_at/termination_reason.
+			var tp TerminatePayload
+			_ = json.Unmarshal(job.Payload, &tp)
+			if err := h.Websites.MarkTerminated(ctx, *job.WebsiteID, tp.Reason); err != nil && !errors.Is(err, ErrNotFound) {
+				slog.Error("website mark terminated failed", "website", job.WebsiteID, "err", err)
+			}
+			h.publishLifecycleEvent(ctx, "website.terminated", job, map[string]any{
+				"reason": tp.Reason,
+			})
+		}
 	case jobs.TypeInstallLaravel:
 		// One-click Laravel: the agent reports the new serving docroot
 		// (<site>/app/public). Persist it so every later desired-state build

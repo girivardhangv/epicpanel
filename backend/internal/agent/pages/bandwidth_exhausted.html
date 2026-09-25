@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Bandwidth Limit Reached</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: #0f1115; color: #e6e8eb; text-align: center; padding: 2rem;
+  }
+  .card { max-width: 36rem; }
+  h1 { font-size: 1.6rem; margin: 0 0 .75rem; letter-spacing: .02em; }
+  p { color: #9aa3ad; line-height: 1.6; margin: .4rem 0; }
+  .meter {
+    margin: 1.75rem auto; max-width: 22rem; height: .6rem; border-radius: 999px;
+    background: #262b33; overflow: hidden;
+  }
+  .meter span { display: block; height: 100%; background: #d97706; border-radius: 999px; }
+  .usage { font-size: 1.05rem; color: #e6e8eb; font-variant-numeric: tabular-nums; }
+  .code { font-size: .8rem; color: #6b7280; margin-top: 2rem; }
+</style>
+</head>
+<body>
+<main class="card">
+  <h1>Bandwidth limit reached</h1>
+  <p>This website has used its allocated transfer for the current billing
+  period and is temporarily unavailable.</p>
+  <div class="meter"><span style="width: {{PERCENT}}%"></span></div>
+  <p class="usage">{{USED}} of {{LIMIT}}</p>
+  <p>The site will be available again when the usage period resets on
+  {{RESETS}}, or earlier if the plan is upgraded.</p>
+  <p class="code">HTTP 503 &mdash; Service Unavailable</p>
+</main>
+</body>
+</html>

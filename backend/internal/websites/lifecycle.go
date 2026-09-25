@@ -14,9 +14,18 @@ import (
 // than in the jobs package so the jobs store stays lifecycle-agnostic; the
 // values match the job_type enum added by migration 0026.
 const (
-	TypeSuspendWebsite jobs.Type = "suspend_website"
-	TypeResumeWebsite  jobs.Type = "resume_website"
+	TypeSuspendWebsite  jobs.Type = "suspend_website"
+	TypeResumeWebsite   jobs.Type = "resume_website"
+	TypeTerminateWebsite jobs.Type = "terminate_website"
 )
+
+// TerminatePayload is the wire form of a terminate_website job. Reason is
+// free-form (operator-supplied through the terminate API) and recorded for
+// audit + the terminated_at/termination_reason columns.
+type TerminatePayload struct {
+	WebsiteID string `json:"website_id"`
+	Reason    string `json:"reason,omitempty"`
+}
 
 // SuspensionReason is WHY a website is suspended — data next to the
 // 'suspended' status, not a new status (ADR-047 state machine unchanged).

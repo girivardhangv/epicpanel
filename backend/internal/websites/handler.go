@@ -170,6 +170,8 @@ func (h *Handler) Register(mux *http.ServeMux, requireAgent func(http.HandlerFun
 	mux.HandleFunc("PUT /v1/organizations/{org_id}/websites/{website_id}/php-settings", h.requireOrg(organizations.RoleDeveloper, h.SetPHPSettings))
 	mux.HandleFunc("POST /v1/organizations/{org_id}/websites/{website_id}/suspend", h.requireOrg(organizations.RoleAdmin, h.Suspend))
 	mux.HandleFunc("POST /v1/organizations/{org_id}/websites/{website_id}/resume", h.requireOrg(organizations.RoleAdmin, h.Resume))
+	mux.HandleFunc("POST /v1/organizations/{org_id}/websites/{website_id}/terminate", h.requireOrg(organizations.RoleAdmin, h.Terminate))
+	mux.HandleFunc("POST /v1/organizations/{org_id}/websites/{website_id}/purge", h.requireOrg(organizations.RoleAdmin, h.Purge))
 
 	mux.HandleFunc("POST /v1/agent/jobs/claim", requireAgent(h.AgentClaim))
 	mux.HandleFunc("POST /v1/agent/jobs/{job_id}/result", requireAgent(h.AgentResult))
@@ -538,6 +540,10 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		httpapi.RespondError(w, httpapi.ErrConflict("website is suspended (resume it first)"))
 		return
 	}
+	if ws.Status == StatusTerminated {
+		httpapi.RespondError(w, httpapi.ErrConflict("website is terminated"))
+		return
+	}
 
 	var req struct {
 		Runtime        string `json:"runtime"`
@@ -766,6 +772,13 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		httpapi.RespondError(w, httpapi.ErrConflict("website deletion already in progress"))
 		return
 	}
+	if ws.Status == StatusTerminated {
+		// Terminated sites are destroyed through the explicit purge flow,
+		// never through the plain delete path (two doors to the shredder
+		// is how accidental destruction happens).
+		httpapi.RespondError(w, httpapi.ErrConflict("terminated websites are removed via the purge endpoint"))
+		return
+	}
 
 	payload, apiErr := h.buildDesiredPayload(r.Context(), ws, orgID, ws.UnixUser, ws.RuntimeVersion)
 	if apiErr != nil {
@@ -837,6 +850,111 @@ func (h *Handler) Resume(w http.ResponseWriter, r *http.Request) {
 		conflictMsg:  "only suspended websites can be resumed",
 		force:        body.Force,
 	})
+}
+
+// POST /v1/organizations/{org_id}/websites/{website_id}/terminate — enqueues
+// the terminate job: the agent swaps every serving config to a 410 stub and
+// stops app processes; files/user/DBs/DNS are kept (retention for audit).
+// Requires {"confirm": true} — termination is destructive enough that a
+// fat-fingered POST must not reach the queue. The status flips to
+// terminated only on agent success; purge (which reuses the destructive
+// delete job) is only reachable from terminated.
+func (h *Handler) Terminate(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := OrgIDFromRequest(r)
+	if !ok {
+		httpapi.RespondError(w, httpapi.ErrInternal(errOrgContext))
+		return
+	}
+	var req struct {
+		Reason  string `json:"reason"`
+		Confirm bool   `json:"confirm"`
+	}
+	if apiErr := httpapi.Read(r, &req); apiErr != nil {
+		httpapi.RespondError(w, apiErr)
+		return
+	}
+	if !req.Confirm {
+		httpapi.RespondError(w, httpapi.ErrValidationDetails(
+			"termination requires confirm: true",
+			map[string]any{"field": "confirm"}))
+		return
+	}
+	ws, apiErr := h.websiteFromPath(r, orgID)
+	if apiErr != nil {
+		httpapi.RespondError(w, apiErr)
+		return
+	}
+	switch ws.Status {
+	case StatusReady, StatusFailed, StatusSuspended:
+		// terminable
+	default:
+		httpapi.RespondError(w, httpapi.ErrConflict(
+			"only ready, failed or suspended websites can be terminated (deleting/deleted/terminated cannot)"))
+		return
+	}
+	job, err := h.Jobs.EnqueueIdempotent(r.Context(), ws.ServerID, &ws.ID, TypeTerminateWebsite,
+		TerminatePayload{WebsiteID: ws.ID.String(), Reason: req.Reason}, "terminate_"+ws.ID.String())
+	if err != nil {
+		httpapi.RespondError(w, httpapi.ErrInternal(err))
+		return
+	}
+	meta := map[string]any{"job_id": job.ID.String()}
+	if req.Reason != "" {
+		meta["reason"] = req.Reason
+	}
+	h.auditUser(r, &orgID, "website.terminate_requested", "website", ws.ID.String(), meta)
+	httpapi.WriteJSON(w, http.StatusAccepted, map[string]any{"job_id": job.ID})
+}
+
+// POST /v1/organizations/{org_id}/websites/{website_id}/purge — destroys a
+// TERMINATED site (site tree, FPM pool, vhosts; the row is then removed by
+// the delete fanout). Heavily gated: admin role, confirm: true, and only
+// reachable from the terminated status — suspension and termination are
+// reversible-by-design states, purge is not.
+func (h *Handler) Purge(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := OrgIDFromRequest(r)
+	if !ok {
+		httpapi.RespondError(w, httpapi.ErrInternal(errOrgContext))
+		return
+	}
+	var req struct {
+		Confirm bool `json:"confirm"`
+	}
+	if apiErr := httpapi.Read(r, &req); apiErr != nil {
+		httpapi.RespondError(w, apiErr)
+		return
+	}
+	if !req.Confirm {
+		httpapi.RespondError(w, httpapi.ErrValidationDetails(
+			"purge requires confirm: true",
+			map[string]any{"field": "confirm"}))
+		return
+	}
+	ws, apiErr := h.websiteFromPath(r, orgID)
+	if apiErr != nil {
+		httpapi.RespondError(w, apiErr)
+		return
+	}
+	if ws.Status != StatusTerminated {
+		httpapi.RespondError(w, httpapi.ErrConflict("only terminated websites can be purged (terminate first)"))
+		return
+	}
+	payload, apiErr := h.buildDesiredPayload(r.Context(), ws, orgID, ws.UnixUser, ws.RuntimeVersion)
+	if apiErr != nil {
+		httpapi.RespondError(w, apiErr)
+		return
+	}
+	job, err := h.Jobs.EnqueueIdempotent(r.Context(), ws.ServerID, &ws.ID, jobs.TypeDeleteWebsite, payload, "purge_"+ws.ID.String())
+	if err != nil {
+		httpapi.RespondError(w, httpapi.ErrInternal(err))
+		return
+	}
+	if err := h.Websites.SetStatus(r.Context(), ws.ID, StatusDeleting, ""); err != nil {
+		httpapi.RespondError(w, httpapi.ErrInternal(err))
+		return
+	}
+	h.auditUser(r, &orgID, "website.purge_requested", "website", ws.ID.String(), nil)
+	httpapi.WriteJSON(w, http.StatusAccepted, map[string]any{"job_id": job.ID})
 }
 
 // lifecycleBody is the optional JSON request body of suspend/resume.

@@ -6,6 +6,7 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"sync"
@@ -591,5 +592,87 @@ func TestPhaseQuotaOverrideReachesEnforcePayload(t *testing.T) {
 	}
 	if payload2.BandwidthMB == 5120 {
 		t.Fatalf("cleared override must not pin the payload budget")
+	}
+}
+
+// TestPhaseTerminatePurgeLifecycle drives the full termination lifecycle
+// over the HTTP API: confirm-gated terminate -> agent round-trip ->
+// terminated status -> blocked suspend/resume/delete -> confirm-gated
+// purge (the destructive delete job) -> row removed.
+func TestPhaseTerminatePurgeLifecycle(t *testing.T) {
+	orgID, _, websiteID, admin, agent, srv := phase4SetupWithServer(t)
+	base := "/v1/organizations/" + orgID + "/websites/" + websiteID
+
+	// Termination requires an explicit confirm.
+	if resp := admin.do("POST", base+"/terminate", map[string]any{"reason": "nope"}); resp.status == http.StatusAccepted {
+		t.Fatalf("terminate without confirm must not enqueue: %v", resp.body)
+	}
+	resp := admin.do("POST", base+"/terminate", map[string]any{"reason": "abuse cleanup", "confirm": true})
+	if resp.status != http.StatusAccepted {
+		t.Fatalf("terminate: %d %v", resp.status, resp.body)
+	}
+	jobID, _ := resp.body["job_id"].(string)
+	claim := agent.do("POST", "/v1/agent/jobs/claim", nil)
+	job, _ := claim.body["job"].(map[string]any)
+	if job == nil || job["type"] != "terminate_website" {
+		t.Fatalf("claim: %v", claim.body)
+	}
+	var tp websites.TerminatePayload
+	switch pv := job["payload"].(type) {
+	case string:
+		if raw, derr := base64.StdEncoding.DecodeString(pv); derr == nil {
+			_ = json.Unmarshal(raw, &tp)
+		}
+	case map[string]any:
+		if b, merr := json.Marshal(pv); merr == nil {
+			_ = json.Unmarshal(b, &tp)
+		}
+	}
+	if tp.Reason != "abuse cleanup" {
+		t.Fatalf("terminate payload: %v", job["payload"])
+	}
+	if res := agent.do("POST", "/v1/agent/jobs/"+jobID+"/result", map[string]any{"success": true, "result": map[string]any{"terminated": true}}); res.status != http.StatusOK {
+		t.Fatalf("terminate result: %d %v", res.status, res.body)
+	}
+
+	resp = admin.do("GET", base, nil)
+	if resp.body["status"] != "terminated" {
+		t.Fatalf("status: %v want terminated", resp.body["status"])
+	}
+	if resp.body["terminated_at"] == nil || resp.body["termination_reason"] != "abuse cleanup" {
+		t.Fatalf("termination surface: %v", resp.body)
+	}
+
+	// A terminated site is a dead end until purge: no suspend/resume/delete.
+	if resp := admin.do("POST", base+"/terminate", map[string]any{"confirm": true}); resp.status == http.StatusAccepted {
+		t.Fatalf("re-terminate must conflict")
+	}
+	if resp := admin.do("POST", base+"/resume", nil); resp.status == http.StatusAccepted {
+		t.Fatalf("resume of terminated must conflict")
+	}
+	if resp := admin.do("POST", base+"/suspend", nil); resp.status == http.StatusAccepted {
+		t.Fatalf("suspend of terminated must conflict")
+	}
+	if resp := admin.do("DELETE", base, nil); resp.status == http.StatusNoContent {
+		t.Fatalf("plain delete of terminated must conflict (use purge)")
+	}
+
+	// Purge is confirm-gated and only reachable from terminated.
+	if resp := admin.do("POST", base+"/purge", nil); resp.status == http.StatusAccepted {
+		t.Fatalf("purge without confirm must not enqueue")
+	}
+	resp = admin.do("POST", base+"/purge", map[string]any{"confirm": true})
+	if resp.status != http.StatusAccepted {
+		t.Fatalf("purge: %d %v", resp.status, resp.body)
+	}
+	_ = agent.do("POST", "/v1/agent/jobs/claim", nil)
+	var purgeJobID string
+	if err := srv.Pool.QueryRow(context.Background(),
+		`SELECT id::text FROM jobs WHERE website_id = $1 AND type = 'delete_website'
+		 ORDER BY created_at DESC LIMIT 1`, uuid.MustParse(websiteID)).Scan(&purgeJobID); err == nil {
+		_ = agent.do("POST", "/v1/agent/jobs/"+purgeJobID+"/result", map[string]any{"success": true, "result": map[string]any{}})
+	}
+	if resp := admin.do("GET", base, nil); resp.status != http.StatusNotFound {
+		t.Fatalf("purged website must be gone: %d %v", resp.status, resp.body)
 	}
 }

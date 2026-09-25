@@ -98,6 +98,11 @@ func TestBwChainDecisions(t *testing.T) {
 	if !strings.Contains(joined, "meta skuid 1007") || !strings.Contains(joined, `"lo"`) {
 		t.Fatalf("rule args must pin the uid and exclude loopback: %s", joined)
 	}
+	if strings.Count(joined, "inet") != 1 {
+		// epicTable already carries the family token; a second "inet" makes
+		// nft reject the rule with "syntax error, unexpected inet".
+		t.Fatalf("rule args must contain exactly one family token: %s", joined)
+	}
 }
 
 // TestTrafficMonthAccumulator covers the month-to-date egress accumulator:

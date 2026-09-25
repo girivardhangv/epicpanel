@@ -478,9 +478,10 @@ const bwChainHook = "{ type filter hook output priority -300 ; }"
 // bwChainRuleArgs renders the per-uid egress counter rule: packets owned by
 // the site's unix user leaving via a non-loopback interface. Loopback is
 // excluded so app->web-server local hops are never double-counted against
-// the access-log view.
+// the access-log view. NOTE: epicTable already carries the "inet" family
+// token (one argv element, as in every other nft invocation here).
 func bwChainRuleArgs(chain string, uid int) []string {
-	return []string{"nft", "add", "rule", "inet", epicTable, chain,
+	return []string{"nft", "add", "rule", epicTable, chain,
 		"meta", "skuid", strconv.Itoa(uid), "oifname", "!=", `"lo"`, "counter"}
 }
 

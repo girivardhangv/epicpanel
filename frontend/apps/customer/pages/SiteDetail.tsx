@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Spinner } from '../loading'
 import { Link, useParams } from 'react-router-dom'
 import { Globe, ArrowLeft, Folder, Clock, Network, KeyRound, History, Plus, Trash2, ShieldQuestion, RefreshCw } from 'lucide-react'
-import { api, useAuth, domainsApi, redirectsApi, fmtBytes, timeAgo, DynamicResourcesCard } from '@epicpanel/core'
+import { api, useAuth, domainsApi, redirectsApi, fmtBytes, timeAgo, useLiveSiteSample, DynamicResourcesCard } from '@epicpanel/core'
 import type { Website, Domain, Redirect } from '@epicpanel/core'
 import { Card, CardHeader, StatusBadge, EmptyState, SkeletonRows, MiniItem, Breadcrumbs, RowActions, pushToast, UsageCard } from '@epicpanel/ui'
 import { Modal, Field, ErrorNote, ConfirmDialog } from '@epicpanel/forms'
@@ -23,6 +23,9 @@ export function SiteDetailPage() {
   const [domains, setDomains] = useState<Domain[] | null>(null)
   const [redirects, setRedirects] = useState<Redirect[] | null>(null)
   const [usage, setUsage] = useState<Usage | null>(null)
+  // Live per-site sample from the agent stream (~2s cadence) — preferred
+  // over the REST snapshot wherever both exist.
+  const live = useLiveSiteSample(site)
   const [err, setErr] = useState('')
   const [showAlias, setShowAlias] = useState(false)
   const [aliasForm, setAliasForm] = useState({ domain: '', docroot_suffix: '' })
@@ -140,25 +143,28 @@ export function SiteDetailPage() {
 
       <ErrorNote message={err} />
 
-      {/* Usage */}
-      {usage && (
+      {/* Usage — live from the agent's ~2s WS metrics frames when the site
+          has a sample; falls back to the REST snapshot otherwise. The same
+          feed the Dynamic Resources card renders, so the numbers agree. */}
+      {(usage || live) && (
         <div className="mb-4 grid grid-cols-1 gap-3.5 sm:grid-cols-3">
           <UsageCard
             icon={<Globe size={14} strokeWidth={1.8} />} tone="blue" title="CPU" sub="This website"
-            value={`${Math.round(usage.cpu_percent ?? 0)}%`} pct={usage.cpu_percent ?? 0} color="#2563eb"
-            note={usage.sampled_at ? `sampled ${timeAgo(usage.sampled_at)}` : 'not sampled yet'}
+            value={`${Math.round(live?.cpu_percent ?? usage?.cpu_percent ?? 0)}%`}
+            pct={live?.cpu_percent ?? usage?.cpu_percent ?? 0} color="#2563eb"
+            note={live ? `live · updated ${timeAgo(live.collected_at)}` : usage?.sampled_at ? `sampled ${timeAgo(usage.sampled_at)}` : 'not sampled yet'}
           />
           <UsageCard
             icon={<Globe size={14} strokeWidth={1.8} />} tone="purple" title="Memory" sub="This website"
-            value={usage.memory_bytes ? fmtBytes(usage.memory_bytes) : '—'}
-            pct={0} color="#7c4dff"
-            note={`${usage.processes ?? 0} processes`}
+            value={fmtBytes(live?.memory_bytes ?? usage?.memory_bytes ?? 0)}
+            pct={live?.memory_limit_bytes ? Math.min(100, (live.memory_bytes / live.memory_limit_bytes) * 100) : 0} color="#7c4dff"
+            note={`${live?.processes ?? usage?.processes ?? 0} processes`}
           />
           <UsageCard
             icon={<Globe size={14} strokeWidth={1.8} />} tone="green" title="Disk" sub="This website"
-            value={usage.disk_mb ? fmtBytes(usage.disk_mb * 1024 * 1024) : '—'}
+            value={fmtBytes((live?.disk_used_mb ?? usage?.disk_mb ?? 0) * 1024 * 1024)}
             pct={0} color="#0f9d6e"
-            note="sampled by the agent"
+            note={live ? 'live — sampled by the agent' : 'sampled by the agent'}
           />
         </div>
       )}

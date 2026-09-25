@@ -10,7 +10,7 @@
 // events on the /v1/ws bus. The card renders live pressure bars from the
 // snapshots and refetches on state changes — no polling.
 import { useCallback, useEffect, useState } from 'react'
-import { dynamicApi, ws } from './api'
+import { dynamicApi, ws, useLiveSiteSample, fmtBytes } from './api'
 import type { DynamicStatus, FreePerkStatus, Website } from './api'
 
 const tierLabel = (t: number) => (t <= 0 ? 'floor (minimum)' : t === 1 ? 'base (plan)' : `${[1, 1, 2, 4, 8][t] ?? t}x plan`)
@@ -55,7 +55,10 @@ export function DynamicResourcesCard({
   const [error, setError] = useState('')
   // Live snapshot from website.resource_update — kept separate from `status`
   // so bus bursts never clobber settings fetched from the REST surface.
-  const [live, setLive] = useState<DynamicStatus['pressure'] & { usage?: DynamicStatus['usage'] } | null>(null)
+  const [push, setPush] = useState<DynamicStatus['pressure'] & { usage?: DynamicStatus['usage'] } | null>(null)
+  // Same 2s agent feed the site's usage strip renders — the two surfaces
+  // always show identical numbers.
+  const liveSample = useLiveSiteSample(website)
 
   const load = useCallback(() => {
     dynamicApi.status(orgId, website.id).then(setStatus).catch(() => setStatus(null))
@@ -72,7 +75,7 @@ export function DynamicResourcesCard({
       switch (msg?.type) {
         case 'website.resource_update': {
           const p = msg.payload ?? {}
-          setLive({ ...(p.pressure ?? {}), usage: p.usage })
+          setPush({ ...(p.pressure ?? {}), usage: p.usage })
           break
         }
         case 'website.tier_changed': {
@@ -160,12 +163,12 @@ export function DynamicResourcesCard({
               <Stat label="Last score" value={verdict ? `${verdict.score.toFixed(1)} (${verdict.class})` : '—'} />
             </div>
 
-            {(live || status.pressure) && (
+            {(push || status.pressure) && (
               <div className="mt-3 space-y-1.5">
                 <p className="text-[10px] font-bold uppercase tracking-wide text-muted">
                   Live pressure
                   {(() => {
-                    const p = live ?? status.pressure
+                    const p = push ?? status.pressure
                     return p?.smoothed != null ? (
                       <span className="ml-2 font-normal normal-case tracking-normal">
                         overall {Math.round(p.smoothed * 100)}% — bottleneck {p.bottleneck || '—'}
@@ -173,16 +176,16 @@ export function DynamicResourcesCard({
                     ) : null
                   })()}
                 </p>
-                <PressureBar label="CPU" value={(live ?? status.pressure)?.cpu ?? 0} />
-                <PressureBar label="RAM" value={(live ?? status.pressure)?.memory ?? 0} />
-                <PressureBar label="Workers" value={(live ?? status.pressure)?.fpm ?? 0} />
+                <PressureBar label="CPU" value={(push ?? status.pressure)?.cpu ?? 0} />
+                <PressureBar label="RAM" value={(push ?? status.pressure)?.memory ?? 0} />
+                <PressureBar label="Workers" value={(push ?? status.pressure)?.fpm ?? 0} />
                 {(() => {
-                  const u = live?.usage ?? status.usage
-                  if (!u) return null
+                  const u = push?.usage ?? status.usage
+                  const memBytes = liveSample?.memory_bytes ?? (u?.memory_mb != null ? u.memory_mb * 1024 * 1024 : null)
                   const parts = [
-                    u.fpm_active ? `${u.fpm_active} active workers` : null,
-                    u.fpm_queue ? `${u.fpm_queue} queued` : null,
-                    u.memory_mb != null ? `${u.memory_mb} MB in use` : null,
+                    u?.fpm_active ? `${u.fpm_active} active workers` : null,
+                    u?.fpm_queue ? `${u.fpm_queue} queued` : null,
+                    memBytes ? `${fmtBytes(memBytes)} in use` : null,
                   ].filter(Boolean)
                   return parts.length > 0 ? <p className="text-[10px] text-muted">{parts.join(' · ')}</p> : null
                 })()}

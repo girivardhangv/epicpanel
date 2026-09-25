@@ -75,7 +75,7 @@ export function MetricsPage() {
   const siteSamples = useMemo(() => {
     const list = primaryFrame?.sample?.sites ?? []
     return mySites
-      .map((w) => ({ site: w, sample: list.find((s) => s.website_id === w.id) }))
+      .map((w) => ({ site: w, sample: list.find((s) => s.website_id === w.unix_user || s.website_id === w.id) }))
       .filter((x) => !!x.sample)
   }, [primaryFrame, mySites])
 

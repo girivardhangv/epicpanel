@@ -620,6 +620,25 @@ export function useMetrics(): MetricsSnapshot {
   return useSyncExternalStore(storeSubscribe, getSnapshot, getSnapshot)
 }
 
+// Live per-site sample from the agent's ~2s metrics frames — the same store
+// the control plane's allocator reads, so every surface showing site usage
+// agrees to the second. Samples are keyed by unix user on legacy slices
+// (ep-<org>-<name>) and by website UUID on newer ones: try both, same rule
+// as the backend (ADR-062a live fix).
+export function useLiveSiteSample(
+  website?: { id: string; unix_user?: string } | null,
+): (SiteSample & { collected_at: string }) | null {
+  const m = useMetrics()
+  if (!website) return null
+  const keys = [website.unix_user, website.id].filter(Boolean)
+  for (const f of Object.values(m.frames)) {
+    const sites = f.sample?.sites ?? f.sites ?? []
+    const hit = sites.find((x) => keys.includes(x.website_id))
+    if (hit) return { ...hit, collected_at: f.collected_at }
+  }
+  return null
+}
+
 /* REST seeding + legacy shape handling. */
 
 export function seedFrames(list: SnapshotFrame[]) {

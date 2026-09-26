@@ -1582,6 +1582,20 @@ pinned by TestDeployWebDirAndServingConverge reading the pending provision
 payload). deploy payload + DeploySpec + DeployJobPayload carry web_dir.
 OpenAPI deployment-config description updated (no new routes).
 
+Session 2026-09-27g — LARAVEL+SQLITE DEPLOYS (release v0.5.13, master
+12aa33d): the 'Full output' view surfaced the real cause — the app runs
+SQLite and the database file is gitignored, so a fresh clone lacks it;
+composer's post-autoload-dump (artisan package:discover) boots the app and
+the sqlite connector refuses the missing file, failing EVERY deploy at the
+build gate. buildRelease now reads the release's .env (DB_CONNECTION=
+sqlite; optional DB_DATABASE, absolute or relative) and creates the file
+(empty sqlite = valid empty database) before composer runs; *.sqlite
+files under database/ are carried between releases like .env/uploads/
+storage so app data survives deploys. Tests: TestEnsureLaravelSqlite +
+TestCarryOverSqliteData. Post-deploy step for the user: run
+`php artisan migrate --force` via the site Commands runner (the sqlite
+starts empty — tables come from migrations).
+
 Session 2026-09-27f — COMPOSER USES THE SITE'S PHP + FULL DEPLOY OUTPUT
 (release v0.5.12, master e1fc6da): (1) the deploy build ran bare `composer`
 whose PHAR shebang resolves `php` from PATH = the SYSTEM DEFAULT PHP — on

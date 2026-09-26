@@ -1,0 +1,47 @@
+name: release
+
+# Builds the assets install.sh downloads from GitHub Releases:
+#   epicpanel-api-linux-{amd64,arm64}, epicpanel-agent-linux-{amd64,arm64},
+#   web-dist.tar.gz, SHA256SUMS.
+# Push a tag (v*) to publish; workflow_dispatch builds without publishing.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build web UI
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build release assets
+        working-directory: backend
+        run: ./build-release.sh "${{ github.ref_name }}"
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        working-directory: backend
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ github.ref_name }}
+        run: ./build-release.sh "$VERSION" upload "$VERSION"

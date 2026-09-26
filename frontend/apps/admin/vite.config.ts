@@ -16,6 +16,9 @@ const API_TARGET = process.env.EPICPANEL_API || 'http://127.0.0.1:8080'
 
 export default defineConfig({
   root: __dirname,
+  // Served by the API binary under the same origin as the platform app
+  // (:8080/admin/) — base must match the mount point or asset URLs break.
+  base: '/admin/',
   plugins: [react()],
   resolve: {
     alias: {

@@ -30,9 +30,24 @@ for arch in amd64 arm64; do
     -o "$OUT/epicpanel-agent-linux-$arch" ./cmd/agent
 done
 
-# Panel web UI bundle (frontend/dist) — served by the API from EPICPANEL_WEB_DIR.
+# Panel web UI bundle — THREE SPAs share the one origin (WHM/cPanel style):
+#   dist/            platform panel  (served at /)
+#   dist/admin/      WHM experience  (served at /admin)
+#   dist/customer/   cPanel experience (served at /customer)
+# Sub-apps are optional in the bundle: the API degrades gracefully when absent.
 if [ -f ../frontend/dist/index.html ]; then
-  tar -czf "$OUT/web-dist.tar.gz" -C ../frontend/dist .
+  STAGE="$(mktemp -d)"
+  cp -r ../frontend/dist/. "$STAGE"/
+  for app in admin customer; do
+    if [ -f "../frontend/apps/$app/dist/index.html" ]; then
+      mkdir -p "$STAGE/$app"
+      cp -r "../frontend/apps/$app/dist/." "$STAGE/$app/"
+    else
+      echo "WARNING: apps/$app/dist missing — build it (cd frontend && npx vite build --config apps/$app/vite.config.ts); /$app will serve the platform app"
+    fi
+  done
+  tar -czf "$OUT/web-dist.tar.gz" -C "$STAGE" .
+  rm -rf "$STAGE"
   echo "web bundle: $OUT/web-dist.tar.gz ($(du -h "$OUT/web-dist.tar.gz" | cut -f1))"
 else
   echo "WARNING: ../frontend/dist missing — run 'cd frontend && npm run build' first"

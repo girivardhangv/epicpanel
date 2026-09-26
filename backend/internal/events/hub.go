@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -199,6 +200,18 @@ func originAllowed(r *http.Request, allowed []string) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
 		return true // non-browser clients
+	}
+	// Same-origin deployments: the API binary itself serves the panel, so the
+	// page origin is exactly this request's scheme+host. Browsers ALWAYS attach
+	// Origin to WebSocket handshakes (unlike same-origin fetches), and the
+	// default EPICPANEL_CORS_ORIGINS only lists dev vite ports — without this
+	// check every production install 403s its own panel's live feed.
+	scheme := "http"
+	if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		scheme = "https"
+	}
+	if origin == scheme+"://"+r.Host {
+		return true
 	}
 	for _, a := range allowed {
 		if a == origin {

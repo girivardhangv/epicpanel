@@ -57,6 +57,13 @@ func newWebUIHandler(webDir string) http.Handler {
 		}
 		for _, app := range subs {
 			if p == app.prefix || strings.HasPrefix(p, app.prefix+"/") {
+				if p == app.prefix {
+					// Bare prefix: the sub-app's router uses a trailing-slash
+					// basename, so an empty remaining path matches NO route and
+					// renders null (blank page). Canonicalize to prefix/.
+					http.Redirect(w, r, app.prefix+"/", http.StatusMovedPermanently)
+					return
+				}
 				app.serve(w, r)
 				return
 			}

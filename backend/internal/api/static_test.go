@@ -41,8 +41,13 @@ func TestWebUIHandlerThreeApps(t *testing.T) {
 	if code, body := get("/"); code != 200 || body != "PLATFORM" {
 		t.Fatalf("root: %d %q", code, body)
 	}
-	if code, body := get("/admin"); code != 200 || body != "WHM" {
-		t.Fatalf("/admin: %d %q", code, body)
+	// Bare prefix 301s to the trailing-slash form: the sub-app router's
+	// basename cannot match an empty remaining path (blank page).
+	req301 := httptest.NewRequest(http.MethodGet, "/admin", nil)
+	rec301 := httptest.NewRecorder()
+	h.ServeHTTP(rec301, req301)
+	if rec301.Code != http.StatusMovedPermanently || rec301.Header().Get("Location") != "/admin/" {
+		t.Fatalf("/admin bare: %d %q", rec301.Code, rec301.Header().Get("Location"))
 	}
 	if code, body := get("/admin/"); code != 200 || body != "WHM" {
 		t.Fatalf("/admin/: %d %q", code, body)

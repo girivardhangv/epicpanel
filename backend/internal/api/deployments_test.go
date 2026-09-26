@@ -96,6 +96,15 @@ func TestDeploymentAndStagingLifecycle(t *testing.T) {
 	if firstDep["status"] != "successful" || firstDep["commit_sha"] != "abc123" {
 		t.Fatalf("deployment after success: %v", firstDep)
 	}
+	// The deploy-success fanout converges serving (running directory takes
+	// effect with the release): drain the provision job it enqueues.
+	claim = agent.do("POST", "/v1/agent/jobs/claim", nil)
+	if job, _ = claim.body["job"].(map[string]any); job != nil && job["type"] == "provision_website" {
+		agent.do("POST", "/v1/agent/jobs/"+job["id"].(string)+"/result", map[string]any{
+			"success": true,
+			"result":  map[string]string{"unix_user": website["unix_user"].(string), "document_root": "/srv/epicpanel/websites/" + websiteID + "/public"},
+		})
+	}
 
 	// --- 3. Rollback before any other deploy: last successful is itself ---
 	resp = admin.do("POST", "/v1/organizations/"+orgID+"/websites/"+websiteID+"/rollback", nil)
@@ -310,5 +319,100 @@ func TestDeployWebDirAndServingConverge(t *testing.T) {
 	}
 	if pp["web_dir"] != "public" {
 		t.Fatalf("reconcile must carry web_dir (vhost drift bug), got %v", pp["web_dir"])
+	}
+}
+
+// TestRunningDirectoryConvergence — the two convergence paths for web_dir:
+// (1) a successful deploy immediately re-renders the serving config (the
+// running dir takes effect with the release it belongs to, not an hour
+// later); (2) a web_dir change on a site WITH a release also converges,
+// while a change on a never-deployed site must NOT (the new docroot would
+// resolve to an empty directory and 403 the site before its first deploy).
+func TestRunningDirectoryConvergence(t *testing.T) {
+	srv, admin := newTestServer(t)
+	agent := admin.NewClient()
+	admin.do("POST", "/v1/auth/register", map[string]string{
+		"email": "conv-admin@example.test", "password": "supersecret123", "name": "Admin",
+	})
+	resp := admin.do("POST", "/v1/organizations", map[string]string{"name": "ConvCo"})
+	orgID, _ := resp.body["id"].(string)
+	reg := admin.do("POST", "/v1/organizations/"+orgID+"/servers", map[string]string{"name": "web-01"})
+	regToken, _ := reg.body["registration_token"].(string)
+	enroll := agent.do("POST", "/v1/agent/enroll", map[string]string{
+		"registration_token": regToken, "hostname": "web-01.local",
+	})
+	setBearer(agent, enroll.body["agent_token"].(string))
+	serverID := enroll.body["server"].(map[string]any)["id"].(string)
+	resp = admin.do("POST", "/v1/organizations/"+orgID+"/websites", map[string]any{
+		"name": "conv", "server_id": serverID, "primary_domain": "conv.example.test",
+	})
+	website, _ := resp.body["website"].(map[string]any)
+	websiteID, _ := website["id"].(string)
+	base := "/v1/organizations/" + orgID + "/websites/" + websiteID
+
+	pendingProvisions := func() int {
+		var n int
+		if err := srv.Pool.QueryRow(context.Background(),
+			`SELECT count(*) FROM jobs WHERE website_id = $1 AND type = 'provision_website' AND status = 'pending'`,
+			websiteID).Scan(&n); err != nil {
+			t.Fatalf("count provisions: %v", err)
+		}
+		return n
+	}
+	// Drain the initial provision job.
+	claim := agent.do("POST", "/v1/agent/jobs/claim", nil)
+	job, _ := claim.body["job"].(map[string]any)
+	agent.do("POST", "/v1/agent/jobs/"+job["id"].(string)+"/result", map[string]any{
+		"success": true,
+		"result":  map[string]string{"unix_user": website["unix_user"].(string), "document_root": "/srv/epicpanel/websites/" + websiteID + "/public"},
+	})
+
+	// web_dir change on a NEVER-DEPLOYED site: no immediate converge.
+	admin.do("PATCH", base+"/deployment-config", map[string]any{
+		"repo_url": "https://github.com/example/app.git", "branch": "main", "web_dir": "public",
+	})
+	if n := pendingProvisions(); n != 0 {
+		t.Fatalf("web_dir change without a release must not converge, got %d pending provisions", n)
+	}
+
+	// Deploy: claim + report success -> the fanout must converge (1 pending
+	// provision carrying web_dir).
+	admin.do("POST", base+"/deploy", nil)
+	claim = agent.do("POST", "/v1/agent/jobs/claim", nil)
+	job, _ = claim.body["job"].(map[string]any)
+	if job["type"] != "deploy_website" {
+		t.Fatalf("expected deploy job, got %v", job["type"])
+	}
+	agent.do("POST", "/v1/agent/jobs/"+job["id"].(string)+"/result", map[string]any{
+		"success": true, "result": map[string]any{"commit_sha": "f00d", "release_dir": "/srv/x", "log": ""},
+	})
+	if n := pendingProvisions(); n != 1 {
+		t.Fatalf("successful deploy must converge serving, got %d pending provisions", n)
+	}
+	var payloadRaw []byte
+	if err := srv.Pool.QueryRow(context.Background(),
+		`SELECT payload FROM jobs WHERE website_id = $1 AND type = 'provision_website' AND status = 'pending'
+		 ORDER BY created_at DESC LIMIT 1`, websiteID).Scan(&payloadRaw); err != nil {
+		t.Fatalf("read provision payload: %v", err)
+	}
+	var pp map[string]any
+	if err := json.Unmarshal(payloadRaw, &pp); err != nil {
+		t.Fatal(err)
+	}
+	if pp["web_dir"] != "public" {
+		t.Fatalf("post-deploy converge must carry web_dir, got %v", pp["web_dir"])
+	}
+
+	// Complete the converge, then change web_dir again: WITH a release the
+	// change converges immediately.
+	claim = agent.do("POST", "/v1/agent/jobs/claim", nil)
+	job, _ = claim.body["job"].(map[string]any)
+	agent.do("POST", "/v1/agent/jobs/"+job["id"].(string)+"/result", map[string]any{
+		"success": true,
+		"result":  map[string]string{"unix_user": website["unix_user"].(string), "document_root": "/srv/epicpanel/websites/" + websiteID + "/public/public"},
+	})
+	admin.do("PATCH", base+"/deployment-config", map[string]any{"web_dir": "site/public"})
+	if n := pendingProvisions(); n != 1 {
+		t.Fatalf("web_dir change with a release must converge, got %d pending provisions", n)
 	}
 }

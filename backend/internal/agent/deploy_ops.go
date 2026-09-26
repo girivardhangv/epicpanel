@@ -374,6 +374,18 @@ func (e *Executor) buildRelease(ctx context.Context, spec DeploySpec, releaseDir
 	switch spec.Runtime {
 	case "php":
 		if fileExists(filepath.Join(releaseDir, "composer.json")) {
+			// Composer + unzip must EXIST before the build gate runs: a fresh
+			// node never had them installed (the one-click installers ensure
+			// them on demand; a git deploy must too, or every PHP deploy dies
+			// here with "env: 'composer': No such file or directory").
+			if _, err := exec.LookPath("unzip"); err != nil {
+				if err := e.aptInstall(ctx, []string{"unzip"}, "", "unzip"); err != nil {
+					return log.String(), fmt.Errorf("ensure unzip: %w", err)
+				}
+			}
+			if err := e.EnsureComposer(ctx); err != nil {
+				return log.String(), fmt.Errorf("ensure composer: %w", err)
+			}
 			log.WriteString("composer install --no-dev --optimize-autoloader\n")
 			if out, err := e.runAsSiteEnv(ctx, uid, gid, releaseDir, nil, "composer",
 				"install", "--no-dev", "--optimize-autoloader", "--no-interaction"); err != nil {

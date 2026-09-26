@@ -323,6 +323,17 @@ func (s *Server) Handler() http.Handler {
 		Audit:       s.Audit,
 		RequireOrg:  srvH.ResolveOrg,
 	}
+	// A deploy-config change (repo/branch/RUNNING DIRECTORY) must converge
+	// the serving config — the vhost/FPM docroot renders <site>/public/
+	// <web_dir>. The handler guards this behind "a successful release
+	// exists" so a fresh site keeps serving until its first deploy lands.
+	depH.OnWebsiteConfigChanged = func(ctx context.Context, websiteID uuid.UUID) {
+		ws, err := s.Websites.GetByIDAny(ctx, websiteID)
+		if err != nil || ws == nil {
+			return
+		}
+		s.reconcileWebsiteServing(ctx, ws.ID, ws.Organization, ws.ServerID)
+	}
 	depH.Register(mux)
 
 	bkH := &backups.Handler{
@@ -497,6 +508,14 @@ func (s *Server) Handler() http.Handler {
 		s.Runtimes.ApplyJobOutcome(ctx, job, job.Error)
 		dbH.ApplyJobOutcome(ctx, job, result)
 		depH.ApplyJobOutcome(job, result)
+		// A successful deploy activates a new release: converge the serving
+		// config so the running directory (web_dir) takes effect with the
+		// release it belongs to — not on the next hourly sweep.
+		if job.Type == jobs.TypeDeployWebsite && job.Status == jobs.StatusSuccess && job.WebsiteID != nil {
+			if ws, err := s.Websites.GetByIDAny(ctx, *job.WebsiteID); err == nil && ws != nil {
+				s.reconcileWebsiteServing(ctx, ws.ID, ws.Organization, ws.ServerID)
+			}
+		}
 		bkH.ApplyJobOutcome(ctx, job, result)
 		rtH.ApplyExtensionJobOutcome(ctx, job)
 		rtH.AdoptDetectedSoftware(ctx, job, result)

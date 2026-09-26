@@ -23,8 +23,9 @@ type Handler struct {
 	Websites    *websites.Store
 	Audit       *audit.Store
 	RequireOrg  func(r *http.Request, orgIDParam string, min organizations.Role) (uuid.UUID, *httpapi.APIError)
-	// OnWebsiteConfigChanged fires after deploy config updates (vhost unaffected
-	// but reserved for future hooks).
+	// OnWebsiteConfigChanged fires after deploy config updates when a
+	// release already exists — the vhost re-renders with the new running
+	// directory immediately (the API wires this to the serving converge).
 	OnWebsiteConfigChanged func(ctx context.Context, websiteID uuid.UUID)
 }
 
@@ -199,8 +200,14 @@ func (h *Handler) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.audit(r, &orgID, "website.deploy_config_updated", "website", ws.ID.String(), map[string]any{"repo_url": req.RepoURL, "branch": req.Branch, "web_dir": webDir})
+	// Converge the serving config right away — but only when a release
+	// exists: with web_dir set on a never-deployed site the new docroot
+	// would resolve to an empty directory. The first successful deploy
+	// converges instead (fanout).
 	if h.OnWebsiteConfigChanged != nil {
-		h.OnWebsiteConfigChanged(r.Context(), ws.ID)
+		if hasRelease, err := h.Deployments.HasSuccessfulDeployment(r.Context(), ws.ID); err == nil && hasRelease {
+			h.OnWebsiteConfigChanged(r.Context(), ws.ID)
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

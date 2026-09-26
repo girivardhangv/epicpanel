@@ -158,7 +158,7 @@ export function SiteDeploysSection({ site, canManage, canRollback, onChanged }: 
             </button>
             {configured && form.web_dir && (
               <span className="ml-3 align-middle text-[9.5px] text-muted">
-                Site will serve from the release's <span className="font-mono">/{form.web_dir}</span> — a deploy fails early if that folder is missing.
+                Site will serve from the release's <span className="font-mono">/{form.web_dir}</span> — a deploy fails early if that folder is missing. Takes effect on your next deploy.
               </span>
             )}
           </div>

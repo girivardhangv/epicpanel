@@ -144,6 +144,19 @@ func (s *Store) ListForWebsite(ctx context.Context, websiteID uuid.UUID, limit i
 	return out, rows.Err()
 }
 
+// HasSuccessfulDeployment reports whether the website ever had a successful
+// deployment (a release exists on the node). It guards the serving converge
+// after a running-directory change: without a release, the new docroot
+// (<site>/public/<web_dir>) would resolve to an empty directory and 403 the
+// site before its first deploy ever ran.
+func (s *Store) HasSuccessfulDeployment(ctx context.Context, websiteID uuid.UUID) (bool, error) {
+	var n int
+	err := s.Pool.QueryRow(ctx,
+		`SELECT count(*) FROM deployments WHERE website_id = $1 AND status = 'successful'`,
+		websiteID).Scan(&n)
+	return n > 0, err
+}
+
 // GetWebsiteDeployToken returns the encrypted deploy token for a website
 // (nil when unset).
 func (s *Store) GetWebsiteDeployToken(ctx context.Context, websiteID uuid.UUID) ([]byte, error) {

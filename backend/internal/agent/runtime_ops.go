@@ -311,32 +311,27 @@ func (e *Executor) installPHP(ctx context.Context, runtimeID, version string, p 
 }
 
 // EnsureComposer installs Composer globally (/usr/local/bin/composer) if it
-// is missing, running the official installer with integrity verification.
-// Idempotent: an existing Composer short-circuits.
+// is missing. Idempotent: an existing Composer short-circuits. Downloads the
+// release PHAR directly — the same artifact the one-click installers use —
+// instead of running composer-setup.php: the installer carries its own
+// extension probes and signature dance and has failed on fresh nodes where
+// the PHAR itself runs fine. Verified runnable (`composer --version`) before
+// returning, so a deploy fails HERE with a readable reason, not mid-build.
 func (e *Executor) EnsureComposer(ctx context.Context) error {
 	if _, err := exec.LookPath("composer"); err == nil {
 		return nil
 	}
 	slog.Info("installing composer")
-	if _, err := exec.LookPath("php"); err == nil {
-		// cli is present via the runtime install
-	} else {
+	if _, err := exec.LookPath("php"); err != nil {
 		return fmt.Errorf("php cli required for composer")
 	}
-	if err := e.run(ctx, "curl", "-fsSL", "-o", "/tmp/composer-setup.php", "https://getcomposer.org/installer"); err != nil {
-		return err
+	if err := e.run(ctx, "curl", "-fsSL", "-o", composerBin, "https://getcomposer.org/composer-stable.phar"); err != nil {
+		return fmt.Errorf("download composer: %w", err)
 	}
-	// Integrity check: the installer ships a SHA-384 of itself at the same URL.
-	if err := e.run(ctx, "bash", "-c",
-		"EXPECTED=$(curl -fsSL https://composer.github.io/installer.sig) && ACTUAL=$(sha384sum /tmp/composer-setup.php | awk '{print $1}') && [ \"$EXPECTED\" = \"$ACTUAL\" ]"); err != nil {
-		return fmt.Errorf("composer installer signature mismatch: %w", err)
-	}
-	if err := e.run(ctx, "php", "/tmp/composer-setup.php", "--install-dir=/usr/local/bin", "--filename=composer"); err != nil {
-		return err
-	}
-	_ = os.Remove("/tmp/composer-setup.php")
-	if _, err := exec.LookPath("composer"); err != nil {
-		return fmt.Errorf("composer binary missing after install")
+	_ = e.run(ctx, "chmod", "+x", composerBin)
+	if out, err := exec.CommandContext(ctx, "php", composerBin, "--version").CombinedOutput(); err != nil {
+		_ = os.Remove(composerBin)
+		return fmt.Errorf("composer not runnable after install: %s (%w)", tail(out, 200), err)
 	}
 	slog.Info("composer installed")
 	return nil

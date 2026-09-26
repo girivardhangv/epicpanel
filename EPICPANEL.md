@@ -1582,6 +1582,19 @@ pinned by TestDeployWebDirAndServingConverge reading the pending provision
 payload). deploy payload + DeploySpec + DeployJobPayload carry web_dir.
 OpenAPI deployment-config description updated (no new routes).
 
+Session 2026-09-27e — COMPOSER VIA DIRECT PHAR (release v0.5.11, master
+5b719d3): the composer-setup.php INSTALLER failed at the deploy build gate
+on a fresh node (extension probes + signature dance) even though the
+runtime's PHP ships the needed extensions; EnsureComposer now downloads
+the release PHAR directly (the one-click path, long verified), chmod +x,
+and verifies `composer --version` runs BEFORE returning so a broken
+install fails with a readable reason, not mid-deploy. Deploy UX notes
+confirmed live by the user on v0.5.10: the clone works and the user SEES
+their GitHub folders inside <site>/releases/<timestamp-id>-<rand> (the
+random-looking folder name IS the release id); a failed build deletes its
+own release dir (by design, live site untouched) - the first successful
+build persists as the live release.
+
 Session 2026-09-27d — RELEASES MOVED INTO THE SITE TREE (release v0.5.10,
 master d7f8eec), the real fix for "where are my cloned files": releases
 previously landed at /srv/epicpanel/releases/<id> — OUTSIDE the website

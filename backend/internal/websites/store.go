@@ -37,32 +37,32 @@ const (
 )
 
 type Website struct {
-	ID               uuid.UUID  `json:"id"`
-	Organization     uuid.UUID  `json:"organization_id"`
-	ServerID         uuid.UUID  `json:"server_id"`
-	Name             string     `json:"name"`
-	PrimaryDomain    string     `json:"primary_domain"`
-	Runtime          Runtime    `json:"runtime"`
-	RuntimeVersion   string     `json:"runtime_version"`
-	WebServer        string     `json:"web_server"`
-	BackendPort      int        `json:"backend_port"`
-	DocrootSuffix    string     `json:"docroot_suffix"`
+	ID             uuid.UUID `json:"id"`
+	Organization   uuid.UUID `json:"organization_id"`
+	ServerID       uuid.UUID `json:"server_id"`
+	Name           string    `json:"name"`
+	PrimaryDomain  string    `json:"primary_domain"`
+	Runtime        Runtime   `json:"runtime"`
+	RuntimeVersion string    `json:"runtime_version"`
+	WebServer      string    `json:"web_server"`
+	BackendPort    int       `json:"backend_port"`
+	DocrootSuffix  string    `json:"docroot_suffix"`
 	// App-platform serving mode (node/python/go): nginx proxies to the app
 	// process on AppPort; lifecycle is desired-state driven.
-	AppStartupCommand string    `json:"app_startup_command"`
-	AppBuildCommand   string    `json:"app_build_command"`
-	AppPort           int       `json:"app_port"`
-	AppDesiredState   string    `json:"app_desired_state"`
-	UsageCPUPercent  float64    `json:"usage_cpu_percent"`
-	UsageMemoryBytes int64      `json:"usage_memory_bytes"`
-	UsageDiskMB      int64      `json:"usage_disk_mb"`
-	UsageProcesses   int        `json:"usage_processes"`
-	UsageSampledAt   *time.Time `json:"usage_sampled_at,omitempty"`
-	Status           Status     `json:"status"`
-	UnixUser         string     `json:"unix_user"`
-	DocumentRoot     string     `json:"document_root"`
-	ErrorMessage     string     `json:"error_message,omitempty"`
-	IsStaging        bool       `json:"is_staging"`
+	AppStartupCommand string     `json:"app_startup_command"`
+	AppBuildCommand   string     `json:"app_build_command"`
+	AppPort           int        `json:"app_port"`
+	AppDesiredState   string     `json:"app_desired_state"`
+	UsageCPUPercent   float64    `json:"usage_cpu_percent"`
+	UsageMemoryBytes  int64      `json:"usage_memory_bytes"`
+	UsageDiskMB       int64      `json:"usage_disk_mb"`
+	UsageProcesses    int        `json:"usage_processes"`
+	UsageSampledAt    *time.Time `json:"usage_sampled_at,omitempty"`
+	Status            Status     `json:"status"`
+	UnixUser          string     `json:"unix_user"`
+	DocumentRoot      string     `json:"document_root"`
+	ErrorMessage      string     `json:"error_message,omitempty"`
+	IsStaging         bool       `json:"is_staging"`
 	// Lifecycle reasons (migration 0050): suspension carries WHY + when;
 	// termination is its own status with a timestamp + free-form reason.
 	SuspensionReason   *string        `json:"suspension_reason,omitempty"`
@@ -72,7 +72,7 @@ type Website struct {
 	TerminationReason  *string        `json:"termination_reason,omitempty"`
 	// BandwidthLimitMB is the per-site monthly override: NULL = use the
 	// hosting plan, 0 = unlimited, > 0 = override in MB.
-	BandwidthLimitMB   *int64 `json:"bandwidth_limit_mb"`
+	BandwidthLimitMB *int64     `json:"bandwidth_limit_mb"`
 	CreatedBy        uuid.UUID  `json:"created_by,omitempty"`
 	BackupSchedule   string     `json:"backup_schedule"`
 	BackupRetention  int        `json:"backup_retention"`
@@ -673,6 +673,33 @@ func (s *Store) ReadyForLimits(ctx context.Context, limit int) ([]Website, error
 		ORDER BY usage_sampled_at NULLS FIRST
 		LIMIT $1
 	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Website
+	for rows.Next() {
+		w, err := scanRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *w)
+	}
+	return out, rows.Err()
+}
+
+// ListReadyForServing returns READY websites for the periodic serving
+// reconcile. Vhosts only re-render when a site is touched by something —
+// without this scan, a template fix shipped in a newer agent never reaches
+// the configs already on disk (live case: the ACME ^~ fix left every
+// pre-existing vhost stale until each site was edited by hand).
+func (s *Store) ListReadyForServing(ctx context.Context, limit int) ([]Website, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT `+cols+` FROM websites
+		WHERE status = $1 AND terminated_at IS NULL
+		ORDER BY updated_at ASC
+		LIMIT $2
+	`, StatusReady, limit)
 	if err != nil {
 		return nil, err
 	}

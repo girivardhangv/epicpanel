@@ -392,3 +392,28 @@ func (s *Store) ApplyJobOutcome(ctx context.Context, job *jobs.Job, result json.
 	}
 	return uuid.Nil
 }
+
+// ListFailedForRetry returns Let's Encrypt domains stuck in 'failed'. They
+// have no ssl_expires_at, so the renewal scan never sees them — without this
+// the only way back is manually re-setting the SSL mode per domain.
+func (s *Store) ListFailedForRetry(ctx context.Context, limit int) ([]Domain, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT `+cols+` FROM domains
+		WHERE ssl_mode = 'letsencrypt' AND ssl_state = 'failed'
+		ORDER BY updated_at ASC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Domain
+	for rows.Next() {
+		d, err := scanRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *d)
+	}
+	return out, rows.Err()
+}

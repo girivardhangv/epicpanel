@@ -15,6 +15,7 @@ const (
 	renewalHorizon    = 30 * 24 * time.Hour
 	schedulerInterval = time.Hour
 	renewalBatch      = 100
+	reconcileBatch    = 500
 	fastInterval      = 30 * time.Second // leases, statuses, event reaping
 	retentionJobs     = 30 * 24 * time.Hour
 )
@@ -50,6 +51,8 @@ func (s *Server) StartBackground(ctx context.Context) {
 				return
 			case <-ticker.C:
 				s.enqueueRenewals(ctx)
+				s.retryFailedIssuances(ctx)
+				s.reconcileAllServing(ctx)
 				s.enqueueScheduledBackups(ctx)
 				s.resyncCrontabs(ctx)
 				s.enqueueSiteUsage(ctx)
@@ -161,6 +164,50 @@ func (s *Server) enqueueRenewals(ctx context.Context) {
 // Audit fix: DueBackup now carries the real server_id, and scheduled backups
 // pass NULL created_by (system actor) instead of uuid.Nil which violated the
 // users FK — scheduled backups previously never ran.
+// retryFailedIssuances re-enqueues Let's Encrypt issuance for domains stuck in
+// 'failed' and flips them back to 'issuing' so they are not re-enqueued every
+// tick. Failed domains carry no ssl_expires_at, so the renewal scan skips them;
+// without this the operator must re-set the SSL mode by hand after any failure
+// (transient ACME outages included).
+func (s *Server) retryFailedIssuances(ctx context.Context) {
+	list, err := s.Domains.ListFailedForRetry(ctx, renewalBatch)
+	if err != nil {
+		slog.Warn("failed-ssl retry scan failed", "err", err)
+		return
+	}
+	for _, d := range list {
+		payload := domains.CertPayload{DomainID: d.ID, Domain: d.Domain, Mode: string(d.SSLMode)}
+		if _, err := s.Jobs.EnqueueForWebsite(ctx, d.WebsiteID, jobs.TypeIssueCertificate, payload); err != nil {
+			slog.Warn("failed-ssl retry enqueue failed", "domain", d.Domain, "err", err)
+			continue
+		}
+		if _, err := s.Domains.SetSSLMode(ctx, d.ID, d.SSLMode); err != nil {
+			slog.Warn("failed-ssl retry state flip failed", "domain", d.Domain, "err", err)
+		}
+		slog.Info("failed ssl issuance requeued", "domain", d.Domain)
+	}
+}
+
+// reconcileAllServing re-renders every ready website's vhost from the current
+// desired state (idempotent per site: a pending provision job is refreshed,
+// not duplicated). Vhosts only re-render when a site is touched; without this
+// scan a template fix shipped in a newer agent never reaches the configs
+// already on disk, and renewals would run against stale vhosts.
+func (s *Server) reconcileAllServing(ctx context.Context) {
+	list, err := s.Websites.ListReadyForServing(ctx, reconcileBatch)
+	if err != nil {
+		slog.Warn("serving reconcile scan failed", "err", err)
+		return
+	}
+	for i := range list {
+		ws := list[i]
+		s.reconcileWebsiteServing(ctx, ws.ID, ws.Organization, ws.ServerID)
+	}
+	if len(list) > 0 {
+		slog.Info("serving reconcile scanned", "sites", len(list))
+	}
+}
+
 func (s *Server) enqueueScheduledBackups(ctx context.Context) {
 	due, err := s.Backups.DueForSchedule(ctx, 50)
 	if err != nil {

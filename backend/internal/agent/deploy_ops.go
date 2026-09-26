@@ -30,6 +30,10 @@ type DeploySpec struct {
 	WebsiteID       string
 	RepoURL         string
 	Branch          string
+	// WebDir is the repo-relative running directory ("public" for Laravel).
+	// The release must contain it or the deploy fails BEFORE activation —
+	// a typo'd web dir never goes live.
+	WebDir          string
 	TokenCipherB64  string
 	Runtime         string
 	RuntimeVersion  string
@@ -107,6 +111,15 @@ func (e *Executor) DeployGit(ctx context.Context, spec DeploySpec) (*DeployOutco
 		}
 	}
 	log.stepf("cloned %s @ %s", repoURL, branch)
+
+	// Running-directory gate: the configured web dir must exist in the
+	// release (Laravel => public/). Failing here keeps the live release
+	// untouched and gives an actionable error instead of a broken vhost.
+	if err := checkReleaseWebDir(releaseDir, spec.WebDir); err != nil {
+		_ = os.RemoveAll(releaseDir)
+		return nil, err
+	}
+	log.stepf("running directory %q present in release", strings.Trim(spec.WebDir, "/"))
 
 	sha := ""
 	if b, err := os.ReadFile(filepath.Join(releaseDir, ".git", "HEAD")); err == nil {
@@ -287,6 +300,22 @@ func (e *Executor) pruneReleases(releasesDir string, keep int) {
 	for i := 0; i < len(entries)-keep; i++ {
 		_ = os.RemoveAll(filepath.Join(releasesDir, entries[i].Name()))
 	}
+}
+
+// checkReleaseWebDir validates the running directory against a freshly
+// cloned release: empty = release root; otherwise the dir must exist (a
+// typo'd web dir fails the deploy before activation instead of going live
+// with a broken docroot).
+func checkReleaseWebDir(releaseDir, webDir string) error {
+	webDir = strings.Trim(webDir, "/")
+	if webDir == "" {
+		return nil
+	}
+	fi, err := os.Stat(filepath.Join(releaseDir, filepath.FromSlash(webDir)))
+	if err != nil || !fi.IsDir() {
+		return fmt.Errorf("running directory %q not found in the release — check the deployment web_dir setting", webDir)
+	}
+	return nil
 }
 
 func sanitizeBranch(b string) string {

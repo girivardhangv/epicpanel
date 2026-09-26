@@ -502,6 +502,7 @@ func (s *Server) Handler() http.Handler {
 		rtH.AdoptDetectedSoftware(ctx, job, result)
 		wsH.ApplySiteUsageOutcome(job, result)
 		s.applyEnforceOutcome(ctx, job, result)
+		s.applyRecalcOutcome(ctx, job, result)
 		dns.ApplyZonePublishOutcome(ctx, s.DNS, job, result)
 		ftpaccounts.ApplySyncOutcome(ctx, s.FTPAccounts, job, result)
 		if changedWebsite := s.Domains.ApplyJobOutcome(ctx, job, result); changedWebsite != uuid.Nil {
@@ -814,6 +815,7 @@ func (s *Server) reconcileWebsiteServing(ctx context.Context, websiteID, orgID, 
 		WebServer:      ws.WebServer,
 		BackendPort:    ws.BackendPort,
 		DocrootSuffix:  ws.DocrootSuffix,
+		WebDir:         ws.DeployWebDir,
 		PrimaryDomain:  ws.PrimaryDomain,
 	}
 	if cfg, err := (&websites.ConfigStore{Pool: s.Pool}).Get(ctx, ws.ID); err == nil {

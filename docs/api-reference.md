@@ -167,7 +167,15 @@ curl $H -X POST $P/organizations/$ORG/dns-zones/$ZONE/publish
 
 # 5. Deploy code + files + cron + FTP
 curl $H -X PATCH $P/organizations/$ORG/websites/$SITE/deployment-config \
-  -d '{"repo_url":"https://github.com/acme/site","branch":"main","deploy_token":"ghp_..."}'
+  -d '{"repo_url":"https://github.com/acme/site","branch":"main","deploy_token":"ghp_...","web_dir":"public"}'
+
+Private repos (GitHub/GitLab): set deploy_token to a personal access token
+with contents-read scope — it is encrypted at rest, injected into the clone
+URL agent-side only, and never returned by any API. Laravel-style apps:
+web_dir is the running directory INSIDE the release ("public" for Laravel,
+"web" for legacy Symfony, "" = release root); the vhost docroot resolves
+through the release symlink, so deploys keep swapping atomically. A deploy
+fails before activation if web_dir does not exist in the release.
 curl $H -X POST $P/organizations/$ORG/websites/$SITE/deploy
 curl $H -X POST $P/organizations/$ORG/websites/$SITE/crons -d '{"schedule":"*/15 * * * *","command":"php cron.php"}'
 curl $H -X POST $P/organizations/$ORG/websites/$SITE/ftp-accounts -d '{"protocol":"sftp","label":"deployer","password":"...","home_subdir":"public"}'

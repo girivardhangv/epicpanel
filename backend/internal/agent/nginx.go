@@ -170,7 +170,7 @@ func RenderVhost(v VhostSpec) string {
 	// excluded from every other plain :80 server_name, so the redirect block
 	// is the authoritative match.
 	for _, r := range redirects {
-		fmt.Fprintf(&b, "server {\n\tlisten 80;\n\tserver_name %s;\n\n\treturn %d %s;\n}\n\n", r.From, r.Status, r.To)
+		fmt.Fprintf(&b, "server {\n\tlisten 80;\n\tserver_name %s;\n\n%s\treturn %d %s;\n}\n\n", r.From, renderSiteIDLines(v.WebsiteID), r.Status, r.To)
 	}
 
 	for _, root := range order {
@@ -199,7 +199,7 @@ func RenderVhost(v VhostSpec) string {
 			fmt.Fprintf(&b, "server {\n\tlisten 80;\n\tserver_name %s;\n\n%s}\n\n", strings.Join(plainNames, " "), common)
 		}
 		if len(g.secured) > 0 {
-			fmt.Fprintf(&b, "server {\n\tlisten 80;\n\tserver_name %s;\n\n\tlocation ^~ /.well-known/acme-challenge/ {\n\t\troot %s;\n\t}\n\n\tlocation / {\n\t\treturn 301 https://$host$request_uri;\n\t}\n}\n\n", strings.Join(securedNames, " "), acmeWebroot)
+			fmt.Fprintf(&b, "server {\n\tlisten 80;\n\tserver_name %s;\n\n%s\tlocation ^~ /.well-known/acme-challenge/ {\n\t\troot %s;\n\t}\n\n\tlocation / {\n\t\treturn 301 https://$host$request_uri;\n\t}\n}\n\n", strings.Join(securedNames, " "), renderSiteIDLines(v.WebsiteID), acmeWebroot)
 			first := g.secured[0]
 			fmt.Fprintf(&b, "server {\n\tlisten 443 ssl;\n\tserver_name %s;\n\n\tssl_certificate %s;\n\tssl_certificate_key %s;\n\tssl_protocols TLSv1.2 TLSv1.3;\n\n%s}\n\n", strings.Join(securedNames, " "), first.CertPath, first.KeyPath, common)
 		}
@@ -276,6 +276,7 @@ func (v VhostSpec) commonLocations() string {
 	access_log %s;
 	error_log %s;
 
+	%s
 	location ^~ /.well-known/acme-challenge/ {
 		root %s;
 	}
@@ -284,12 +285,26 @@ func (v VhostSpec) commonLocations() string {
 		deny all;
 	}
 %s%s
-`, rootSection, accessLog, errorLog, v.acmeWebrootPath(), errorPagesSection(), phpHeader, phpSection)
+`, rootSection, accessLog, errorLog, renderSiteIDLines(v.WebsiteID), v.acmeWebrootPath(), errorPagesSection(), phpHeader, phpSection)
 }
 
 // epicpanelDefaultPagesDir is the panel-owned directory holding the global
 // default status pages (written by InstallNginx).
 const epicpanelDefaultPagesDir = "/srv/epicpanel/default_pages"
+
+// renderSiteIDLines stamps the trusted site identifier + the platform
+// accounting stream into a generated server block. The `set` runs in the
+// rewrite phase of EpicPanel-generated configuration only — customer
+// rewrite snippets are allowlist-validated and can neither define nor
+// reference $epicpanel_* variables, so the attribution cannot be spoofed.
+// The accounting access_log is rendered at SERVER level because an nginx
+// server-level access_log replaces the http-level one: without this line a
+// vhost's own access log would silently drop the site out of the global
+// billing stream. Both directives are platform-owned output of RenderVhost;
+// the only customer-controlled input (RewriteRules) cannot touch them.
+func renderSiteIDLines(websiteID string) string {
+	return fmt.Sprintf("\tset $epicpanel_site_id \"%s\";\n\taccess_log %s epicpanel_bandwidth;\n", websiteID, bwLogPath)
+}
 
 // errorPagesSection wires the panel's default status pages into a live
 // vhost: nginx-generated 404s render "Sorry, Wrong Page"; origin
@@ -373,7 +388,7 @@ server {
 	listen 80;
 	server_name %s;
 
-	access_log %s/nginx-access.log;
+%s	access_log %s/nginx-access.log;
 	error_log %s/nginx-error.log;
 
 	return %d;
@@ -384,7 +399,7 @@ server {
 		add_header Cache-Control "no-store" always;
 	}
 }
-`, v.WebsiteID, status, strings.Join(names, " "), logsDir, logsDir, status, status, page, page, root)
+`, v.WebsiteID, status, strings.Join(names, " "), renderSiteIDLines(v.WebsiteID), logsDir, logsDir, status, status, page, page, root)
 }
 
 // bandwidthStubPage is the reason-aware suspension page for
@@ -407,7 +422,7 @@ func renderVhostQuotaExceeded(v VhostSpec) string {
 		listen 80;
 		server_name %s;
 
-		access_log %s/nginx-access.log;
+%s		access_log %s/nginx-access.log;
 		error_log %s/nginx-error.log;
 
 		return 509;
@@ -417,7 +432,7 @@ func renderVhostQuotaExceeded(v VhostSpec) string {
 			internal;
 		}
 	}
-`, v.WebsiteID, strings.Join(names, " "), logsDir, logsDir)
+`, v.WebsiteID, strings.Join(names, " "), renderSiteIDLines(v.WebsiteID), logsDir, logsDir)
 }
 
 const nginxAvailable = "/etc/nginx/sites-available"
@@ -430,6 +445,11 @@ type NginxProvider struct {
 	EnabledDir   string
 	ACMEWebroot  string
 	LogsBase     string
+	// BWConfPath / BWLogDir / BWRotatePath override the platform bandwidth
+	// accounting locations (tests; empty = production paths).
+	BWConfPath   string
+	BWLogDir     string
+	BWRotatePath string
 }
 
 func (n *NginxProvider) Name() string { return "nginx" }
@@ -455,6 +475,22 @@ func (n *NginxProvider) acmeWebrootPath() string {
 	return acmeWebroot
 }
 
+// ensureBWAccountingConf converges the platform accounting config at this
+// provider's paths (injected for tests, production defaults otherwise).
+func (n *NginxProvider) ensureBWAccountingConf() error {
+	confPath, logDir, rotatePath := n.BWConfPath, n.BWLogDir, n.BWRotatePath
+	if confPath == "" {
+		confPath = bwAccountingConfPath
+	}
+	if logDir == "" {
+		logDir = bwLogDir
+	}
+	if rotatePath == "" {
+		rotatePath = bwLogrotateConfPath
+	}
+	return ensureBandwidthAccountingConfAt(confPath, logDir, rotatePath)
+}
+
 // Ensure writes the vhost atomically, validates with nginx -t (120s cap via
 // ValidateCmd), enables and reloads. On validation failure the previous
 // config is restored (SwapValidated) and the error returned.
@@ -478,6 +514,13 @@ func (n *NginxProvider) Ensure(ctx context.Context, v VhostSpec) error {
 	}
 	if err := os.MkdirAll(filepath.Join(logsBase, v.WebsiteID, "logs"), 0o755); err != nil {
 		return fmt.Errorf("create logs dir: %w", err)
+	}
+	// The generated vhost references the global accounting format: converge
+	// the platform accounting conf FIRST so nginx -t can never see an
+	// unknown log_format on a fresh node or mid-upgrade (suspension stubs
+	// reference the format too, so this rides every Ensure).
+	if err := n.ensureBWAccountingConf(); err != nil {
+		return err
 	}
 
 	avail := filepath.Join(availDir, "epicpanel-"+v.WebsiteID+".conf")
@@ -525,6 +568,90 @@ func (n *NginxProvider) Remove(ctx context.Context, websiteID string) error {
 		return reloadNginx(ctx)
 	}
 	return nil
+}
+
+// bwAccountingConfPath is the platform-controlled http{} accounting
+// configuration (conf.d/*.conf is included by the distro nginx.conf's http
+// block on every supported distro). It defines the billing log format and
+// the http-level access_log, and is written by InstallNginx AND by every
+// NginxProvider.Ensure converge so the format definition always exists
+// before any generated vhost that references it is validated.
+const bwAccountingConfPath = "/etc/nginx/conf.d/epicpanel-bandwidth.conf"
+
+// bwLogrotateConfPath ships the platform accounting log's rotation policy
+// (written by InstallNginx and every Ensure).
+const bwLogrotateConfPath = "/etc/logrotate.d/epicpanel-bandwidth"
+
+// bwAccountingLogFormat is the authoritative HTTP billing definition:
+//
+//	site_id  request_time  request_bytes  response_bytes  "user agent"
+//
+// Request + response bytes (nginx $request_length + $bytes_sent — actual
+// byte counters, never estimates), attributed by record timestamp. The
+// quoted user agent lets the accountant exclude platform self-traffic
+// (EpicPanel- UA). No customer input can reach this format or its
+// variables: it lives in a root-owned platform file.
+const bwAccountingLogFormat = `log_format epicpanel_bandwidth '$epicpanel_site_id $time_iso8601 $request_length $bytes_sent "$http_user_agent"';`
+
+// ensureBandwidthAccountingConfAt converges the platform accounting
+// configuration at injectable paths (production defaults via
+// ensureBandwidthAccountingConf): the log directory (root-owned, not inside
+// any site tree), the http{} format+access_log file, and the logrotate
+// policy (delaycompress keeps bandwidth.log.1 plain so the accountant can
+// drain it after rename rotation; USR1 makes nginx reopen onto the new
+// file). All idempotent: identical content is never rewritten.
+func ensureBandwidthAccountingConfAt(confPath, logDir, rotatePath string) error {
+	if err := os.MkdirAll(logDir, 0o750); err != nil {
+		return fmt.Errorf("create %s: %w", logDir, err)
+	}
+	logPath := filepath.Join(logDir, "bandwidth.log")
+	confContent := fmt.Sprintf(`# managed by EpicPanel — do not edit
+# Platform bandwidth accounting stream (billing): every EpicPanel-generated
+# vhost stamps $epicpanel_site_id from EpicPanel-rendered configuration and
+# carries a server-level access_log pointing here; this http-level
+# access_log also covers servers without their own access_log (the default
+# vhost records "-" and is skipped by the accountant).
+#
+# The file is root/platform-owned: customers cannot write, truncate, delete
+# or disable it. The agent's bandwidth accountant is the only consumer.
+%s
+
+access_log %s epicpanel_bandwidth;
+`, bwAccountingLogFormat, logPath)
+	if existing, err := os.ReadFile(confPath); err != nil || string(existing) != confContent {
+		_ = os.MkdirAll(filepath.Dir(confPath), 0o755)
+		if err := AtomicWriteFile(confPath, []byte(confContent), 0o644); err != nil {
+			return fmt.Errorf("write bandwidth accounting conf: %w", err)
+		}
+	}
+	rotateContent := fmt.Sprintf(`# managed by EpicPanel — do not edit
+%s {
+	daily
+	rotate 14
+	maxsize 512M
+	missingok
+	notifempty
+	compress
+	delaycompress
+	create 0640 root adm
+	sharedscripts
+	postrotate
+		[ -f /run/nginx.pid ] && kill -USR1 "$(cat /run/nginx.pid)" || true
+	endscript
+}
+`, logPath)
+	if existing, err := os.ReadFile(rotatePath); err != nil || string(existing) != rotateContent {
+		_ = os.MkdirAll(filepath.Dir(rotatePath), 0o755)
+		if err := AtomicWriteFile(rotatePath, []byte(rotateContent), 0o644); err != nil {
+			return fmt.Errorf("write bandwidth logrotate conf: %w", err)
+		}
+	}
+	return nil
+}
+
+// ensureBandwidthAccountingConf converges the production accounting config.
+func ensureBandwidthAccountingConf() error {
+	return ensureBandwidthAccountingConfAt(bwAccountingConfPath, bwLogDir, bwLogrotateConfPath)
 }
 
 // InstallNginx ensures nginx itself is present (idempotent), and provisions
@@ -581,6 +708,11 @@ map $http_upgrade $epicpanel_connection_upgrade {
 		return fmt.Errorf("write default vhost: %w", err)
 	}
 	_ = runCmd(ctx, "ln", "-sf", "/etc/nginx/sites-available/default", "/etc/nginx/sites-enabled/default")
+
+	// Platform bandwidth accounting stream (billing-grade, customer-proof).
+	if err := ensureBandwidthAccountingConf(); err != nil {
+		return err
+	}
 
 	return nil
 }

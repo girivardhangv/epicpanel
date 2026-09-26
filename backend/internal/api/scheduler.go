@@ -90,7 +90,6 @@ func (s *Server) StartBackground(ctx context.Context) {
 		s.enqueueEnforceLimits(ctx)
 	}()
 }
-
 // reapExpiredLeases requeues jobs whose agent died mid-run and emits events.
 func (s *Server) reapExpiredLeases(ctx context.Context) {
 	reaped, err := s.Jobs.ReapExpiredLeases(ctx)

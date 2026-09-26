@@ -51,6 +51,7 @@ const (
 	TypeSuspendWebsite   Type = "suspend_website"
 	TypeResumeWebsite    Type = "resume_website"
 	TypeEnforceLimits    Type = "enforce_limits"
+	TypeRecalcBandwidth  Type = "recalc_bandwidth"
 )
 
 type Status string

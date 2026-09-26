@@ -676,3 +676,93 @@ func TestPhaseTerminatePurgeLifecycle(t *testing.T) {
 		t.Fatalf("purged website must be gone: %d %v", resp.status, resp.body)
 	}
 }
+
+// TestBandwidthRecalcRouteAndRepair drives the recalculation/reconciliation
+// surface end-to-end: admin POST .../bandwidth/recalculate enqueues a
+// recalc_bandwidth job; the agent round-trip feeds the fanout, which repairs
+// the monthly authority with GREATEST (report-only runs touch nothing; a
+// lower recalculated value never lowers billed usage).
+func TestBandwidthRecalcRouteAndRepair(t *testing.T) {
+	orgID, _, websiteID, admin, agent, srv := phase4SetupWithServer(t)
+	base := "/v1/organizations/" + orgID + "/websites/" + websiteID
+	ctx := context.Background()
+
+	// Range validation.
+	if resp := admin.do("POST", base+"/bandwidth/recalculate", map[string]any{
+		"from_day": "2026-09-10", "to_day": "2026-09-01",
+	}); resp.status == http.StatusAccepted {
+		t.Fatalf("inverted range must be rejected: %v", resp.body)
+	}
+
+	// Seed a current-month usage row (the GREATEST authority under repair).
+	seed := func(usedMB float64) {
+		if _, err := srv.Pool.Exec(ctx, `
+			INSERT INTO workload_resource_usage
+				(organization_id, website_id, resource, period_start, used, limit_value, unit, measured_by)
+			VALUES ($1, $2, 'bandwidth', date_trunc('month', now()), $3, 10240, 'MB', 'test')
+			ON CONFLICT (website_id, resource, period_start) DO UPDATE SET used = EXCLUDED.used,
+				measured_by = EXCLUDED.measured_by`, orgID, websiteID, usedMB); err != nil {
+			t.Fatalf("seed usage row: %v", err)
+		}
+	}
+	usedMB := func() float64 {
+		var used float64
+		if err := srv.Pool.QueryRow(ctx, `SELECT used FROM workload_resource_usage
+			WHERE website_id = $1 AND resource = 'bandwidth' AND period_start = date_trunc('month', now())`,
+			websiteID).Scan(&used); err != nil {
+			t.Fatalf("read usage row: %v", err)
+		}
+		return used
+	}
+	seed(100)
+
+	runRecalc := func(apply bool, totalBytes int64) {
+		t.Helper()
+		today := time.Now().UTC().Format("2006-01-02")
+		resp := admin.do("POST", base+"/bandwidth/recalculate", map[string]any{
+			"from_day": today, "to_day": today, "apply": apply,
+		})
+		if resp.status != http.StatusAccepted {
+			t.Fatalf("recalculate: %d %v", resp.status, resp.body)
+		}
+		jobID, _ := resp.body["job_id"].(string)
+		claim := agent.do("POST", "/v1/agent/jobs/claim", nil)
+		job, _ := claim.body["job"].(map[string]any)
+		if job == nil || job["type"] != "recalc_bandwidth" {
+			t.Fatalf("claim: %v", claim.body)
+		}
+		res := agent.do("POST", "/v1/agent/jobs/"+jobID+"/result", map[string]any{
+			"success": true,
+			"result": map[string]any{
+				"website_id": websiteID, "from_day": today, "to_day": today,
+				"days": []map[string]any{{
+					"date": today, "request_bytes": 1024,
+					"response_bytes": totalBytes - 1024, "total_bytes": totalBytes,
+				}},
+				"total_bytes": totalBytes, "files_scanned": 1, "records_matched": 2,
+			},
+		})
+		if res.status != http.StatusOK {
+			t.Fatalf("recalc result: %d %v", res.status, res.body)
+		}
+	}
+
+	// Reconciliation only (apply=false): the raw report lands in the job
+	// result, the authoritative row stays untouched.
+	runRecalc(false, 900*1024*1024)
+	if got := usedMB(); got != 100 {
+		t.Fatalf("report-only run must not touch usage, got %v", got)
+	}
+
+	// Repair (apply=true) with a HIGHER recalculated value: usage rises to it.
+	runRecalc(true, 250*1024*1024)
+	if got := usedMB(); got != 250 {
+		t.Fatalf("repair must raise usage to the recalculated value, got %v", got)
+	}
+
+	// Repair with a LOWER recalculated value: GREATEST keeps the high-water.
+	runRecalc(true, 50*1024*1024)
+	if got := usedMB(); got != 250 {
+		t.Fatalf("repair must never lower usage, got %v", got)
+	}
+}

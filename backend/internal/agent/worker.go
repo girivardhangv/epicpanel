@@ -437,6 +437,18 @@ func PollAndExecute(ctx context.Context, c *Client, e *Executor, cfg Config) (bo
 				resultJSON = b
 			}
 		}
+	case "recalc_bandwidth":
+		var p RecalcBandwidthPayload
+		if err := json.Unmarshal(job.Payload, &p); err != nil {
+			execErr = err
+		} else {
+			outcome, err := e.RecalcBandwidth(ctx, p)
+			if err != nil {
+				execErr = err
+			} else if b, err := json.Marshal(outcome); err == nil {
+				resultJSON = b
+			}
+		}
 	default:
 		// Phase 11 backup registry (coordinator-merged dispatch).
 		if fn, ok := BackupOps2[job.Type]; ok {
@@ -511,6 +523,7 @@ type DeployJobPayload struct {
 	WebsiteID       string `json:"website_id"`
 	RepoURL         string `json:"repo_url"`
 	Branch          string `json:"branch"`
+	WebDir          string `json:"web_dir,omitempty"`
 	TokenEncrypted  string `json:"token_encrypted,omitempty"`
 	Runtime         string `json:"runtime,omitempty"`
 	RuntimeVersion  string `json:"runtime_version,omitempty"`
@@ -529,6 +542,7 @@ func deploySpecFromPayload(p DeployJobPayload) DeploySpec {
 		WebsiteID:       p.WebsiteID,
 		RepoURL:         p.RepoURL,
 		Branch:          p.Branch,
+		WebDir:          p.WebDir,
 		TokenCipherB64:  p.TokenEncrypted,
 		Runtime:         p.Runtime,
 		RuntimeVersion:  p.RuntimeVersion,

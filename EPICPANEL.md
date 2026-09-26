@@ -1554,6 +1554,62 @@ At the end of every significant session, update this file with: what was complet
 
 ---
 
+
+ADR-065 — Private-repo deploys + running directory (deploy web_dir) (2026-09-26).
+(1) PRIVATE REPOS were already supported end-to-end (encrypted deploy_token
+at rest -> agent decrypts -> withGitToken injects https://epicpanel:<token>@
+into the clone URL) — live-verified 2026-09-26 by cloning a real private
+Laravel repo (girivardhangv/EpicHostly-LARAVEL) with the exact injected URL
+pattern; documented in docs/api-reference.md (PAT needs contents-read).
+(2) RUNNING DIRECTORY: git-deployed apps whose web entry is not the repo
+root (Laravel public/, legacy Symfony web/) previously served the release
+ROOT (broken vhost). New websites.deploy_web_dir (migration 0054) set via
+PATCH deployment-config {"web_dir": "public"} (same validation as the
+per-domain docroot suffix: relative, <=3 slashes, <=100 chars, traversal
+anchored). The agent resolves the vhost+FPM docroot as <site>/public/
+<web_dir> — THROUGH the release symlink, so deploys/rollbacks keep swapping
+atomically underneath; pre-first-deploy the composed dir is created empty
+and the initial-manual migration re-resolves it correctly. Priority:
+web_dir (deploy running dir) > docroot_suffix (site tree override, e.g.
+one-click Laravel app/public) > default public/. Deploy gate: a release
+whose web_dir is missing FAILS BEFORE ACTIVATION (checkReleaseWebDir) — a
+typo'd running dir never goes live. (3) DRIFT FIX: reconcileWebsiteServing
+(api/server.go) dropped DocrootSuffix when re-rendering vhosts — any
+alias/SSL/app/resyncVhosts converge silently reverted a Laravel one-click
+site to the default docroot; it now carries DocrootSuffix AND WebDir (the
+new resyncVhosts sweep would have re-broken every site daily — regression-
+pinned by TestDeployWebDirAndServingConverge reading the pending provision
+payload). deploy payload + DeploySpec + DeployJobPayload carry web_dir.
+OpenAPI deployment-config description updated (no new routes).
+
+Session 2026-09-26 — bandwidth accounting stabilization (worktree
+feature/bw-accounting-stabilize, branched @ 164a434; parallel agent owns
+the main checkout): ADR-064 implemented in branch feature/bw-accounting-
+stabilize (not yet merged at write time). New: internal/agent/bwtail.go +
+recalc.go, migration 0053, docs/bandwidth-accounting.md; modified: bw_state
+(.bak generation + Log checkpoint + mutex), traffic.go (monthAcc removed),
+enforce.go/executor.go (HTTPMonthEgress hook), nginx.go (stamps + global
+conf + logrotate + Ensure ordering), main.go (accountant wiring), api
+(bandwidth.go recalc route + repair fanout, scheduler resyncVhosts,
+phase12/openapi/tokenauth gates). Verified: go build/vet clean; go test
+-p 1 full suite on disposable PG 54329 green; agent bwtail suite covers
+replay/rotation/truncation/restart/rollover; recalc repair GREATEST tested
+at API level. Deploy needs: agent binary upgrade + nginx reload (order in
+docs/bandwidth-accounting.md); billing definition is now request+response
+bytes (was response-only) — document to billing users on release.
+
+ Follow-up same session (pre-merge, same branch): ADR-065 private-repo
+deploy verification (live clone of EpicHostly-LARAVEL via injected-token
+URL — read-only smoke, no repo changes) + deploy web_dir running-directory
+feature (migration 0054, PATCH deployment-config web_dir, agent
+<site>/public/<web_dir> resolution, checkReleaseWebDir pre-activation
+gate, reconcileWebsiteServing docroot drift fix). New tests:
+TestDeployWebDirAndServingConverge (API), TestCheckReleaseWebDir +
+TestEffectiveDocrootWebDirComposition (agent). Full suite re-verified
+green (22 pkgs, disposable PG 54329). Frontend note: there is NO deploy
+config UI yet — deployment config (repo/branch/token/web_dir) is
+API-only; UI follow-up when the customer app gains a Deployments screen.
+
 ## 26. NEW SESSION PROCEDURE
 
 1. Read `EPICPANEL.md`.
@@ -1864,6 +1920,56 @@ pages — quota surface + live rate + reason-aware banners, refreshed by the
 website.suspended/resumed/terminated bus events (no polling); admin gains
 terminate/purge confirm actions. All new routes in phase12Routes +
 authzmatrix + openapi.json (231 ops) + tokenauth scope map.
+
+
+ADR-064 — Billing-grade bandwidth accounting: global nginx accounting stream
+(2026-09-26). Replaces the CUSTOMER access log as the authoritative HTTP
+billing source (ADR-063's weak point: per-site logs under
+/srv/epicpanel/websites/<id>/logs are customer-visible/deletable); nftables
+direct-egress accounting, the monthly GREATEST authority, quota APIs,
+resume guard, suspension reasons and history are UNCHANGED.
+(1) PLATFORM LOG: /etc/nginx/conf.d/epicpanel-bandwidth.conf (root-owned,
+written by InstallNginx AND every vhost Ensure — the format definition can
+never lag a referencing vhost) defines
+log_format epicpanel_bandwidth '$epicpanel_site_id $time_iso8601
+$request_length $bytes_sent "$http_user_agent"' + http-level access_log to
+/var/log/epicpanel/bandwidth.log (0750 root:adm dir, 0640 root:adm file).
+Every generated server block (plain/secured/redirect/stubs) renders
+set $epicpanel_site_id "<uuid>" + a server-level accounting access_log —
+required because a server-level access_log REPLACES the http-level one.
+logrotate: daily, rotate 14, compress+delaycompress (keeps .1 plain for
+drain), USR1 postrotate. Customers cannot disable any of it: vhosts are
+agent-generated, the rewrite-snippet sanitizer rejects access_log/set of
+unknown vars/$epicpanel_* refs, the log is outside every site tree.
+Customer access-log deletion has ZERO billing effect.
+(2) ONE ACCOUNTANT (internal/agent/bwtail.go, 5-min tally
+EPICPANEL_AGENT_BW_TALLY_INTERVAL + boot pass): streams the global log,
+folds request+response bytes per site (record-time month attribution — no
+September traffic in October; EpicPanel- self-traffic and "-" site ids
+skipped), and persists accumulator + inode+offset checkpoint in ONE atomic
+bw_state.json write (plus .bak generation; single corrupt state cannot
+destroy accounting). Crash before the write = replay with no double count
+(the inflated accumulator never survived); crash after = never re-read.
+Rotation: inode change drains bandwidth.log.1 (then .2) from the stored
+offset before switching; in-place truncation resets to 0 (lost bytes
+logged). First-ever boot seeks to EOF (unknown history is never billed)
+and seeds the accumulator from bw_state's sites map — the upgrade carries
+the billed month over instead of resetting. Reporting stays the existing
+hourly enforce_limits composition (nft rx+tx + HTTP month-to-date) →
+GREATEST upsert: cumulative values, so replay cannot inflate billing.
+(3) RECALC/RECONCILIATION: POST
+/v1/organizations/{org}/websites/{id}/bandwidth/recalculate
+{from_day,to_day,apply} (admin+, audited; migration 0053 job type
+recalc_bandwidth) → agent re-scans all bandwidth.log generations (plain +
+gzip, streamed, 400-day cap) → per-day request/response/total truth.
+apply=false = reconciliation report only; apply=true repairs
+workload_resource_usage per month with GREATEST (repair can raise, never
+lower; daily history buckets untouched). (4) resyncVhosts (control plane,
+boot + daily) re-renders every ready site's vhost so platform-wide serving
+changes converge without per-site events. TrafficSampler is now
+observability-only (live windows/history/attack detection); its monthAcc
+billing machinery is deleted. Phase12Routes + openapi (232 ops) +
+tokenauth scope synced. Deploy/rollback: docs/bandwidth-accounting.md.
 
 Session 2026-09-25 — bandwidth & lifecycle (worktree feature/site-lifecycle-bandwidth,
 branched @ fdab823; parallel session owned the main checkout):

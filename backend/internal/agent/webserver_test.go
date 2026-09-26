@@ -308,6 +308,9 @@ exit 0`
 		EnabledDir:   enabledDir,
 		ACMEWebroot:  filepath.Join(base, "acme"),
 		LogsBase:     filepath.Join(base, "srv"),
+		BWConfPath:   filepath.Join(base, "confd", "epicpanel-bandwidth.conf"),
+		BWLogDir:     filepath.Join(base, "varlog", "epicpanel"),
+		BWRotatePath: filepath.Join(base, "logrotate", "epicpanel-bandwidth"),
 	}
 	spec := testVhostSpec(id)
 	newContent := RenderVhost(spec)
@@ -378,6 +381,9 @@ func TestNginxEnsureIdempotentShortCircuit(t *testing.T) {
 		EnabledDir:   filepath.Join(base, "enabled"),
 		ACMEWebroot:  filepath.Join(base, "acme"),
 		LogsBase:     filepath.Join(base, "srv"),
+		BWConfPath:   filepath.Join(base, "confd", "epicpanel-bandwidth.conf"),
+		BWLogDir:     filepath.Join(base, "varlog", "epicpanel"),
+		BWRotatePath: filepath.Join(base, "logrotate", "epicpanel-bandwidth"),
 	}
 	spec := testVhostSpec(id)
 	if err := ng.Ensure(context.Background(), spec); err != nil {

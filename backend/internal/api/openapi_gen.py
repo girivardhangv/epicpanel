@@ -87,6 +87,7 @@ R("get", "/v1/organizations/{org_id}/websites/{website_id}/bandwidth", "Current 
 R("get", "/v1/organizations/{org_id}/websites/{website_id}/bandwidth/history", "Bucketed bandwidth history (interval=hour|day; hourly retained 90d, daily indefinite)", t, x_scope="websites:read")
 R("get", "/v1/organizations/{org_id}/websites/{website_id}/quota", "Site quota: monthly bandwidth budget (per-site override or plan), used, reset (billing+)", t, x_scope="websites:read")
 R("patch", "/v1/organizations/{org_id}/websites/{website_id}/quota", "Set/clear the per-site bandwidth override: bandwidth_limit_mb (0=unlimited, null=plan) (admin+)", t, x_scope="websites:write")
+R("post", "/v1/organizations/{org_id}/websites/{website_id}/bandwidth/recalculate", "Admin-only bandwidth recalculation/reconciliation from the raw platform accounting logs: {from_day, to_day, apply}; apply=true repairs the monthly authority (GREATEST, never lowers) (admin+)", t, x_scope="websites:write")
 R("post", "/v1/organizations/{org_id}/websites/{website_id}/staging", "Create staging clone (admin+)", t, x_scope="deployments:write")
 R("post", "/v1/organizations/{org_id}/websites/{website_id}/promote", "Promote staging -> production (admin+)", t, x_scope="deployments:write")
 R("post", "/v1/organizations/{org_id}/websites/{website_id}/wordpress", "WordPress one-click install (developer+)", t, x_scope="websites:write")
@@ -142,7 +143,7 @@ R("get", "/v1/organizations/{org_id}/databases/{db_id}/pma-sso", "phpMyAdmin SSO
 # ------------------------------------------------------------- deployments -
 t = "Deployments"
 R("get", "/v1/organizations/{org_id}/websites/{website_id}/deployments", "Deployment history (billing+)", t, x_scope="deployments:read")
-R("patch", "/v1/organizations/{org_id}/websites/{website_id}/deployment-config", "Set repo/branch/token (developer+)", t, x_scope="deployments:write")
+R("patch", "/v1/organizations/{org_id}/websites/{website_id}/deployment-config", "Set repo/branch/token/web_dir (developer+). deploy_token enables PRIVATE repo fetch (encrypted at rest, injected agent-side, never returned); web_dir is the repo-relative running directory (e.g. public for Laravel) served through the release symlink", t, x_scope="deployments:write")
 R("post", "/v1/organizations/{org_id}/websites/{website_id}/deploy", "Trigger deploy -> job", t, x_scope="deployments:write")
 R("post", "/v1/organizations/{org_id}/websites/{website_id}/rollback", "Rollback to last release (admin+)", t, x_scope="deployments:write")
 

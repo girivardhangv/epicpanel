@@ -27,16 +27,16 @@ type Executor struct {
 	pm          PackageManager
 	now         func() time.Time
 	bwStatePath string
-	// TrafficMonthEgress / TrafficSnapshot are wired by main to the
-	// streamer's traffic sampler (nil in tests → nft-only accounting):
-	// month-to-date access-log egress per site and the persistence
-	// snapshot for bw_state.
-	TrafficMonthEgress func(websiteID string) (int64, string)
-	TrafficSnapshot    func() map[string]int64
+	bwLogDir    string
+	// HTTPMonthEgress is wired by main to the global accounting-log
+	// accountant (nil in tests → nft-only accounting): the site's HTTP
+	// month-to-date bytes (request + response) from the platform-owned
+	// /var/log/epicpanel/bandwidth.log stream.
+	HTTPMonthEgress func(websiteID string) (int64, string)
 }
 
 func NewExecutor() *Executor {
-	return &Executor{docRootBase: "/srv/epicpanel/websites", ctx: context.Background(), pm: DetectPackageManager(), now: time.Now, bwStatePath: bwStatePath}
+	return &Executor{docRootBase: "/srv/epicpanel/websites", ctx: context.Background(), pm: DetectPackageManager(), now: time.Now, bwStatePath: bwStatePath, bwLogDir: bwLogDir}
 }
 
 func (e *Executor) ensureBaseDirs() error {
@@ -63,6 +63,10 @@ type ProvisionPayload struct {
 	WebServer      string          `json:"web_server,omitempty"`
 	BackendPort    int             `json:"backend_port,omitempty"`
 	DocrootSuffix  string          `json:"docroot_suffix,omitempty"`
+	// WebDir is the repo-relative running directory for git-deployed sites
+	// ("public" for Laravel); it composes onto the web root so the vhost
+	// follows the release symlink. Wins over DocrootSuffix when set.
+	WebDir         string          `json:"web_dir,omitempty"`
 	PrimaryDomain  string          `json:"primary_domain"`
 	RewriteRules   string          `json:"rewrite_rules,omitempty"`
 	Domains        []DomainPayload `json:"domains,omitempty"`
@@ -162,8 +166,15 @@ func (e *Executor) ProvisionWebsite(ctx context.Context, payload ProvisionPayloa
 	siteBase := filepath.Join(e.docRootBase, payload.WebsiteID)
 	// Standard layout first (public/, logs/, tmp/ always exist); the serving
 	// docroot then resolves to the override when set (e.g. Laravel public/).
+	// WebDir (git-deploy running directory) is relative to the WEB ROOT:
+	// <site>/public/<web_dir> follows the release symlink, so deploys keep
+	// swapping atomically underneath the rendered docroot path.
 	stdPublic := filepath.Join(siteBase, "public")
-	docRoot, err2 := effectiveDocroot(siteBase, payload.DocrootSuffix)
+	docSuffix := payload.DocrootSuffix
+	if webDir := strings.Trim(payload.WebDir, "/"); webDir != "" {
+		docSuffix = "public/" + webDir
+	}
+	docRoot, err2 := effectiveDocroot(siteBase, docSuffix)
 	if err2 != nil {
 		return nil, fmt.Errorf("docroot: %w", err2)
 	}

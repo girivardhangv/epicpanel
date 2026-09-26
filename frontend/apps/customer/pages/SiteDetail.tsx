@@ -7,6 +7,7 @@ import type { Website, Domain, Redirect } from '@epicpanel/core'
 import { Card, CardHeader, StatusBadge, EmptyState, SkeletonRows, MiniItem, Breadcrumbs, RowActions, pushToast, UsageCard } from '@epicpanel/ui'
 import { Modal, Field, ErrorNote, ConfirmDialog } from '@epicpanel/forms'
 import { SiteAppsSection } from './SiteApps'
+import { SiteDeploysSection } from './SiteDeploys'
 
 interface Usage {
   cpu_percent: number
@@ -175,6 +176,10 @@ export function SiteDetailPage() {
       {/* Apps & tools: node/python/go app manager, one-click WordPress +
           Laravel, allowlisted command runner (composer/npm/artisan). */}
       {site && <SiteAppsSection site={site} canManage={canManage} />}
+
+      {/* Git deployments: repo/branch/running-directory config (private-repo
+          token write-only), deploy + rollback, history. */}
+      {site && <SiteDeploysSection site={site} canManage={canManage} canRollback={myRole === 'owner' || myRole === 'admin'} onChanged={load} />}
 
       {/* Domains */}
       <Card className="mb-4 overflow-hidden !p-0">

@@ -99,6 +99,10 @@ export interface Website {
   web_server: string
   backend_port?: number
   docroot_suffix?: string
+  // Git deployments (deploy config; the token is write-only, never returned).
+  deploy_repo_url?: string
+  deploy_branch?: string
+  deploy_web_dir?: string
   app_startup_command?: string
   app_build_command?: string
   app_port?: number
@@ -900,6 +904,31 @@ export const redirectsApi = {
     req<Redirect>('PATCH', `/v1/organizations/${orgId}/redirects/${redirectId}`, { enabled }),
   remove: (orgId: string, redirectId: string) =>
     req<null>('DELETE', `/v1/organizations/${orgId}/redirects/${redirectId}`),
+}
+
+export interface Deployment {
+  id: string
+  website_id: string
+  branch: string
+  commit_sha: string
+  status: 'pending' | 'running' | 'successful' | 'failed'
+  trigger_type: string
+  release_dir?: string
+  error?: string
+  created_at: string
+  finished_at?: string
+}
+
+export const deploymentsApi = {
+  list: (orgId: string, websiteId: string) =>
+    req<{ deployments: Deployment[] }>('GET', `/v1/organizations/${orgId}/websites/${websiteId}/deployments`),
+  /** PATCH .../deployment-config — the token is write-only (leave null to keep the stored one). */
+  saveConfig: (orgId: string, websiteId: string, body: { repo_url: string; branch?: string; web_dir?: string; deploy_token?: string }) =>
+    req<null>('PATCH', `/v1/organizations/${orgId}/websites/${websiteId}/deployment-config`, body),
+  deploy: (orgId: string, websiteId: string) =>
+    req<Deployment>('POST', `/v1/organizations/${orgId}/websites/${websiteId}/deploy`),
+  rollback: (orgId: string, websiteId: string) =>
+    req<Deployment>('POST', `/v1/organizations/${orgId}/websites/${websiteId}/rollback`),
 }
 
 export const ftpApi = {

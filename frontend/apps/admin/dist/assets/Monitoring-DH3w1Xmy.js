@@ -1,1 +1,0 @@
-import{MonitoringOutlet as e}from"./Monitoring-8kopm3nf.js";export{e as MonitoringPage};

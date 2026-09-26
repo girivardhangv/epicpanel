@@ -199,7 +199,7 @@ func RenderVhost(v VhostSpec) string {
 			fmt.Fprintf(&b, "server {\n\tlisten 80;\n\tserver_name %s;\n\n%s}\n\n", strings.Join(plainNames, " "), common)
 		}
 		if len(g.secured) > 0 {
-			fmt.Fprintf(&b, "server {\n\tlisten 80;\n\tserver_name %s;\n\n\tlocation /.well-known/acme-challenge/ {\n\t\troot %s;\n\t}\n\n\tlocation / {\n\t\treturn 301 https://$host$request_uri;\n\t}\n}\n\n", strings.Join(securedNames, " "), acmeWebroot)
+			fmt.Fprintf(&b, "server {\n\tlisten 80;\n\tserver_name %s;\n\n\tlocation ^~ /.well-known/acme-challenge/ {\n\t\troot %s;\n\t}\n\n\tlocation / {\n\t\treturn 301 https://$host$request_uri;\n\t}\n}\n\n", strings.Join(securedNames, " "), acmeWebroot)
 			first := g.secured[0]
 			fmt.Fprintf(&b, "server {\n\tlisten 443 ssl;\n\tserver_name %s;\n\n\tssl_certificate %s;\n\tssl_certificate_key %s;\n\tssl_protocols TLSv1.2 TLSv1.3;\n\n%s}\n\n", strings.Join(securedNames, " "), first.CertPath, first.KeyPath, common)
 		}
@@ -276,7 +276,7 @@ func (v VhostSpec) commonLocations() string {
 	access_log %s;
 	error_log %s;
 
-	location /.well-known/acme-challenge/ {
+	location ^~ /.well-known/acme-challenge/ {
 		root %s;
 	}
 %s
@@ -576,7 +576,7 @@ map $http_upgrade $epicpanel_connection_upgrade {
 	error_page 509 /quota_exceeded.html;
 }
 `, pagesDir)
-	
+
 	if err := os.WriteFile("/etc/nginx/sites-available/default", []byte(defaultVhost), 0o644); err != nil {
 		return fmt.Errorf("write default vhost: %w", err)
 	}

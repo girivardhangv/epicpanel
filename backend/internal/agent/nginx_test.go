@@ -80,8 +80,12 @@ func TestRenderVhostAcmeChallengeLocation(t *testing.T) {
 		DocumentRoot: "/srv/x",
 		Domains:      []DomainSpec{{Domain: "le.example.test", SSLMode: "none"}},
 	})
-	if !strings.Contains(out, "location /.well-known/acme-challenge/") {
-		t.Error("vhost must serve the ACME challenge webroot")
+	// ^~ is load-bearing: without it the regex `location ~ /\. { deny all; }`
+	// (dotfile hardening) takes priority over the plain prefix match and the
+	// ACME challenge answers 403 — exactly the failure mode that broke first
+	// issuance on live nodes.
+	if !strings.Contains(out, "location ^~ /.well-known/acme-challenge/") {
+		t.Error("vhost must serve the ACME challenge webroot with ^~ (regex-exempt) so the dotfile deny rule cannot override it")
 	}
 	if !strings.Contains(out, "/var/www/_acme-challenge") {
 		t.Error("vhost must reference the acme webroot path")

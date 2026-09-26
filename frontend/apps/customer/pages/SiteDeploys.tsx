@@ -186,8 +186,14 @@ export function SiteDeploysSection({ site, canManage, canRollback, onChanged }: 
                   {d.commit_sha && <span className="font-mono text-[9.5px] text-muted">{d.commit_sha.slice(0, 7)}</span>}
                 </div>
                 <div className="mt-0.5 truncate text-[9.5px] text-muted">
-                  {timeAgo(d.created_at)}{d.error ? ` · ${d.error.slice(0, 120)}` : ''}
+                  {timeAgo(d.created_at)}{d.error ? ` · ${d.error.slice(0, 200)}` : ''}
                 </div>
+                {(d.error || d.log) && (
+                  <details className="mt-1.5">
+                    <summary className="cursor-pointer text-[9.5px] font-bold text-brand">Full output</summary>
+                    <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded-[8px] bg-surface-2 p-2 font-mono text-[9px] leading-relaxed text-[#44506b]">{d.error || d.log}</pre>
+                  </details>
+                )}
               </div>
               {canRollback && d.status === 'successful' && lastSuccessful?.id === d.id && (
                 <button className="icon-btn" title="Roll back to this release" aria-label="Roll back" onClick={rollback}>

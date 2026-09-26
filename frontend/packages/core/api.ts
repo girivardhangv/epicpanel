@@ -915,6 +915,7 @@ export interface Deployment {
   trigger_type: string
   release_dir?: string
   error?: string
+  log?: string
   created_at: string
   finished_at?: string
 }

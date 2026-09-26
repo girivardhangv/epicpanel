@@ -403,10 +403,21 @@ func (e *Executor) buildRelease(ctx context.Context, spec DeploySpec, releaseDir
 			if err := e.EnsureComposer(ctx); err != nil {
 				return log.String(), fmt.Errorf("ensure composer: %w", err)
 			}
+			// Pin composer to the SITE'S PHP version (same contract as the
+			// site command runner): the bare `composer` PHAR shebang resolves
+			// `php` from PATH = the system default (e.g. 8.3), while the
+			// site's pool runs the selected runtime (e.g. 8.5) — composer
+			// then evaluates platform requirements against the WRONG php.
+			phpBin := "php"
+			if minor := strings.TrimSpace(spec.RuntimeVersion); phpMinorRe.MatchString(minor) {
+				phpBin = phpBinary(minor)
+			} else {
+				phpBin = phpBinary(latestInstalledPHPMinor(e))
+			}
 			log.WriteString("composer install --no-dev --optimize-autoloader\n")
-			if out, err := e.runAsSiteEnv(ctx, uid, gid, releaseDir, nil, "composer",
-				"install", "--no-dev", "--optimize-autoloader", "--no-interaction"); err != nil {
-				return log.String(), fmt.Errorf("composer install: %s (%w)", tailString(out, 400), err)
+			if out, err := e.runAsSiteEnv(ctx, uid, gid, releaseDir, nil, phpBin,
+				composerBin, "install", "--no-dev", "--optimize-autoloader", "--no-interaction"); err != nil {
+				return log.String(), fmt.Errorf("composer install (php %s): %s (%w)", spec.RuntimeVersion, tailString(out, 400), err)
 			}
 		}
 	case "node":

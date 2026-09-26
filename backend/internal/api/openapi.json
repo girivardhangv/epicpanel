@@ -2924,7 +2924,7 @@
   },
   "/v1/organizations/{org_id}/websites/{website_id}/deployment-config": {
    "patch": {
-    "summary": "Set repo/branch/token (developer+)",
+    "summary": "Set repo/branch/token/web_dir (developer+). deploy_token enables PRIVATE repo fetch (encrypted at rest, injected agent-side, never returned); web_dir is the repo-relative running directory (e.g. public for Laravel) served through the release symlink",
     "tags": [
      "Deployments"
     ],

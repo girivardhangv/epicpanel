@@ -1,8 +1,13 @@
 package api
 
 import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 // TestDeploymentAndStagingLifecycle covers Phase 8:
@@ -188,5 +193,122 @@ func TestDeploymentAndStagingLifecycle(t *testing.T) {
 		if !actions[want] {
 			t.Fatalf("audit missing %q; got %v", want, actions)
 		}
+	}
+}
+
+// TestDeployWebDirAndServingConverge covers the running-directory feature:
+// web_dir on the deployment config (Forge-style repo-relative web dir, e.g.
+// "public" for Laravel), its validation, its ride on the deploy job payload,
+// and the serving-converge contract — reconcileWebsiteServing must keep BOTH
+// the site docroot suffix and the deploy web dir (anti-drift: a domain or
+// SSL change used to re-render the vhost with the running dir dropped).
+func TestDeployWebDirAndServingConverge(t *testing.T) {
+	srv, admin := newTestServer(t)
+	agent := admin.NewClient()
+
+	admin.do("POST", "/v1/auth/register", map[string]string{
+		"email": "webdir-admin@example.test", "password": "supersecret123", "name": "Admin",
+	})
+	resp := admin.do("POST", "/v1/organizations", map[string]string{"name": "LaravelCo"})
+	orgID, _ := resp.body["id"].(string)
+	reg := admin.do("POST", "/v1/organizations/"+orgID+"/servers", map[string]string{"name": "web-01"})
+	regToken, _ := reg.body["registration_token"].(string)
+	enroll := agent.do("POST", "/v1/agent/enroll", map[string]string{
+		"registration_token": regToken, "hostname": "web-01.local",
+	})
+	setBearer(agent, enroll.body["agent_token"].(string))
+	resp = admin.do("POST", "/v1/organizations/"+orgID+"/websites", map[string]any{
+		"name": "shop", "server_id": enroll.body["server"].(map[string]any)["id"],
+		"primary_domain": "shop.example.test",
+	})
+	website, _ := resp.body["website"].(map[string]any)
+	if website == nil {
+		t.Fatalf("website create failed: %d %v", resp.status, resp.body)
+	}
+	websiteID, _ := website["id"].(string)
+	base := "/v1/organizations/" + orgID + "/websites/" + websiteID
+
+	// Complete the initial provision job so later claims reach the deploy.
+	claim0 := agent.do("POST", "/v1/agent/jobs/claim", nil)
+	job0, _ := claim0.body["job"].(map[string]any)
+	if job0 == nil || job0["type"] != "provision_website" {
+		t.Fatalf("expected initial provision job, got %v", claim0.body)
+	}
+	agent.do("POST", "/v1/agent/jobs/"+job0["id"].(string)+"/result", map[string]any{
+		"success": true,
+		"result":  map[string]string{"unix_user": website["unix_user"].(string), "document_root": "/srv/epicpanel/websites/" + websiteID + "/public"},
+	})
+
+	// Config with a running directory + private-repo token.
+	resp = admin.do("PATCH", base+"/deployment-config", map[string]any{
+		"repo_url": "https://github.com/example/laravel-app.git", "branch": "main",
+		"deploy_token": "ghp_secret123", "web_dir": "public",
+	})
+	if resp.status != http.StatusNoContent {
+		t.Fatalf("deploy config: %d %v", resp.status, resp.body)
+	}
+	resp = admin.do("GET", base, nil)
+	if resp.body["deploy_web_dir"] != "public" {
+		t.Fatalf("site must surface deploy_web_dir, got %v", resp.body["deploy_web_dir"])
+	}
+
+	// Traversal / nonsense is refused.
+	for _, bad := range []string{"../etc", "a/b/c/d/e"} {
+		resp = admin.do("PATCH", base+"/deployment-config", map[string]any{"web_dir": bad})
+		if resp.status != http.StatusUnprocessableEntity && resp.status != http.StatusBadRequest {
+			t.Fatalf("web_dir %q must be rejected, got %d", bad, resp.status)
+		}
+	}
+
+	// The deploy job payload carries the running directory.
+	resp = admin.do("POST", base+"/deploy", nil)
+	if resp.status != http.StatusAccepted {
+		t.Fatalf("deploy: %d %v", resp.status, resp.body)
+	}
+	claim := agent.do("POST", "/v1/agent/jobs/claim", nil)
+	job, _ := claim.body["job"].(map[string]any)
+	if job == nil || job["type"] != "deploy_website" {
+		t.Fatalf("claim: %v", claim.body)
+	}
+	var dp map[string]any
+	switch pv := job["payload"].(type) {
+	case string:
+		if raw, err := base64.StdEncoding.DecodeString(pv); err == nil {
+			_ = json.Unmarshal(raw, &dp)
+		}
+	case map[string]any:
+		dp = pv
+	}
+	if dp["web_dir"] != "public" {
+		t.Fatalf("deploy payload must carry web_dir=public, got %v", dp["web_dir"])
+	}
+	agent.do("POST", "/v1/agent/jobs/"+job["id"].(string)+"/result", map[string]any{
+		"success": true, "result": map[string]any{"commit_sha": "deadbee", "release_dir": "/srv/x", "log": ""},
+	})
+
+	// Serving converge keeps the running directory: mark a site docroot
+	// suffix (one-click-Laravel-style) AND keep deploy_web_dir, reconcile,
+	// then inspect the pending provision payload for BOTH values.
+	if err := srv.Websites.SetDocrootSuffix(context.Background(),
+		uuid.MustParse(websiteID), "app/public"); err != nil {
+		t.Fatalf("set docroot suffix: %v", err)
+	}
+	srv.reconcileWebsiteServing(context.Background(), uuid.MustParse(websiteID),
+		uuid.MustParse(orgID), uuid.MustParse(enroll.body["server"].(map[string]any)["id"].(string)))
+	var payloadRaw []byte
+	if err := srv.Pool.QueryRow(context.Background(),
+		`SELECT payload FROM jobs WHERE website_id = $1 AND type = 'provision_website'
+		 ORDER BY created_at DESC LIMIT 1`, uuid.MustParse(websiteID)).Scan(&payloadRaw); err != nil {
+		t.Fatalf("read provision payload: %v", err)
+	}
+	var pp map[string]any
+	if err := json.Unmarshal(payloadRaw, &pp); err != nil {
+		t.Fatalf("payload json: %v", err)
+	}
+	if pp["docroot_suffix"] != "app/public" {
+		t.Fatalf("reconcile must carry docroot_suffix (vhost drift bug), got %v", pp["docroot_suffix"])
+	}
+	if pp["web_dir"] != "public" {
+		t.Fatalf("reconcile must carry web_dir (vhost drift bug), got %v", pp["web_dir"])
 	}
 }

@@ -815,6 +815,7 @@ func (s *Server) reconcileWebsiteServing(ctx context.Context, websiteID, orgID, 
 		WebServer:      ws.WebServer,
 		BackendPort:    ws.BackendPort,
 		DocrootSuffix:  ws.DocrootSuffix,
+		WebDir:         ws.DeployWebDir,
 		PrimaryDomain:  ws.PrimaryDomain,
 	}
 	if cfg, err := (&websites.ConfigStore{Pool: s.Pool}).Get(ctx, ws.ID); err == nil {

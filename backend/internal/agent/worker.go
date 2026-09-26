@@ -523,6 +523,7 @@ type DeployJobPayload struct {
 	WebsiteID       string `json:"website_id"`
 	RepoURL         string `json:"repo_url"`
 	Branch          string `json:"branch"`
+	WebDir          string `json:"web_dir,omitempty"`
 	TokenEncrypted  string `json:"token_encrypted,omitempty"`
 	Runtime         string `json:"runtime,omitempty"`
 	RuntimeVersion  string `json:"runtime_version,omitempty"`
@@ -541,6 +542,7 @@ func deploySpecFromPayload(p DeployJobPayload) DeploySpec {
 		WebsiteID:       p.WebsiteID,
 		RepoURL:         p.RepoURL,
 		Branch:          p.Branch,
+		WebDir:          p.WebDir,
 		TokenCipherB64:  p.TokenEncrypted,
 		Runtime:         p.Runtime,
 		RuntimeVersion:  p.RuntimeVersion,

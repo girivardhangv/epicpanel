@@ -102,6 +102,7 @@ type DeployPayload struct {
 	WebsiteID       uuid.UUID `json:"website_id"`
 	RepoURL         string    `json:"repo_url"`
 	Branch          string    `json:"branch"`
+	WebDir          string    `json:"web_dir,omitempty"`
 	TokenEncrypted  []byte    `json:"token_encrypted,omitempty"`
 	Runtime         string    `json:"runtime,omitempty"`
 	RuntimeVersion  string    `json:"runtime_version,omitempty"`
@@ -155,6 +156,7 @@ func (h *Handler) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		RepoURL     string  `json:"repo_url"`
 		Branch      string  `json:"branch"`
+		WebDir      *string `json:"web_dir"`
 		DeployToken *string `json:"deploy_token"`
 	}
 	if apiErr := httpapi.Read(r, &req); apiErr != nil {
@@ -168,6 +170,21 @@ func (h *Handler) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Running directory inside the release (Forge-style web directory):
+	// "public" for Laravel, "web" for legacy Symfony, "" = release root.
+	// Relative path under the site's web root only — traversal is refused.
+	webDir := ""
+	if req.WebDir != nil {
+		webDir = *req.WebDir
+	}
+	webDir = strings.Trim(strings.TrimSpace(webDir), "/")
+	if webDir != "" {
+		if strings.Contains(webDir, "..") || strings.Count(webDir, "/") > 3 || len(webDir) > 100 {
+			httpapi.RespondError(w, httpapi.ErrValidation("web_dir must be a short relative path inside the repo"))
+			return
+		}
+	}
+
 	var tokenCipher []byte
 	if req.DeployToken != nil && *req.DeployToken != "" {
 		enc, err := encryptToken(*req.DeployToken)
@@ -177,11 +194,11 @@ func (h *Handler) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		tokenCipher = enc
 	}
-	if err := h.Websites.SetDeployConfig(r.Context(), ws.ID, req.RepoURL, req.Branch, tokenCipher); err != nil {
+	if err := h.Websites.SetDeployConfig(r.Context(), ws.ID, req.RepoURL, req.Branch, tokenCipher, webDir); err != nil {
 		httpapi.RespondError(w, httpapi.ErrInternal(err))
 		return
 	}
-	h.audit(r, &orgID, "website.deploy_config_updated", "website", ws.ID.String(), map[string]any{"repo_url": req.RepoURL, "branch": req.Branch})
+	h.audit(r, &orgID, "website.deploy_config_updated", "website", ws.ID.String(), map[string]any{"repo_url": req.RepoURL, "branch": req.Branch, "web_dir": webDir})
 	if h.OnWebsiteConfigChanged != nil {
 		h.OnWebsiteConfigChanged(r.Context(), ws.ID)
 	}
@@ -222,6 +239,7 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 	}
 	payload := DeployPayload{
 		DeploymentID: dep.ID, WebsiteID: ws.ID, RepoURL: ws.DeployRepoURL, Branch: branch,
+		WebDir: ws.DeployWebDir,
 		Runtime: string(ws.Runtime), RuntimeVersion: ws.RuntimeVersion,
 		BuildCommand: ws.AppBuildCommand, UnixUser: ws.UnixUser,
 		StartupCommand: ws.AppStartupCommand, AppPort: ws.AppPort,

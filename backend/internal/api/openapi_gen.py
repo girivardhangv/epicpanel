@@ -143,7 +143,7 @@ R("get", "/v1/organizations/{org_id}/databases/{db_id}/pma-sso", "phpMyAdmin SSO
 # ------------------------------------------------------------- deployments -
 t = "Deployments"
 R("get", "/v1/organizations/{org_id}/websites/{website_id}/deployments", "Deployment history (billing+)", t, x_scope="deployments:read")
-R("patch", "/v1/organizations/{org_id}/websites/{website_id}/deployment-config", "Set repo/branch/token (developer+)", t, x_scope="deployments:write")
+R("patch", "/v1/organizations/{org_id}/websites/{website_id}/deployment-config", "Set repo/branch/token/web_dir (developer+). deploy_token enables PRIVATE repo fetch (encrypted at rest, injected agent-side, never returned); web_dir is the repo-relative running directory (e.g. public for Laravel) served through the release symlink", t, x_scope="deployments:write")
 R("post", "/v1/organizations/{org_id}/websites/{website_id}/deploy", "Trigger deploy -> job", t, x_scope="deployments:write")
 R("post", "/v1/organizations/{org_id}/websites/{website_id}/rollback", "Rollback to last release (admin+)", t, x_scope="deployments:write")
 

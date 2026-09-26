@@ -63,6 +63,10 @@ type ProvisionPayload struct {
 	WebServer      string          `json:"web_server,omitempty"`
 	BackendPort    int             `json:"backend_port,omitempty"`
 	DocrootSuffix  string          `json:"docroot_suffix,omitempty"`
+	// WebDir is the repo-relative running directory for git-deployed sites
+	// ("public" for Laravel); it composes onto the web root so the vhost
+	// follows the release symlink. Wins over DocrootSuffix when set.
+	WebDir         string          `json:"web_dir,omitempty"`
 	PrimaryDomain  string          `json:"primary_domain"`
 	RewriteRules   string          `json:"rewrite_rules,omitempty"`
 	Domains        []DomainPayload `json:"domains,omitempty"`
@@ -162,8 +166,15 @@ func (e *Executor) ProvisionWebsite(ctx context.Context, payload ProvisionPayloa
 	siteBase := filepath.Join(e.docRootBase, payload.WebsiteID)
 	// Standard layout first (public/, logs/, tmp/ always exist); the serving
 	// docroot then resolves to the override when set (e.g. Laravel public/).
+	// WebDir (git-deploy running directory) is relative to the WEB ROOT:
+	// <site>/public/<web_dir> follows the release symlink, so deploys keep
+	// swapping atomically underneath the rendered docroot path.
 	stdPublic := filepath.Join(siteBase, "public")
-	docRoot, err2 := effectiveDocroot(siteBase, payload.DocrootSuffix)
+	docSuffix := payload.DocrootSuffix
+	if webDir := strings.Trim(payload.WebDir, "/"); webDir != "" {
+		docSuffix = "public/" + webDir
+	}
+	docRoot, err2 := effectiveDocroot(siteBase, docSuffix)
 	if err2 != nil {
 		return nil, fmt.Errorf("docroot: %w", err2)
 	}

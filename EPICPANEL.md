@@ -1582,6 +1582,18 @@ pinned by TestDeployWebDirAndServingConverge reading the pending provision
 payload). deploy payload + DeploySpec + DeployJobPayload carry web_dir.
 OpenAPI deployment-config description updated (no new routes).
 
+Session 2026-09-27 — MERGED + SHIPPED: feature/bw-accounting-stabilize
+merged to master @ 9f07584 (after wip-checkpoint be45fb9 of the parallel
+agent's events-hub work; nginx.go/store.go conflicts resolved as unions —
+master's ^~ ACME fix kept alongside the site-id stamps; the branch's
+resyncVhosts sweep DROPPED as redundant — master's hourly
+reconcileAllServing carries the docroot drift fix). Master+main pushed to
+origin; release v0.5.7 published via make release + sha256-verified
+remotely (v0.5.6 already existed — next number was 0.5.7). LIVE on this
+box: API hot-swapped @ 00:19, migrations 0053+0054 applied, openapi 232
+ops, deploy_web_dir in the live DB. AGENT binary swap to /usr/local/bin
+pending the user's sudo (backend/bin/epicpanel-agent is built and ready).
+
 Session 2026-09-26 — bandwidth accounting stabilization (worktree
 feature/bw-accounting-stabilize, branched @ 164a434; parallel agent owns
 the main checkout): ADR-064 implemented in branch feature/bw-accounting-

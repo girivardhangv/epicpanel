@@ -1582,6 +1582,23 @@ pinned by TestDeployWebDirAndServingConverge reading the pending provision
 payload). deploy payload + DeploySpec + DeployJobPayload carry web_dir.
 OpenAPI deployment-config description updated (no new routes).
 
+Session 2026-09-27c — DEPLOY FIXES (release v0.5.9, master 6079526), two
+live-reported defects: (1) PHP git deploys died at the build gate on fresh
+nodes ("env: 'composer': No such file or directory") - the build path now
+ensures unzip + composer (EnsureComposer, signature-verified) before
+composer install, matching the one-click installers. (2) Changing the
+running directory saved to the DB but converged nothing: the deployments
+handler's OnWebsiteConfigChanged was never wired. Now wired to
+reconcileWebsiteServing, guarded by
+deployments.HasSuccessfulDeployment (a never-deployed site keeps serving;
+converging early would 403 it into an empty docroot), AND a successful
+deploy converges immediately (web_dir takes effect with the release it
+belongs to). TestRunningDirectoryConvergence pins all three behaviors;
+TestDeploymentAndStagingLifecycle drains the post-deploy converge job.
+Live: API hot-swapped @ 01:14 (migrations applied, healthz 200); agent
+binary (composer fix is agent-side) still pending user sudo on this box;
+AWS box needs the installer re-run for v0.5.9.
+
 Session 2026-09-27b — GIT DEPLOYMENTS UI (release v0.5.8, master c1c26ec): the
 deploy config was API-only; customers could not SEE the running-directory
 option. New SiteDeploysSection on the customer site page (apps/customer/

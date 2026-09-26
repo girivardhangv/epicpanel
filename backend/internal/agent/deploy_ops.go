@@ -19,7 +19,24 @@ import (
 	"github.com/epicbyte/epicpanel/backend/internal/secretbox"
 )
 
+// releasesBase is the LEGACY releases location (pre-2026-09-27 deploys).
+// Releases now live INSIDE the site tree (<site>/releases/<id>) so the
+// customer's cloned files are visible everywhere the site is: the file
+// manager (symlink-proof containment holds), SSH/terminal (the sandbox
+// binds the site tree), disk-usage accounting and delete/purge.
 const releasesBase = "/srv/epicpanel/releases"
+
+// siteReleasesDir is the current releases directory for a website.
+func siteReleasesDir(websiteID string) string {
+	return filepath.Join("/srv/epicpanel/websites", websiteID, "releases")
+}
+
+// validReleaseTarget accepts release dirs in the current (inside the site
+// tree) and legacy (outside) locations, for old deployments mid-transition.
+func validReleaseTarget(websiteID, target string) bool {
+	return strings.HasPrefix(target, filepath.Join("/srv/epicpanel/websites", websiteID, "releases")+"/") ||
+		strings.HasPrefix(target, releasesBase+"/"+websiteID+"/")
+}
 
 // DeploySpec is the full desired deploy context: repo source plus the site's
 // runtime context, so a deploy BUILDS the release (composer / npm / pip /
@@ -75,7 +92,7 @@ func (e *Executor) DeployGit(ctx context.Context, spec DeploySpec) (*DeployOutco
 		return nil, fmt.Errorf("site tree missing or unowned: %w", err)
 	}
 
-	releasesDir := filepath.Join(releasesBase, websiteID)
+	releasesDir := siteReleasesDir(websiteID)
 	publicLink := filepath.Join("/srv/epicpanel/websites", websiteID, "public")
 	if err := os.MkdirAll(releasesDir, 0o755); err != nil {
 		return nil, err
@@ -232,7 +249,7 @@ func (e *Executor) RollbackGit(ctx context.Context, websiteID, targetReleaseDir 
 	if _, err := uuid.Parse(websiteID); err != nil {
 		return nil, fmt.Errorf("invalid website id")
 	}
-	if !strings.HasPrefix(targetReleaseDir, releasesBase+"/") {
+	if !validReleaseTarget(websiteID, targetReleaseDir) {
 		return nil, fmt.Errorf("invalid release dir")
 	}
 	if _, err := os.Stat(targetReleaseDir); err != nil {

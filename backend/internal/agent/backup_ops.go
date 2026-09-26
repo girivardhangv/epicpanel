@@ -44,7 +44,12 @@ func (e *Executor) CreateBackup(ctx context.Context, backupID, websiteID string,
 	// Files: tar the whole site tree (including current release via symlink
 	// dereference) as site.tar.gz.
 	siteTar := filepath.Join(archiveDir, "site.tar.gz")
-	if err := e.run(ctx, "tar", "-czf", siteTar, "-h", "-C", filepath.Dir(siteBase), filepath.Base(siteBase)); err != nil {
+	// Exclude the releases history: -h dereferences the live public symlink,
+	// so the current release content is IN the archive already; keeping every
+	// retained release too would bloat backups (keep-5 pruning).
+	if err := e.run(ctx, "tar", "-czf", siteTar, "-h",
+		"--exclude", filepath.Join(filepath.Base(siteBase), "releases"),
+		"-C", filepath.Dir(siteBase), filepath.Base(siteBase)); err != nil {
 		return nil, fmt.Errorf("tar site: %w", err)
 	}
 

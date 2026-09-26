@@ -133,7 +133,7 @@ func (e *Executor) PromoteStaging(ctx context.Context, stagingWebsiteID, prodWeb
 	}
 
 	// New production release from staging content (atomic switch + rollbackable).
-	releasesDir := filepath.Join(releasesBase, prodWebsiteID)
+	releasesDir := siteReleasesDir(prodWebsiteID)
 	if err := os.MkdirAll(releasesDir, 0o755); err != nil {
 		return nil, err
 	}

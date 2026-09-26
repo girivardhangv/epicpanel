@@ -54,22 +54,22 @@ func (e *Executor) ensureBaseDirs() error {
 }
 
 type ProvisionPayload struct {
-	WebsiteID      string          `json:"website_id"`
-	Organization   string          `json:"organization"`
-	Name           string          `json:"name"`
-	UnixUser       string          `json:"unix_user"`
-	Runtime        string          `json:"runtime"`
-	RuntimeVersion string          `json:"runtime_version,omitempty"`
-	WebServer      string          `json:"web_server,omitempty"`
-	BackendPort    int             `json:"backend_port,omitempty"`
-	DocrootSuffix  string          `json:"docroot_suffix,omitempty"`
+	WebsiteID      string `json:"website_id"`
+	Organization   string `json:"organization"`
+	Name           string `json:"name"`
+	UnixUser       string `json:"unix_user"`
+	Runtime        string `json:"runtime"`
+	RuntimeVersion string `json:"runtime_version,omitempty"`
+	WebServer      string `json:"web_server,omitempty"`
+	BackendPort    int    `json:"backend_port,omitempty"`
+	DocrootSuffix  string `json:"docroot_suffix,omitempty"`
 	// WebDir is the repo-relative running directory for git-deployed sites
 	// ("public" for Laravel); it composes onto the web root so the vhost
 	// follows the release symlink. Wins over DocrootSuffix when set.
-	WebDir         string          `json:"web_dir,omitempty"`
-	PrimaryDomain  string          `json:"primary_domain"`
-	RewriteRules   string          `json:"rewrite_rules,omitempty"`
-	Domains        []DomainPayload `json:"domains,omitempty"`
+	WebDir        string          `json:"web_dir,omitempty"`
+	PrimaryDomain string          `json:"primary_domain"`
+	RewriteRules  string          `json:"rewrite_rules,omitempty"`
+	Domains       []DomainPayload `json:"domains,omitempty"`
 	// Redirects are domain-level redirects (301/302/307/308) rendered by the
 	// selected web server(s).
 	Redirects []RedirectRule `json:"redirects,omitempty"`
@@ -108,7 +108,12 @@ func isAppRuntime(rt string) bool {
 // siteBase/<suffix> when a validated override is set. The suffix is
 // re-validated here (defense in depth) and its directory is created when
 // missing so framework layouts (e.g. Laravel "public") serve cleanly.
-func effectiveDocroot(siteBase, suffix string) (string, error) {
+// effectiveDocroot resolves the serving docroot for a suffix relative to the
+// site tree. materialize=false (deploy-managed sites: the running directory
+// comes from the first cloned release) only computes the PATH — creating the
+// directory and dropping a placeholder index into it would manufacture the
+// "empty folder with a default index" the user then rightly asks about.
+func effectiveDocroot(siteBase, suffix string, materialize bool) (string, error) {
 	docRoot := filepath.Join(siteBase, "public")
 	if strings.TrimSpace(suffix) == "" {
 		return docRoot, nil
@@ -127,8 +132,10 @@ func effectiveDocroot(siteBase, suffix string) (string, error) {
 	if !strings.HasPrefix(effective, siteBase+string(filepath.Separator)) {
 		return "", fmt.Errorf("docroot suffix escapes the site tree")
 	}
-	if _, err := os.Stat(effective); os.IsNotExist(err) {
-		_ = os.MkdirAll(effective, 0o755)
+	if materialize {
+		if _, err := os.Stat(effective); os.IsNotExist(err) {
+			_ = os.MkdirAll(effective, 0o755)
+		}
 	}
 	return effective, nil
 }
@@ -171,10 +178,16 @@ func (e *Executor) ProvisionWebsite(ctx context.Context, payload ProvisionPayloa
 	// swapping atomically underneath the rendered docroot path.
 	stdPublic := filepath.Join(siteBase, "public")
 	docSuffix := payload.DocrootSuffix
+	materialize := true
 	if webDir := strings.Trim(payload.WebDir, "/"); webDir != "" {
+		// Deploy-managed site: the running directory materializes with the
+		// first successful release (cloned files land there); before that the
+		// site keeps its standard public/ placeholder, NOT an empty composed
+		// folder with a manufactured default index.
 		docSuffix = "public/" + webDir
+		materialize = false
 	}
-	docRoot, err2 := effectiveDocroot(siteBase, docSuffix)
+	docRoot, err2 := effectiveDocroot(siteBase, docSuffix, materialize)
 	if err2 != nil {
 		return nil, fmt.Errorf("docroot: %w", err2)
 	}
@@ -199,30 +212,33 @@ func (e *Executor) ProvisionWebsite(ctx context.Context, payload ProvisionPayloa
 		return nil, fmt.Errorf("chown site tree: %w", err)
 	}
 
-	if err := grantWebServerAccess(siteBase, docRoot); err != nil {
+	if err := grantWebServerAccess(siteBase, docRoot, materialize); err != nil {
 		return nil, fmt.Errorf("grant web server access: %w", err)
 	}
 
-	// Placeholder only for a truly empty docroot. NEVER drop an index.html
-	// next to an existing index.php/index.htm: Apache's DirectoryIndex
-	// prefers index.html, which would shadow Laravel/WordPress front
-	// controllers forever (idempotent: never overwrites user content).
+	// Placeholder only for a materialized docroot (never for deploy-managed
+	// sites — their docroot is the release's running directory). NEVER drop
+	// an index.html next to an existing index.php/index.htm: Apache's
+	// DirectoryIndex prefers index.html, which would shadow Laravel/WordPress
+	// front controllers forever (idempotent: never overwrites user content).
 	indexPath := filepath.Join(docRoot, "index.html")
-	if _, err := os.Stat(indexPath); os.IsNotExist(err) {
-		hasApp := false
-		for _, alt := range []string{"index.php", "index.htm"} {
-			if _, err := os.Stat(filepath.Join(docRoot, alt)); err == nil {
-				hasApp = true
-				break
+	if materialize {
+		if _, err := os.Stat(indexPath); os.IsNotExist(err) {
+			hasApp := false
+			for _, alt := range []string{"index.php", "index.htm"} {
+				if _, err := os.Stat(filepath.Join(docRoot, alt)); err == nil {
+					hasApp = true
+					break
+				}
 			}
-		}
-		if !hasApp {
-			// Branded "Website Ready to Be Served" placeholder (default
-			// pages set); the first deploy or upload shadows it.
-			if err := os.WriteFile(indexPath, []byte(pages.WelcomeHTML), 0o644); err != nil {
-				return nil, fmt.Errorf("write index.html: %w", err)
+			if !hasApp {
+				// Branded "Website Ready to Be Served" placeholder (default
+				// pages set); the first deploy or upload shadows it.
+				if err := os.WriteFile(indexPath, []byte(pages.WelcomeHTML), 0o644); err != nil {
+					return nil, fmt.Errorf("write index.html: %w", err)
+				}
+				_ = os.Chown(indexPath, uid, gid)
 			}
-			_ = os.Chown(indexPath, uid, gid)
 		}
 	}
 
@@ -465,7 +481,7 @@ const webServerUser = "www-data"
 // default ACL so files the site user uploads later are served too. Falls back to
 // loosening modes when setfacl is unavailable or the filesystem rejects ACLs;
 // logs/ and tmp/ stay 0750.
-func grantWebServerAccess(siteBase, docRoot string) error {
+func grantWebServerAccess(siteBase, docRoot string, docRootExists bool) error {
 	// Ancestor directories of siteBase (/srv, /srv/epicpanel, /srv/epicpanel/websites)
 	// must be world-traversable so www-data can reach the siteBase.
 	for p := filepath.Dir(siteBase); p != "/" && p != "."; p = filepath.Dir(p) {
@@ -476,8 +492,12 @@ func grantWebServerAccess(siteBase, docRoot string) error {
 		ok := true
 		commands := [][]string{
 			{"-m", "u:" + webServerUser + ":--x", siteBase},
-			{"-R", "-m", "u:" + webServerUser + ":r-X", docRoot},
-			{"-d", "-m", "u:" + webServerUser + ":r-x", docRoot},
+		}
+		if docRootExists {
+			commands = append(commands,
+				[]string{"-R", "-m", "u:" + webServerUser + ":r-X", docRoot},
+				[]string{"-d", "-m", "u:" + webServerUser + ":r-x", docRoot},
+			)
 		}
 		// If docRoot is a subdirectory nested inside siteBase (e.g. siteBase/nested/public),
 		// ensure intermediate directories have traverse permission for www-data.
@@ -506,6 +526,12 @@ func grantWebServerAccess(siteBase, docRoot string) error {
 	// logs/ and tmp/ are not touched and stay 0750.
 	if err := os.Chmod(siteBase, 0o711); err != nil {
 		return fmt.Errorf("chmod site base: %w", err)
+	}
+	if !docRootExists {
+		// Deploy-managed site before its first release: the docroot materializes
+		// with the release (git dirs are world-traversable; the deploy chowns
+		// them), so there is nothing to grant on it yet.
+		return nil
 	}
 	for inter := filepath.Dir(docRoot); inter != siteBase && strings.HasPrefix(inter, siteBase); inter = filepath.Dir(inter) {
 		_ = os.Chmod(inter, 0o711)

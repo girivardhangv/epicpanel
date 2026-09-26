@@ -1582,6 +1582,18 @@ pinned by TestDeployWebDirAndServingConverge reading the pending provision
 payload). deploy payload + DeploySpec + DeployJobPayload carry web_dir.
 OpenAPI deployment-config description updated (no new routes).
 
+Session 2026-09-27b — GIT DEPLOYMENTS UI (release v0.5.8, master c1c26ec): the
+deploy config was API-only; customers could not SEE the running-directory
+option. New SiteDeploysSection on the customer site page (apps/customer/
+pages/SiteDeploys.tsx): repo URL + branch + RUNNING DIRECTORY (web_dir,
+'public' for Laravel) + write-only deploy token, Deploy now, admin rollback,
+history with status chips; deploymentsApi + Website deploy fields in
+packages/core. tsc clean, root+customer builds green; sub-app dists staged
+into frontend/dist/{admin,customer} (the API serves <webDir>/<app> - a bare
+npm run build does NOT stage them; cp -r apps/*/dist/. dist/<app>/ is the
+manual step, build-release.sh does it for releases). Live-verified: new
+bundle served at /customer/ (asset 200).
+
 Session 2026-09-27 — MERGED + SHIPPED: feature/bw-accounting-stabilize
 merged to master @ 9f07584 (after wip-checkpoint be45fb9 of the parallel
 agent's events-hub work; nginx.go/store.go conflicts resolved as unions —

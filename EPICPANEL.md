@@ -1582,6 +1582,26 @@ pinned by TestDeployWebDirAndServingConverge reading the pending provision
 payload). deploy payload + DeploySpec + DeployJobPayload carry web_dir.
 OpenAPI deployment-config description updated (no new routes).
 
+Session 2026-09-27d — RELEASES MOVED INTO THE SITE TREE (release v0.5.10,
+master d7f8eec), the real fix for "where are my cloned files": releases
+previously landed at /srv/epicpanel/releases/<id> — OUTSIDE the website
+folder, invisible to the symlink-proof file manager (it rejects the
+escaped public symlink) AND the SSH sandbox (site-tree bind excludes it),
+so even a successful deploy showed the user an empty default folder.
+Releases now live at <site>/releases/<id>: the file manager, SSH/terminal
+sandbox, disk accounting and delete/purge all see the files naturally;
+public (or public/<web_dir>) symlinks resolve INSIDE the tree; backups
+exclude the release history (live release rides in via the dereferenced
+public symlink); rollback still validates legacy external dirs for old
+deploys. Deploy-managed sites (web_dir set) no longer materialize the
+composed docroot at provision — no more manufactured empty folder with a
+default index; effectiveDocroot gained a materialize flag and
+grantWebServerAccess tolerates a not-yet-existing docroot. Combined with
+v0.5.9 (composer/unzip ensure), a fresh deploy now: clones -> build gate
+(composer auto-installed) -> activates -> files visible in the site
+folder. ALL of this is AGENT-side: dev box needs the sudo binary swap,
+AWS box needs the installer re-run.
+
 Session 2026-09-27c — DEPLOY FIXES (release v0.5.9, master 6079526), two
 live-reported defects: (1) PHP git deploys died at the build gate on fresh
 nodes ("env: 'composer': No such file or directory") - the build path now

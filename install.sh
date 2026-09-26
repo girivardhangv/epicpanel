@@ -3,7 +3,7 @@
 # EpicPanel installer / updater / uninstaller — one script for the lifecycle.
 #
 #   Install (fresh VPS):
-#     curl -fsSL https://raw.githubusercontent.com/epicbyte/epicpanel/main/install.sh | bash
+#     curl -fsSL https://raw.githubusercontent.com/girivardhangv/epicpanel/main/install.sh | bash
 #     (or: bash install.sh)
 #
 #   Update (same script, explicit):
@@ -40,6 +40,12 @@ DB_NAME="epicpanel"
 DB_USER="epicpanel"
 DB_PASS_FILE="$EPIC_DIR/db_password"
 UPDATE_HELPER="$BIN_DIR/epicpanel-update"
+
+# Distribution comes entirely from GitHub: the installer itself from the main
+# branch (raw), binaries + web bundle from the latest GitHub Release assets.
+GH_REPO="girivardhangv/epicpanel"
+RAW_BASE="https://raw.githubusercontent.com/$GH_REPO/main"
+RELEASES_BASE="https://github.com/$GH_REPO/releases/latest/download"
 
 log()  { printf '\033[1;36m[epicpanel]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[epicpanel]\033[0m %s\n' "$*"; }
@@ -195,7 +201,7 @@ EOF
 
   # --- 3. Binaries -----------------------------------------------------------
   ARCH="$(uname -m)"; case "$ARCH" in x86_64) ARCH=amd64;; aarch64) ARCH=arm64;; esac
-  RELEASE_BASE="${EPICPANEL_DOWNLOAD_BASE:-https://github.com/epicbyte/epicpanel/releases/latest/download}"
+  RELEASE_BASE="${EPICPANEL_DOWNLOAD_BASE:-$RELEASES_BASE}"
   log "Downloading EpicPanel binaries ($ARCH)…"
   tmp="$(mktemp -d)"
   for f in epicpanel-api epicpanel-agent; do
@@ -227,7 +233,7 @@ EOF
   # --- 3b. One-command updater -----------------------------------------------
   # The installer URL is captured at install time so the box can self-update:
   #   sudo epicpanel-update
-  INSTALL_URL="${EPICPANEL_INSTALL_URL:-https://raw.githubusercontent.com/epicbyte/epicpanel/main/install.sh}"
+  INSTALL_URL="${EPICPANEL_INSTALL_URL:-$RAW_BASE/install.sh}"
   if [ -n "$INSTALL_URL" ]; then
     cat >"$UPDATE_HELPER" <<EOF
 #!/usr/bin/env bash
@@ -487,7 +493,7 @@ do_agent() {
   fi
 
   ARCH="$(uname -m)"; case "$ARCH" in x86_64) ARCH=amd64;; aarch64) ARCH=arm64;; esac
-  RELEASE_BASE="${EPICPANEL_DOWNLOAD_BASE:-https://downloads.epichostly.in/latest}"
+  RELEASE_BASE="${EPICPANEL_DOWNLOAD_BASE:-$RELEASES_BASE}"
   tmp="$(mktemp -d)"
   curl -fsSL -o "$tmp/epicpanel-agent" "$RELEASE_BASE/epicpanel-agent-linux-${ARCH}" \
     || fail "download epicpanel-agent failed — check EPICPANEL_DOWNLOAD_BASE"

@@ -9,13 +9,13 @@
 ## 2. Install (one command)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/epicbyte/epicpanel/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/girivardhangv/epicpanel/main/install.sh | bash
 ```
 
 or from the repo:
 
 ```bash
-git clone <your-repo> && cd epicpanel-2
+git clone https://github.com/girivardhangv/epicpanel.git && cd epicpanel
 sudo bash install.sh
 ```
 
@@ -54,7 +54,7 @@ sudo epicpanel-update          # helper installed on the box
 # or:
 sudo bash install.sh update
 # or simply re-run:
-curl -fsSL https://raw.githubusercontent.com/epicbyte/epicpanel/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/girivardhangv/epicpanel/main/install.sh | bash
 ```
 
 ## 5. Rollback a bad update

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# build-release.sh — build release binaries and (optionally) upload to R2.
+# build-release.sh — build release binaries and (optionally) publish to GitHub Releases.
 #
 #   ./build-release.sh                 # build bin/ artifacts
 #   ./build-release.sh upload v1.0.0   # build + gh release create v1.0.0
@@ -33,18 +33,18 @@ else
 fi
 
 # Checksums manifest (curl|bash users can verify; installer does not enforce).
-( cd "$OUT" && sha256sum ./*-linux-* > SHA256SUMS )
+( cd "$OUT" && { sha256sum ./*-linux-*; [ -f web-dist.tar.gz ] && sha256sum ./web-dist.tar.gz; } > SHA256SUMS )
 
 echo "built:"
 ls -1 "$OUT"
 
 if [ "$UPLOAD" = 1 ]; then
   command -v gh >/dev/null || { echo "gh not installed: install GitHub CLI"; exit 1; }
-  
+
   # Ensure the tag exists or will be created by this command
   gh release view "$VERSION" >/dev/null 2>&1 || gh release create "$VERSION" --title "$VERSION" --notes "Release $VERSION"
-  
-  for f in "$OUT"/*linux-* "$OUT"/web-dist.tar.gz; do
+
+  for f in "$OUT"/*linux-* "$OUT"/web-dist.tar.gz "$OUT"/SHA256SUMS; do
     [ -f "$f" ] || continue
     gh release upload "$VERSION" "$f" --clobber
   done

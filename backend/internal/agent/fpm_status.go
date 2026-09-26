@@ -39,14 +39,26 @@ const (
 	fpmStatusPathName = "/status"
 )
 
+// flexBool accepts php-fpm's "max children reached" as bool OR number —
+// different PHP builds emit true/false or 1/0, and a strict bool made EVERY
+// status decode fail silently (found live: all four pools reported zero
+// workers because of this).
+type flexBool bool
+
+func (b *flexBool) UnmarshalJSON(p []byte) error {
+	s := strings.TrimSpace(string(p))
+	*b = s == "true" || s == "1"
+	return nil
+}
+
 // FPMStatus is one pool's worker-pool snapshot (php-fpm status?json keys —
 // the JSON field names contain spaces by design).
 type FPMStatus struct {
-	Active             int  `json:"active processes"`
-	Idle               int  `json:"idle processes"`
-	Total              int  `json:"total processes"`
-	Queue              int  `json:"listen queue"`
-	MaxChildrenReached bool `json:"max children reached"`
+	Active             int      `json:"active processes"`
+	Idle               int      `json:"idle processes"`
+	Total              int      `json:"total processes"`
+	Queue              int      `json:"listen queue"`
+	MaxChildrenReached flexBool `json:"max children reached"`
 	// MaxChildren is NOT part of the status payload — it comes from the
 	// pool file's pm.max_children (the enforcement denominator).
 	MaxChildren int `json:"-"`
@@ -55,34 +67,44 @@ type FPMStatus struct {
 // fpmPool is one discovered pool: which site it serves and where to ask.
 type fpmPool struct {
 	WebsiteID   string
+	UnixUser    string // the pool's `user =` directive — how SiteSamples are keyed
 	Version     string // php major.minor (for the service name on self-heal)
 	SocketPath  string
 	MaxChildren int
 	ConfPath    string
 }
 
+// FpmSample is one pool's status with BOTH identity keys: pool files are
+// named by website UUID while cgroup SiteSamples are keyed by unix user —
+// matching on either (stream.go) is what makes the telemetry arrive at all.
+type FpmSample struct {
+	WebsiteID string
+	UnixUser  string
+	Status    FPMStatus
+}
+
 // fpmScraper discovers epicpanel pools and scrapes their status, cached for
 // fpmStatusTTL so the 2s metrics pass never pays the scrape every time.
 type fpmScraper struct {
 	mu      sync.Mutex
-	cache   map[string]FPMStatus
+	cache   []FpmSample
 	cacheAt time.Time
 	healed  map[string]bool // self-heal attempted once per pool per process
 }
 
 func newFpmScraper() *fpmScraper {
-	return &fpmScraper{cache: map[string]FPMStatus{}, healed: map[string]bool{}}
+	return &fpmScraper{healed: map[string]bool{}}
 }
 
-// Collect returns status per websiteID. Best-effort: pools that fail to
-// answer (static site, pool down, socket gone) are simply absent.
-func (f *fpmScraper) Collect() map[string]FPMStatus {
+// Collect returns one sample per answering pool. Best-effort: pools that
+// fail to respond (static site, pool down, socket gone) are simply absent.
+func (f *fpmScraper) Collect() []FpmSample {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if !f.cacheAt.IsZero() && time.Since(f.cacheAt) < fpmStatusTTL {
 		return f.cache
 	}
-	out := map[string]FPMStatus{}
+	var out []FpmSample
 	changed := false
 	for _, pool := range discoverFpmPools() {
 		st, err := f.scrape(pool)
@@ -97,14 +119,14 @@ func (f *fpmScraper) Collect() map[string]FPMStatus {
 			continue
 		}
 		st.MaxChildren = pool.MaxChildren
-		out[pool.WebsiteID] = st
+		out = append(out, FpmSample{WebsiteID: pool.WebsiteID, UnixUser: pool.UnixUser, Status: st})
 	}
 	// A successful heal means the cache is stale the moment it was built.
 	if changed {
 		for _, pool := range discoverFpmPools() {
 			if st, err := f.scrape(pool); err == nil {
 				st.MaxChildren = pool.MaxChildren
-				out[pool.WebsiteID] = st
+				out = append(out, FpmSample{WebsiteID: pool.WebsiteID, UnixUser: pool.UnixUser, Status: st})
 			}
 		}
 	}
@@ -134,8 +156,8 @@ func discoverFpmPools() []fpmPool {
 				break
 			}
 		}
-		socket, children := parsePoolRuntime(conf)
-		p.SocketPath, p.MaxChildren = socket, children
+		socket, children, user := parsePoolRuntime(conf)
+		p.SocketPath, p.MaxChildren, p.UnixUser = socket, children, user
 		if p.SocketPath == "" || p.MaxChildren == 0 {
 			continue
 		}
@@ -144,16 +166,18 @@ func discoverFpmPools() []fpmPool {
 	return pools
 }
 
-// parsePoolRuntime pulls the two lines the scraper needs from a pool file:
-// the unix listen socket and pm.max_children.
-func parsePoolRuntime(conf string) (socket string, maxChildren int) {
+// parsePoolRuntime pulls the lines the scraper needs from a pool file: the
+// unix listen socket, pm.max_children, and the pool's unix user.
+func parsePoolRuntime(conf string) (socket string, maxChildren int, unixUser string) {
 	b, err := os.ReadFile(conf)
 	if err != nil {
-		return "", 0
+		return "", 0, ""
 	}
 	for _, line := range strings.Split(string(b), "\n") {
 		line = strings.TrimSpace(line)
 		switch {
+		case unixUser == "" && strings.HasPrefix(line, "user ="):
+			unixUser = strings.TrimSpace(strings.TrimPrefix(line, "user ="))
 		case strings.HasPrefix(line, "listen"):
 			if v, ok := strings.CutPrefix(line, "listen ="); ok && strings.HasPrefix(strings.TrimSpace(v), "/") {
 				socket = strings.TrimSpace(v)
@@ -164,7 +188,7 @@ func parsePoolRuntime(conf string) (socket string, maxChildren int) {
 			}
 		}
 	}
-	return socket, maxChildren
+	return socket, maxChildren, unixUser
 }
 
 // scrape asks one pool for its status JSON over the FastCGI socket.

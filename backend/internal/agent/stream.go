@@ -333,13 +333,20 @@ func (s *Streamer) nextSampleFrame() (agentproto.Frame, bool, int64) {
 	sample.Sites = s.workloads.CollectSites()
 	if fpm := s.fpm.Collect(); len(fpm) > 0 {
 		for i := range sample.Sites {
-			if st, ok := fpm[sample.Sites[i].WebsiteID]; ok {
-				sample.Sites[i].FpmActive = st.Active
-				sample.Sites[i].FpmIdle = st.Idle
-				sample.Sites[i].FpmTotal = st.Total
-				sample.Sites[i].FpmQueue = st.Queue
-				sample.Sites[i].FpmMaxChildren = st.MaxChildren
-				sample.Sites[i].FpmMaxChildrenReached = st.MaxChildrenReached
+			for _, fs := range fpm {
+				// Pool files are named by website UUID; cgroup slices by unix
+				// user. Match either or the telemetry silently drops (found
+				// live: workers read 0 under full saturation).
+				if fs.WebsiteID != sample.Sites[i].WebsiteID && fs.UnixUser != sample.Sites[i].UnixUser {
+					continue
+				}
+				sample.Sites[i].FpmActive = fs.Status.Active
+				sample.Sites[i].FpmIdle = fs.Status.Idle
+				sample.Sites[i].FpmTotal = fs.Status.Total
+				sample.Sites[i].FpmQueue = fs.Status.Queue
+				sample.Sites[i].FpmMaxChildren = fs.Status.MaxChildren
+				sample.Sites[i].FpmMaxChildrenReached = bool(fs.Status.MaxChildrenReached)
+				break
 			}
 		}
 	}

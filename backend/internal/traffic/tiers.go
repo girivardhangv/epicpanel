@@ -70,7 +70,7 @@ func Scale(base BaseLimits, tier int, floorMB int64) BaseLimits {
 				out.PidsMax = 4
 			}
 		}
-		out.FpmChildren = fpmChildrenFor(out.MemoryMB, base.FpmChildren)
+		out.FpmChildren = FPMChildrenFor(out.MemoryMB, base.FpmChildren)
 		return out
 	}
 	m := tierMultipliers[tier]
@@ -85,14 +85,14 @@ func Scale(base BaseLimits, tier int, floorMB int64) BaseLimits {
 	if out.PidsMax > 1024 {
 		out.PidsMax = 1024
 	}
-	out.FpmChildren = fpmChildrenFor(out.MemoryMB, base.FpmChildren)
+	out.FpmChildren = FPMChildrenFor(out.MemoryMB, base.FpmChildren)
 	return out
 }
 
 // fpmChildrenFor re-derives the PHP worker ceiling for a memory ceiling
 // (1 child per 32MB, clamped 1..100 — same math as the Phase 9 engine).
 // Unlimited memory keeps the base children.
-func fpmChildrenFor(memMB int64, base int) int {
+func FPMChildrenFor(memMB int64, base int) int {
 	if memMB <= 0 {
 		return base
 	}

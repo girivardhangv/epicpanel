@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"io"
 	"net"
 	"os"
@@ -130,21 +131,22 @@ func TestFpmScraperCollect(t *testing.T) {
 
 	fakeFpmServer(t, sock, true)
 	f := newFpmScraper()
-	out := f.Collect()
 	id := "0199aaaa-bbbb-7ccc-8ddd-eeeeffff0000"
-	st, ok := out[id]
-	if !ok {
-		t.Fatalf("site missing from collect: %v", out)
+	var st FPMStatus
+	if out := f.Collect(); len(out) != 1 || out[0].WebsiteID != id {
+		t.Fatalf("unexpected collect: %+v", out)
+	} else {
+		st = out[0].Status
 	}
-	if st.Active != 7 || st.Queue != 2 || !st.MaxChildrenReached || st.MaxChildren != 32 {
+	if st.Active != 7 || st.Queue != 2 || !bool(st.MaxChildrenReached) || st.MaxChildren != 32 {
 		t.Fatalf("unexpected status: %+v", st)
 	}
 
 	// dbadmin pool must never be scraped (not a website UUID).
 	dbconf := filepath.Join(poolDir, "epicpanel-dbadmin.conf")
 	_ = os.WriteFile(dbconf, []byte(content), 0o644)
-	if out = f.Collect(); len(out) != 1 {
-		t.Fatalf("dbadmin pool leaked into collection: %v", out)
+	if out := f.Collect(); len(out) != 1 {
+		t.Fatalf("dbadmin pool leaked into collection: %+v", out)
 	}
 }
 
@@ -207,5 +209,20 @@ func TestTrafficSamplerSkipsPanelSelfTraffic(t *testing.T) {
 	s.fold(st, "9.9.9.9", "GET / HTTP/1.1", 200, 512, "-", "Mozilla/5.0 (X11; Linux x86_64) Firefox/155.0")
 	if st.agg.Requests != 1 || st.agg.UniqueIPs != 1 {
 		t.Fatalf("real traffic must still count: %+v", st.agg)
+	}
+}
+
+// PHP builds differ: some emit "max children reached": true, others 1.
+// A strict bool made every real scrape fail silently.
+func TestFpmStatusDecodeTolerantBool(t *testing.T) {
+	var st FPMStatus
+	if err := json.Unmarshal([]byte(`{"active processes":4,"listen queue":2,"max children reached":1}`), &st); err != nil {
+		t.Fatalf("numeric bool rejected: %v", err)
+	}
+	if !bool(st.MaxChildrenReached) || st.Active != 4 {
+		t.Fatalf("unexpected decode: %+v", st)
+	}
+	if err := json.Unmarshal([]byte(`{"max children reached":false}`), &st); err != nil {
+		t.Fatalf("real bool rejected: %v", err)
 	}
 }

@@ -67,11 +67,12 @@ const (
 // state), the fleet scale-up rate limiter and push throttles. Tier/state
 // truth lives in the websites table, so a control-plane restart converges.
 type dynamicRuntime struct {
-	mu             sync.Mutex
-	engines        map[uuid.UUID]*dynres.Engine
-	scaleUps       []time.Time             // global rate limiter (per minute)
-	lastPush       map[uuid.UUID]time.Time // resource_update throttle
-	lastPushedMax  map[uuid.UUID]float64
+	mu            sync.Mutex
+	engines       map[uuid.UUID]*dynres.Engine
+	scaleUps      []time.Time             // global rate limiter (per minute)
+	lastPush      map[uuid.UUID]time.Time // resource_update throttle
+	lastPushedMax map[uuid.UUID]float64
+	lastBusyAt    map[uuid.UUID]time.Time // busy-incident anchor (recovery hysteresis)
 }
 
 func (d *dynamicRuntime) engineFor(id uuid.UUID, tier int) *dynres.Engine {
@@ -114,6 +115,30 @@ func (d *dynamicRuntime) peekEngine(id uuid.UUID) *dynres.Engine {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.engines[id]
+}
+
+// noteBusy stamps when a site entered protective-busy state (recovery
+// hysteresis anchor). Restarts converge lazily: an unknown busy site waits
+// one full hysteresis window after first sight.
+func (d *dynamicRuntime) noteBusy(id uuid.UUID, now time.Time) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.lastBusyAt == nil {
+		d.lastBusyAt = map[uuid.UUID]time.Time{}
+	}
+	if _, ok := d.lastBusyAt[id]; !ok {
+		d.lastBusyAt[id] = now
+	}
+}
+
+func (d *dynamicRuntime) busyLongEnough(id uuid.UUID, now time.Time, hysteresis time.Duration) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	t, ok := d.lastBusyAt[id]
+	if !ok {
+		return true // not observed busy in this process — allow the recovery
+	}
+	return now.Sub(t) >= hysteresis
 }
 
 // trafficStore lazily builds the in-memory traffic store (nil-safe for
@@ -167,8 +192,12 @@ func (s *Server) dynFloorMB(ctx context.Context) int64 {
 	return n
 }
 
-func (s *Server) dynAttackWindows(ctx context.Context) int { return s.dynIntSettingCtx(ctx, "dynamic_attack_windows", 2) }
-func (s *Server) dynRecoverWindows(ctx context.Context) int { return s.dynIntSettingCtx(ctx, "dynamic_recover_windows", 4) }
+func (s *Server) dynAttackWindows(ctx context.Context) int {
+	return s.dynIntSettingCtx(ctx, "dynamic_attack_windows", 2)
+}
+func (s *Server) dynRecoverWindows(ctx context.Context) int {
+	return s.dynIntSettingCtx(ctx, "dynamic_recover_windows", 4)
+}
 
 // dynScaledInt reads an int setting, clamped to [min,max]; out-of-range or
 // unparseable values fall back to def (never silently disable the engine).
@@ -251,7 +280,7 @@ func (s *Server) dynamicBasePayload(ctx context.Context, ws *websites.Website) (
 // enforceToAgentPayload converts the engine payload and fills the agent-side
 // reconciliation counts (same as every other enforce_limits enqueue site).
 func (s *Server) enforceToAgentPayload(ctx context.Context, ws *websites.Website, p resources.EnforcePayload) agentpkg.EnforceJobPayload {
-	return agentpkg.EnforceJobPayload{
+	out := agentpkg.EnforceJobPayload{
 		WebsiteID:      p.WebsiteID,
 		Plan:           p.Plan,
 		CPUPercent:     p.CPUPercent,
@@ -263,6 +292,15 @@ func (s *Server) enforceToAgentPayload(ctx context.Context, ws *websites.Website
 		FpmMaxChildren: p.FpmMaxChildren,
 		CountLimits:    p.CountLimits,
 	}
+	// Plans that predate the FPM bound carry no child count (0): derive it
+	// from the memory ceiling (1 child / 32MB — same math as traffic.Scale)
+	// so EVERY enforce converges the pool. Without this, a site returning
+	// from the tier-0 floor keeps its stale 1-worker pool at base tier —
+	// found live when wptest served from one worker at tier 1.
+	if out.FpmMaxChildren <= 0 && out.MemoryMB > 0 {
+		out.FpmMaxChildren = traffic.FPMChildrenFor(out.MemoryMB, 0)
+	}
+	return out
 }
 
 // dynamicEffectivePayload is THE payload builder for dynamic-enabled sites:
@@ -375,8 +413,19 @@ func (s *Server) dynamicEvaluate(ctx context.Context, ws *websites.Website) {
 		}
 		return
 	case websites.DynStateBusy:
+		// Recovery hysteresis: the busy incident must be at least
+		// recoverWindows old before ANY recovery path fires — clean-window
+		// streaks carry over state from before the incident, and recovery
+		// must never race the throttle it is recovering from.
+		if !s.dyn.busyLongEnough(ws.ID, time.Now(), time.Duration(s.dynRecoverWindows(ctx))*time.Minute) {
+			return
+		}
 		if seen && trend.CleanStreak >= s.dynRecoverWindows(ctx) {
 			if err := s.Websites.SetDynamicState(ctx, ws.ID, 1, websites.DynStateActive); err == nil {
+				// ws was scanned while busy (tier 0): refresh the object or
+				// the enforce below re-applies the FLOOR payload — found live
+				// when a recovered site kept its 1-worker pool.
+				ws.DynamicTier, ws.DynamicState = 1, websites.DynStateActive
 				s.recordDynamicEvent(ctx, ws, "scale_up", 0, 1, trend.LastVerdict.Score,
 					fmt.Sprintf("traffic clean for %d windows; leaving protection mode", trend.CleanStreak))
 				s.enqueueDynamicEnforce(ctx, ws)
@@ -389,6 +438,7 @@ func (s *Server) dynamicEvaluate(ctx context.Context, ws *websites.Website) {
 		// clean-window streak that may never be delivered.
 		if !seen || time.Since(trend.LastWindowAt) > 6*time.Minute {
 			if err := s.Websites.SetDynamicState(ctx, ws.ID, 1, websites.DynStateActive); err == nil {
+				ws.DynamicTier, ws.DynamicState = 1, websites.DynStateActive
 				s.recordDynamicEvent(ctx, ws, "scale_up", 0, 1, 0, "no traffic evidence while throttled; leaving protection mode")
 				s.enqueueDynamicEnforce(ctx, ws)
 			}
@@ -406,6 +456,7 @@ func (s *Server) dynamicEvaluate(ctx context.Context, ws *websites.Website) {
 			s.recordDynamicEvent(ctx, ws, "busy", ws.DynamicTier, 0, trend.LastVerdict.Score,
 				"suspect traffic: throttled to floor allocation (site still served)")
 			ws.DynamicTier, ws.DynamicState = 0, websites.DynStateBusy
+			s.dyn.noteBusy(ws.ID, time.Now())
 			s.enqueueDynamicEnforce(ctx, ws)
 			s.publishDynamicEvent(ctx, ws, "website.dynamic_busy", map[string]any{
 				"score": trend.LastVerdict.Score, "factors": trend.LastVerdict.Factors,
@@ -553,6 +604,7 @@ func (s *Server) dynamicEngineStep(ctx context.Context, ws *websites.Website) {
 		// Governor denial is an event, not an error: record it (score-free,
 		// throttled by the push path) so the UI can show WHY the site did
 		// not scale.
+		slog.Info("governor denied scale-up", "website", ws.ID, "desired", d.ToTier, "reason", v.Reason)
 		s.recordDynamicEvent(ctx, ws, "governor_denied", d.FromTier, d.FromTier, 0,
 			fmt.Sprintf("%s blocked: %s", d.Action, v.Reason))
 		s.publishResourceUpdate(ctx, ws, e, sample)
@@ -680,6 +732,7 @@ func absf(v float64) float64 {
 	}
 	return v
 }
+
 // FPM numbers from the agent stream, with enforced limits as denominators
 // (the anti-drift rule — display source == enforcement source).
 func (s *Server) liveSiteSample(ws *websites.Website) liveSample {
@@ -719,12 +772,12 @@ func (s *Server) liveSiteSample(ws *websites.Website) liveSample {
 
 // liveSample carries the engine's inputs plus the node view for the governor.
 type liveSample struct {
-	found                          bool
-	cpuPercent, cpuLimitPercent    float64
-	memBytes, memLimit             int64
-	pids, pidsLimit                int64
+	found                            bool
+	cpuPercent, cpuLimitPercent      float64
+	memBytes, memLimit               int64
+	pids, pidsLimit                  int64
 	fpmActive, fpmChildren, fpmQueue int
-	nodeTotal, nodeAvail           int64
+	nodeTotal, nodeAvail             int64
 }
 
 // Observation reduces the sample to engine units. When the agent has no
@@ -770,7 +823,6 @@ func dynamicReason(trend traffic.Trend) string {
 	}
 	return reason
 }
-
 
 // ---------- events + audit ----------
 
@@ -1006,7 +1058,7 @@ func (s *Server) patchDynamic(w http.ResponseWriter, r *http.Request, ws *websit
 	org := ws.Organization
 	s.Audit.RecordBestEffort(ctx, audit.Entry{
 		OrganizationID: &org, ActorType: audit.ActorUser, ActorUserID: actorID,
-		Action: "website.dynamic_" + map[bool]string{true: "enabled", false: "disabled"}[enabled],
+		Action:       "website.dynamic_" + map[bool]string{true: "enabled", false: "disabled"}[enabled],
 		ResourceType: "website", ResourceID: ws.ID.String(),
 	})
 	s.recordDynamicEvent(ctx, ws,
@@ -1185,11 +1237,11 @@ func (s *Server) getAdminDynamic(w http.ResponseWriter, r *http.Request) {
 		"auto_resume_minutes":   s.dynAutoResumeMinutes(ctx),
 		"free_perk_max_per_org": s.dynIntSettingCtx(ctx, "free_perk_max_sites_per_user", 1),
 		// Resource engine + safety governor knobs.
-		"max_tier":                   s.dynMaxTier(ctx),
-		"scale_up_cooldown_s":        s.dynUpCooldown(ctx) / time.Second,
-		"scale_down_cooldown_s":      s.dynDownCooldown(ctx) / time.Second,
-		"global_cap_percent":         s.dynGlobalCapPercent(ctx),
-		"max_scaleups_per_minute":    s.dynMaxScaleUpsPerMinute(ctx),
+		"max_tier":                s.dynMaxTier(ctx),
+		"scale_up_cooldown_s":     s.dynUpCooldown(ctx) / time.Second,
+		"scale_down_cooldown_s":   s.dynDownCooldown(ctx) / time.Second,
+		"global_cap_percent":      s.dynGlobalCapPercent(ctx),
+		"max_scaleups_per_minute": s.dynMaxScaleUpsPerMinute(ctx),
 	}
 	if pkg, ok, err := s.perkPackage(ctx); err == nil && ok {
 		resp["free_perk_package"] = map[string]any{
@@ -1236,7 +1288,7 @@ func (s *Server) getAdminDynamic(w http.ResponseWriter, r *http.Request) {
 func (s *Server) patchAdminDynamic(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var req struct {
-		Enabled            *bool `json:"enabled"`
+		Enabled            *bool  `json:"enabled"`
 		FloorMemoryMB      *int64 `json:"floor_memory_mb"`
 		AttackWindows      *int   `json:"attack_windows"`
 		RecoverWindows     *int   `json:"recover_windows"`

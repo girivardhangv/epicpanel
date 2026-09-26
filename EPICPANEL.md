@@ -1582,6 +1582,21 @@ pinned by TestDeployWebDirAndServingConverge reading the pending provision
 payload). deploy payload + DeploySpec + DeployJobPayload carry web_dir.
 OpenAPI deployment-config description updated (no new routes).
 
+Session 2026-09-27f — COMPOSER USES THE SITE'S PHP + FULL DEPLOY OUTPUT
+(release v0.5.12, master e1fc6da): (1) the deploy build ran bare `composer`
+whose PHAR shebang resolves `php` from PATH = the SYSTEM DEFAULT PHP — on
+boxes where the site's pool runs 8.5 but /usr/bin/php is 8.3, composer
+evaluated platform requirements against the wrong version and rejected the
+repo's locked packages ("your php version (8.3.33) does not satisfy").
+buildRelease now pins composer via phpBinary(<site runtime_version>) — the
+same contract as the site command runner (command_ops) and one-click
+Laravel. (2) the deployments UI truncated the error to 120 chars, cutting
+mid-path (the user saw "composer install: epicpanel/websites/<uuid>..." as
+a mystery fragment); rows now render the FULL error/log under 'Full
+output'. Repro technique that nailed the diagnosis without server access:
+clone the user's private repo (gh token) and run composer with the agent's
+exact env (HOME=<release>, PATH=/usr/local/bin:/usr/bin:/bin).
+
 Session 2026-09-27e — COMPOSER VIA DIRECT PHAR (release v0.5.11, master
 5b719d3): the composer-setup.php INSTALLER failed at the deploy build gate
 on a fresh node (extension probes + signature dance) even though the

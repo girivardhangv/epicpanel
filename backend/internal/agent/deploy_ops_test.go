@@ -85,3 +85,87 @@ func TestReleaseLocationAndValidation(t *testing.T) {
 		t.Fatal("non-release paths must be rejected")
 	}
 }
+
+// TestEnsureLaravelSqlite — a Laravel app on SQLite (gitignored database
+// file) must not fail the deploy at composer's post-autoload-dump: the
+// agent creates the file from the .env contract before composer runs.
+func TestEnsureLaravelSqlite(t *testing.T) {
+	// Default path.
+	rel := t.TempDir()
+	if err := os.WriteFile(filepath.Join(rel, ".env"),
+		[]byte("APP_KEY=x\nDB_CONNECTION=sqlite\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ensureLaravelSqlite(rel)
+	if _, err := os.Stat(filepath.Join(rel, "database", "database.sqlite")); err != nil {
+		t.Fatalf("default sqlite file must be created: %v", err)
+	}
+	// Custom DB_DATABASE path.
+	rel2 := t.TempDir()
+	if err := os.WriteFile(filepath.Join(rel2, ".env"),
+		[]byte("DB_CONNECTION=sqlite\nDB_DATABASE=/tmp/bwrepro-custom.sqlite\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ensureLaravelSqlite(rel2)
+	if _, err := os.Stat("/tmp/bwrepro-custom.sqlite"); err != nil {
+		t.Fatalf("absolute DB_DATABASE must be honored: %v", err)
+	}
+	os.Remove("/tmp/bwrepro-custom.sqlite")
+	// Existing file is never touched.
+	rel3 := t.TempDir()
+	if err := os.WriteFile(filepath.Join(rel3, ".env"), []byte("DB_CONNECTION=sqlite\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.MkdirAll(filepath.Join(rel3, "database"), 0o755)
+	if err := os.WriteFile(filepath.Join(rel3, "database", "database.sqlite"), []byte("DATA"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ensureLaravelSqlite(rel3)
+	if b, _ := os.ReadFile(filepath.Join(rel3, "database", "database.sqlite")); string(b) != "DATA" {
+		t.Fatal("existing sqlite file must not be overwritten")
+	}
+	// Not sqlite: nothing created.
+	rel4 := t.TempDir()
+	if err := os.WriteFile(filepath.Join(rel4, ".env"), []byte("DB_CONNECTION=mysql\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ensureLaravelSqlite(rel4)
+	if _, err := os.Stat(filepath.Join(rel4, "database")); !os.IsNotExist(err) {
+		t.Fatal("non-sqlite apps must stay untouched")
+	}
+}
+
+// TestCarryOverSqliteData — SQLite databases live under database/ and are
+// never in git; a new release must inherit the live app's data.
+func TestCarryOverSqliteData(t *testing.T) {
+	base := t.TempDir()
+	oldRel := filepath.Join(base, "old")
+	newRel := filepath.Join(base, "new")
+	for _, d := range []string{
+		filepath.Join(oldRel, "database"),
+		filepath.Join(oldRel, "uploads"),
+		newRel,
+	} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(oldRel, ".env"), []byte("APP_KEY=x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(oldRel, "database", "database.sqlite"), []byte("REALDATA"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The carry-over reads the CURRENT release through the public symlink.
+	link := filepath.Join(base, "public")
+	if err := os.Symlink(oldRel, link); err != nil {
+		t.Fatal(err)
+	}
+	carryOverFromCurrent(link, newRel)
+	if b, err := os.ReadFile(filepath.Join(newRel, ".env")); err != nil || string(b) != "APP_KEY=x" {
+		t.Fatalf(".env carry-over: %v", err)
+	}
+	if b, err := os.ReadFile(filepath.Join(newRel, "database", "database.sqlite")); err != nil || string(b) != "REALDATA" {
+		t.Fatalf("sqlite data carry-over: %v", err)
+	}
+}

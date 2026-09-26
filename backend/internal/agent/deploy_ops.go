@@ -288,8 +288,11 @@ func siteOwnerIDs(websiteID string) (int, int, error) {
 	return 0, 0, fmt.Errorf("stat unsupported")
 }
 
-// carryOverFromCurrent copies .env and a small set of durable dirs from the
-// currently live release into the new release.
+// carryOverFromCurrent copies .env and a small set of durable content from
+// the currently live release into the new release: user uploads, storage,
+// and SQLite database files (which live under database/ and are never in
+// git — without carrying them, every deploy would hand the app a fresh
+// empty database).
 func carryOverFromCurrent(publicLink, newRelease string) {
 	if cur, err := os.Readlink(publicLink); err == nil {
 		for _, name := range []string{".env"} {
@@ -305,6 +308,15 @@ func carryOverFromCurrent(publicLink, newRelease string) {
 				_ = copyTree(src, dst)
 			}
 		}
+		if dbFiles, err := filepath.Glob(filepath.Join(cur, "database", "*.sqlite")); err == nil {
+			for _, f := range dbFiles {
+				dst := filepath.Join(newRelease, "database", filepath.Base(f))
+				_ = os.MkdirAll(filepath.Dir(dst), 0o755)
+				if b, err := os.ReadFile(f); err == nil {
+					_ = os.WriteFile(dst, b, 0o600)
+				}
+			}
+		}
 	}
 }
 
@@ -316,6 +328,50 @@ func (e *Executor) pruneReleases(releasesDir string, keep int) {
 	// Dir names sort by timestamp prefix; oldest first.
 	for i := 0; i < len(entries)-keep; i++ {
 		_ = os.RemoveAll(filepath.Join(releasesDir, entries[i].Name()))
+	}
+}
+
+// ensureLaravelSqlite creates the SQLite database file a Laravel app
+// expects when its .env sets DB_CONNECTION=sqlite. The file is normally
+// gitignored, so a fresh clone never has it — and composer's
+// post-autoload-dump (artisan package:discover) boots the app, whose
+// sqlite connector refuses a missing database file, failing the deploy
+// before it can go live. DB_DATABASE wins when set; otherwise the Laravel
+// default database/database.sqlite. An empty file IS a valid empty SQLite
+// database; the first successful release carries it forward with data.
+func ensureLaravelSqlite(releaseDir string) {
+	envPath := filepath.Join(releaseDir, ".env")
+	b, err := os.ReadFile(envPath)
+	if err != nil {
+		return
+	}
+	sqlite := false
+	dbPath := ""
+	for _, line := range strings.Split(string(b), "\n") {
+		kv := strings.SplitN(strings.TrimSpace(line), "=", 2)
+		if len(kv) != 2 {
+			continue
+		}
+		switch strings.TrimSpace(kv[0]) {
+		case "DB_CONNECTION":
+			sqlite = strings.TrimSpace(kv[1]) == "sqlite"
+		case "DB_DATABASE":
+			dbPath = strings.TrimSpace(kv[1])
+		}
+	}
+	if !sqlite {
+		return
+	}
+	if dbPath == "" {
+		dbPath = "database/database.sqlite"
+	}
+	target := dbPath
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(releaseDir, filepath.FromSlash(dbPath))
+	}
+	if _, err := os.Stat(target); os.IsNotExist(err) {
+		_ = os.MkdirAll(filepath.Dir(target), 0o755)
+		_ = os.WriteFile(target, nil, 0o600)
 	}
 }
 
@@ -414,6 +470,7 @@ func (e *Executor) buildRelease(ctx context.Context, spec DeploySpec, releaseDir
 			} else {
 				phpBin = phpBinary(latestInstalledPHPMinor(e))
 			}
+			ensureLaravelSqlite(releaseDir)
 			log.WriteString("composer install --no-dev --optimize-autoloader\n")
 			if out, err := e.runAsSiteEnv(ctx, uid, gid, releaseDir, nil, phpBin,
 				composerBin, "install", "--no-dev", "--optimize-autoloader", "--no-interaction"); err != nil {

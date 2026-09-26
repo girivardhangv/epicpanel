@@ -46,6 +46,9 @@ const (
 	minReqsScanning      = 15 // ≥15 hits on missing pages
 	// Moderate flood tiers (3-10x baseline) need this volume; 10x+ never does.
 	minReqsFloodModerate = 60
+	// Flood ratios are meaningless until the EWMA baseline carries ~1.7 rps
+	// of history (100 reqs/window).
+	minBaselineFlood = 100
 )
 
 // AnalyzeWindow scores one completed window against the running baseline.
@@ -63,7 +66,14 @@ func AnalyzeWindow(w agentproto.SiteTraffic, baseline float64, th Thresholds, mi
 	// reqs/window): a human's first visit on a quiet site bursts 30-50
 	// requests (page + assets) against a cold baseline, which is 6x "flood"
 	// but is a person. A 10x surge is never a person and classifies alone.
-	if baseline > 0 && w.Requests >= minRate {
+	// Flood ratios need a MEANINGFUL baseline: after a quiet stretch (or a
+	// control-plane restart) the EWMA may sit at a few dozen requests, and
+	// "30x baseline" over 31 reqs/window is noise, not a flood — found live
+	// when a 15 rps load test was attack-suspended off a 31-request
+	// baseline. Below minBaselineFlood the site's normal rate is unknown;
+	// tooling/scanning/concentration still apply, and the pressure engine
+	// handles real load regardless.
+	if baseline >= minBaselineFlood && w.Requests >= minRate {
 		ratio := float64(w.Requests) / baseline
 		switch {
 		case ratio >= 10:

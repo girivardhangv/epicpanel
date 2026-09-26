@@ -301,3 +301,34 @@ func TestAnalyzeWindowRatioFactorsNeedAbsoluteEvidence(t *testing.T) {
 		t.Fatalf("anecdote-ratio window scored %.1f (%s), want legit: %+v", v.Score, v.Class, v.Factors)
 	}
 }
+
+// Regression (live k6 review): a near-zero baseline (31 reqs/window —
+// quiet site + excluded health checks + control-plane restart) makes any
+// real load "30x baseline". Flood ratios are meaningless below a
+// meaningful baseline; the window must classify legit.
+func TestAnalyzeWindowFloodNeedsMeaningfulBaseline(t *testing.T) {
+	w := win(
+		func(x *agentproto.SiteTraffic) { x.Requests = 935 },
+		func(x *agentproto.SiteTraffic) { x.UniqueIPs = 1; x.Top3Share = 1.0 },
+		func(x *agentproto.SiteTraffic) { x.Status2xx = 935 },
+	)
+	v := AnalyzeWindow(w, 31, DefaultThresholds(), 30)
+	if v.Class != ClassLegit {
+		t.Fatalf("935 reqs over a 31-request baseline scored %.1f (%s), want legit: %+v", v.Score, v.Class, v.Factors)
+	}
+	// The same volume over a REAL baseline (1000/window) with 1 IP: still
+	// legit (concentration 2.5 alone) — no flood, no busy.
+	if v = AnalyzeWindow(w, 1000, DefaultThresholds(), 30); v.Class != ClassLegit {
+		t.Fatalf("steady single-client load scored %.1f (%s), want legit", v.Score, v.Class)
+	}
+	// A genuine flood over a meaningful baseline still classifies: 30x of
+	// 1000 = 30000 reqs → flood 4 + concentration 2.5 = 6.5 → attack.
+	w = win(
+		func(x *agentproto.SiteTraffic) { x.Requests = 30000 },
+		func(x *agentproto.SiteTraffic) { x.UniqueIPs = 1; x.Top3Share = 1.0 },
+		func(x *agentproto.SiteTraffic) { x.Status2xx = 30000 },
+	)
+	if v = AnalyzeWindow(w, 1000, DefaultThresholds(), 30); v.Class != ClassAttack {
+		t.Fatalf("true volumetric flood scored %.1f (%s), want attack", v.Score, v.Class)
+	}
+}

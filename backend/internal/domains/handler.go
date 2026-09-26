@@ -385,7 +385,14 @@ func (h *Handler) SetSSL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Certificate issuance is an agent job; vhost reconcile follows in fanout.
+	// Vhost reconcile MUST be enqueued before certificate issuance: jobs run
+	// in order per server, and the ACME challenge is served by the freshly
+	// rendered :80 vhost — issuing against the stale vhost fails the first
+	// attempt (and on older agents, forever).
+	if ws, err := h.Websites.GetByIDAny(r.Context(), d.WebsiteID); err == nil {
+		h.notifyChanged(orgID, ws)
+	}
+
 	if mode != SSLNone {
 		payload := CertPayload{DomainID: updated.ID, Domain: updated.Domain, Mode: string(mode)}
 		if _, err := h.Jobs.EnqueueForWebsite(r.Context(), updated.WebsiteID, jobs.TypeIssueCertificate, payload); err != nil {
@@ -395,9 +402,6 @@ func (h *Handler) SetSSL(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.audit(r, &orgID, "domain.ssl_mode_set", "domain", d.ID.String(), map[string]any{"mode": req.Mode})
-	if ws, err := h.Websites.GetByIDAny(r.Context(), d.WebsiteID); err == nil {
-		h.notifyChanged(orgID, ws)
-	}
 	httpapi.WriteJSON(w, http.StatusAccepted, updated)
 }
 

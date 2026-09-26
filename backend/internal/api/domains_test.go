@@ -178,19 +178,33 @@ func TestDomainAndSSLLifecycle(t *testing.T) {
 	if resp.status != http.StatusAccepted {
 		t.Fatalf("set alias ssl: %d", resp.status)
 	}
-	for attempt := 0; attempt < 3; attempt++ {
+	// The vhost reconcile (provision_website) is enqueued BEFORE the cert job:
+	// the :80 vhost must serve the ACME challenge by the time issuance runs.
+	// Failed issuance attempts go back to pending until retries are exhausted,
+	// so keep claiming until the queue drains — only then does ssl_state flip
+	// to failed.
+	sawIssuance := false
+	for attempt := 0; attempt < 8; attempt++ {
 		claim = agent.do("POST", "/v1/agent/jobs/claim", nil)
 		job, _ = claim.body["job"].(map[string]any)
 		if job == nil {
-			t.Fatalf("expected cert job claim attempt %d", attempt+1)
-		}
-		if job["type"] != "issue_certificate" {
-			t.Fatalf("expected issue_certificate, got %v", job["type"])
+			break
 		}
 		jobID, _ = job["id"].(string)
-		agent.do("POST", "/v1/agent/jobs/"+jobID+"/result", map[string]any{
-			"success": false, "error": "acme: dns problem",
-		})
+		switch job["type"] {
+		case "provision_website":
+			agent.do("POST", "/v1/agent/jobs/"+jobID+"/result", map[string]any{"success": true})
+		case "issue_certificate":
+			agent.do("POST", "/v1/agent/jobs/"+jobID+"/result", map[string]any{
+				"success": false, "error": "acme: dns problem",
+			})
+			sawIssuance = true
+		default:
+			t.Fatalf("expected provision_website or issue_certificate, got %v", job["type"])
+		}
+	}
+	if !sawIssuance {
+		t.Fatalf("no issue_certificate job was claimed after setting ssl mode")
 	}
 	resp = admin.do("GET", "/v1/organizations/"+orgID+"/websites/"+websiteID+"/domains", nil)
 	domains, _ = resp.body["domains"].([]any)

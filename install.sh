@@ -119,6 +119,16 @@ do_install() {
   systemctl enable --now postgresql >/dev/null 2>&1 || true
   systemctl enable --now nginx >/dev/null 2>&1 || true
 
+  # --- 0c. Firewall ports ------------------------------------------------------
+  # The #1 "install finished but the setup link never opens" cause: an active
+  # firewall with no allow rules. Open what the panel + hosted sites need.
+  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+    log "Firewall (ufw) is active — allowing 22, 80, 443, 8080…"
+    for port in 22/tcp 80/tcp 443/tcp 8080/tcp; do
+      ufw allow "$port" >/dev/null 2>&1 || warn "could not add ufw rule for $port — check: ufw status"
+    done
+  fi
+
   # --- 0b. Workload isolation + runtimes --------------------------------------
   # Docker isolates containerized app workloads (websites stay native:
   # dedicated unix user + FPM pools). Java is provisioned here as a baseline
@@ -326,6 +336,34 @@ EOF
 
   IP="$(curl -fsS --max-time 4 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')"
 
+  if [ -n "$SETUP_URL" ]; then
+    SETUP_BLOCK="   One-time setup link (valid 1 hour, single use):
+
+       $SETUP_URL
+
+   The wizard will: install required software, verify your
+   hostname, and create your admin account.
+
+   Re-print the link later:
+       sudo epicpanel-api setup-token
+
+   If the link does not open in your browser, a firewall is
+   blocking port 8080 (this installer opens ufw itself; cloud
+   security groups must be opened by hand):
+       sudo ufw allow 8080/tcp
+       Cloud dashboard -> Networking -> allow inbound TCP 8080
+   Then re-print a fresh link:  sudo epicpanel-api setup-token"
+  else
+    SETUP_BLOCK="   This panel is ALREADY SET UP — no setup link is needed.
+   Log in with your admin account:
+
+       http://$IP:8080
+
+   (If that page does not open, a firewall is blocking port 8080:
+       sudo ufw allow 8080/tcp
+       Cloud dashboard -> Networking -> allow inbound TCP 8080 )"
+  fi
+
   cat <<EOF
 
   ============================================================
@@ -335,15 +373,7 @@ EOF
 
        http://$IP:8080
 
-   One-time setup link (valid 1 hour, single use):
-
-       $SETUP_URL
-
-   The wizard will: install required software, verify your
-   hostname, and create your admin account.
-
-   Re-print the link later:
-       sudo epicpanel-api setup-token
+$SETUP_BLOCK
 
    Update the panel later:
        sudo epicpanel-update        (or re-run this script)
@@ -477,7 +507,14 @@ do_agent() {
   log "Installing the EpicPanel node agent…"
 
   # Node-only installs also need the workload isolation + runtime prerequisites
-  # (same rationale as do_install step 0b).
+  # (same rationale as do_install step 0b) — plus open firewall ports: this node
+  # serves customer websites on 80/443.
+  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+    log "Firewall (ufw) is active — allowing 22, 80, 443…"
+    for port in 22/tcp 80/tcp 443/tcp; do
+      ufw allow "$port" >/dev/null 2>&1 || warn "could not add ufw rule for $port — check: ufw status"
+    done
+  fi
   export DEBIAN_FRONTEND=noninteractive
   if command -v apt-get >/dev/null; then
     apt-get update -y >/dev/null 2>&1 || warn "apt-get update had warnings (continuing)"

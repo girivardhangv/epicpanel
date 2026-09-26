@@ -88,6 +88,20 @@ func setupTokenCmd() error {
 		return fmt.Errorf("run migrations: %w", err)
 	}
 	h := &settings.SetupHandler{Settings: &settings.Store{Pool: pool}}
+
+	// The setup wizard is one-shot. On an already-set-up panel a fresh link
+	// would only dead-end at "setup has already been completed" — say so
+	// instead of minting a token that can never be used.
+	if completed, _ := h.Settings.Get(ctx, "setup_completed"); completed == "true" {
+		host := cfg.PublicURL
+		if host == "" {
+			host = outboundIP()
+		}
+		fmt.Println("PANEL_ALREADY_SETUP=1")
+		fmt.Fprintf(os.Stderr, "setup is already complete on this panel — log in at %s (no setup link needed)\n", host)
+		return nil
+	}
+
 	token, expires, err := h.MintSetupToken(ctx)
 	if err != nil {
 		return err

@@ -26,6 +26,12 @@ enrolls the local agent, and prints a **one-time setup link** (valid 1 h).
 Open it in the browser to become the admin (install required software, verify
 hostname, create the admin account).
 
+If the link does not open, a firewall is blocking 8080 — the installer
+opens ufw itself; cloud security groups must be allowed by hand
+(`sudo ufw allow 8080/tcp` + provider dashboard), then reprint.
+On an already-set-up panel `setup-token` prints the login URL instead
+of minting a link (the wizard is one-shot).
+
 Reprint the setup link anytime:
 
 ```bash

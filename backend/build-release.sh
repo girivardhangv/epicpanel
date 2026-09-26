@@ -6,12 +6,18 @@
 #
 # Output names: <binary>-linux-<amd64|arm64>
 set -Eeuo pipefail
+# Never die silently (same discipline as install.sh): a silent abort after the
+# build looks like success while nothing was uploaded.
+trap 'echo "build-release.sh aborted at line $LINENO" >&2; exit 1' ERR
 cd "$(dirname "$0")"
 
 VERSION="${1:-}"
 UPLOAD=0
 if [ "$VERSION" = "upload" ]; then
   UPLOAD=1; VERSION="${2:?version required (upload vX.Y.Z)}"
+elif [ "${2:-}" = "upload" ]; then
+  # Makefile form: ./build-release.sh vX.Y.Z upload vX.Y.Z
+  UPLOAD=1
 fi
 
 OUT=bin

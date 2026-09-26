@@ -180,7 +180,11 @@ func requiredScope(method, path string) (string, bool) {
 		case "suspend", "resume", "terminate", "purge":
 			return "websites:write", true
 		case "bandwidth":
-			// bandwidth + bandwidth/history are read-only surfaces.
+			// bandwidth + bandwidth/history are read-only surfaces;
+			// bandwidth/recalculate is the admin-only repair op.
+			if len(parts) >= 7 && parts[6] == "recalculate" {
+				return "websites:write", true
+			}
 			return "websites:read", true
 		case "quota":
 			if method == http.MethodGet {

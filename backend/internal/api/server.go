@@ -502,6 +502,7 @@ func (s *Server) Handler() http.Handler {
 		rtH.AdoptDetectedSoftware(ctx, job, result)
 		wsH.ApplySiteUsageOutcome(job, result)
 		s.applyEnforceOutcome(ctx, job, result)
+		s.applyRecalcOutcome(ctx, job, result)
 		dns.ApplyZonePublishOutcome(ctx, s.DNS, job, result)
 		ftpaccounts.ApplySyncOutcome(ctx, s.FTPAccounts, job, result)
 		if changedWebsite := s.Domains.ApplyJobOutcome(ctx, job, result); changedWebsite != uuid.Nil {

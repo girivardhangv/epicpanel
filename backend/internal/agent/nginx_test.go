@@ -118,10 +118,11 @@ func TestRenderVhostRedirectBlocks(t *testing.T) {
 			{From: "legacy.example.test", To: "https://main.example.test/landing"},
 		},
 	})
-	// Dedicated redirect server blocks with the requested status codes.
+	// Dedicated redirect server blocks with the requested status codes
+	// (+ the site-id stamp + accounting stream every server block carries).
 	for _, want := range []string{
-		"server {\n\tlisten 80;\n\tserver_name old.example.test;\n\n\treturn 302 https://main.example.test;",
-		"server {\n\tlisten 80;\n\tserver_name legacy.example.test;\n\n\treturn 301 https://main.example.test/landing;",
+		"server {\n\tlisten 80;\n\tserver_name old.example.test;\n\n\tset $epicpanel_site_id \"" + id + "\";\n\taccess_log /var/log/epicpanel/bandwidth.log epicpanel_bandwidth;\n\treturn 302 https://main.example.test;",
+		"server {\n\tlisten 80;\n\tserver_name legacy.example.test;\n\n\tset $epicpanel_site_id \"" + id + "\";\n\taccess_log /var/log/epicpanel/bandwidth.log epicpanel_bandwidth;\n\treturn 301 https://main.example.test/landing;",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("redirect block missing:\n%q\n---\n%s", want, out)
@@ -134,6 +135,48 @@ func TestRenderVhostRedirectBlocks(t *testing.T) {
 	// The plain block still serves the non-redirected domain.
 	if !strings.Contains(out, "server_name main.example.test;") {
 		t.Errorf("plain block missing the serving domain:\n%s", out)
+	}
+}
+
+// TestRenderVhostAccountingStamp — EVERY generated server block (plain,
+// secured-443, redirect, suspended/terminated/quota stubs) stamps the
+// trusted site id and points at the platform accounting stream; the count
+// of stamps equals the count of server blocks. This is the billing
+// attribution contract: no server block may exist without one.
+func TestRenderVhostAccountingStamp(t *testing.T) {
+	id := "88888888-8888-8888-8888-888888888888"
+	base := "/srv/epicpanel/websites/" + id
+	specs := []VhostSpec{
+		{WebsiteID: id, DocumentRoot: base + "/public", Domains: []DomainSpec{
+			{Domain: "plain.example.test", SSLMode: "none"},
+			{Domain: "sec.example.test", SSLMode: "selfsigned", CertPath: "/tmp/c.pem", KeyPath: "/tmp/k.pem"},
+		}},
+		{WebsiteID: id, DocumentRoot: base + "/public", Suspended: true, Domains: []DomainSpec{
+			{Domain: "susp.example.test", SSLMode: "none"},
+		}},
+		{WebsiteID: id, DocumentRoot: base + "/public", Terminated: true, Domains: []DomainSpec{
+			{Domain: "term.example.test", SSLMode: "none"},
+		}},
+		{WebsiteID: id, DocumentRoot: base + "/public", QuotaExceeded: true, Domains: []DomainSpec{
+			{Domain: "quota.example.test", SSLMode: "none"},
+		}},
+		{WebsiteID: id, DocumentRoot: base + "/public", ProxyPass: "http://127.0.0.1:6123", Domains: []DomainSpec{
+			{Domain: "app.example.test", SSLMode: "none"},
+		}},
+	}
+	for _, v := range specs {
+		out := RenderVhost(v)
+		blocks := strings.Count(out, "\nserver {")
+		if out == "" || !strings.HasPrefix(out, "server {") {
+			// stub renderers emit a leading comment; count `server {` opens
+			blocks = strings.Count(out, "server {")
+		}
+		stamps := strings.Count(out, "set $epicpanel_site_id \""+id+"\";")
+		logs := strings.Count(out, "access_log /var/log/epicpanel/bandwidth.log epicpanel_bandwidth;")
+		if stamps != blocks || logs != blocks {
+			t.Errorf("website %s (suspended=%v terminated=%v quota=%v proxy=%v): %d server blocks, %d site-id stamps, %d accounting logs\n%s",
+				id, v.Suspended, v.Terminated, v.QuotaExceeded, v.ProxyPass != "", blocks, stamps, logs, out)
+		}
 	}
 }
 

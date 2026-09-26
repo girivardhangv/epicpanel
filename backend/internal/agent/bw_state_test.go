@@ -44,12 +44,12 @@ func TestBwStateRoundTrip(t *testing.T) {
 	if err := st.save(path); err != nil {
 		t.Fatalf("second save (overwrite via rename): %v", err)
 	}
-	// Corrupt file → fresh state.
+	// Corrupt file → .bak fallback (the previous generation, same values).
 	if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
 		t.Fatalf("corrupt: %v", err)
 	}
-	if got := loadBwState(path); len(got.Chains) != 0 || len(got.Sites) != 0 {
-		t.Fatalf("corrupt state must load empty, got %+v", got)
+	if got := loadBwState(path); got.Sites["w1"] != 12345 {
+		t.Fatalf("corrupt state must fall back to .bak, got %+v", got)
 	}
 	// Missing file → fresh state.
 	if got := loadBwState(path + ".absent"); len(got.Chains) != 0 {
@@ -105,46 +105,44 @@ func TestBwChainDecisions(t *testing.T) {
 	}
 }
 
-// TestTrafficMonthAccumulator covers the month-to-date egress accumulator:
-// additive within the month, rolled over at the boundary, restorable from a
-// persisted snapshot of the same month only.
-func TestTrafficMonthAccumulator(t *testing.T) {
-	s := NewTrafficSampler()
-	jan := time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC)
-	feb := time.Date(2026, 2, 1, 0, 0, 10, 0, time.UTC)
-	s.nowFn = func() time.Time { return jan }
-
-	s.addMonthEgress("w1", 1000)
-	s.addMonthEgress("w1", 500)
-	s.addMonthEgress("w2", 7)
-	if b, m := s.MonthEgressBytes("w1"); b != 1500 || m != "2026-01" {
-		t.Fatalf("w1: %d %s", b, m)
+// TestBwAccountantStateRoundTrip covers the accountant's slice of
+// bw_state.json: Sites (HTTP month-to-date) + Log checkpoint survive
+// save/load, and a corrupt main file falls back to the .bak generation
+// (a single corrupt state must not destroy accounting).
+func TestBwAccountantStateRoundTrip(t *testing.T) {
+	path := t.TempDir() + "/bw_state.json"
+	st := &bwState{Chains: map[string]string{"acct_ep": "2026-09"}, Sites: map[string]int64{"w1": 12345}}
+	if err := st.save(path); err != nil {
+		t.Fatalf("save: %v", err)
 	}
-	if b, _ := s.MonthEgressBytes("missing"); b != 0 {
-		t.Fatalf("unknown site must read zero")
+	// Second writer generation (e.g. the accountant's checkpoint): save
+	// again and confirm the .bak generation materialized.
+	st2 := loadBwState(path)
+	st2.Log = &bwLogCheckpoint{Inode: 4242, Offset: 987}
+	if err := st2.save(path); err != nil {
+		t.Fatalf("second save: %v", err)
 	}
-	// Month boundary rolls the entry.
-	s.nowFn = func() time.Time { return feb }
-	s.addMonthEgress("w1", 10)
-	if b, m := s.MonthEgressBytes("w1"); b != 10 || m != "2026-02" {
-		t.Fatalf("rollover: %d %s", b, m)
+	// Save again so the .bak generation also carries the checkpoint.
+	if err := st2.save(path); err != nil {
+		t.Fatalf("third save: %v", err)
 	}
-	// Restore seeds only same-month snapshots with positive values.
-	s2 := NewTrafficSampler()
-	s2.nowFn = func() time.Time { return feb }
-	s2.RestoreMonthEgress("2026-01", map[string]int64{"w1": 9999})
-	if b, _ := s2.MonthEgressBytes("w1"); b != 0 {
-		t.Fatalf("stale-month restore must be dropped, got %d", b)
+	month, sites, cp := LoadBwAccountantState(path)
+	if month != bwMonth(time.Now()) || sites["w1"] != 12345 {
+		t.Fatalf("state roundtrip mismatch: month=%q sites=%v", month, sites)
 	}
-	s2.RestoreMonthEgress("2026-02", map[string]int64{"w1": 9999, "w2": -5, "w3": 42})
-	if b, _ := s2.MonthEgressBytes("w1"); b != 9999 {
-		t.Fatalf("same-month restore: %d", b)
+	if cp == nil || cp.Inode != 4242 || cp.Offset != 987 {
+		t.Fatalf("log checkpoint roundtrip mismatch: %+v", cp)
 	}
-	if b, _ := s2.MonthEgressBytes("w2"); b != 0 {
-		t.Fatalf("negative snapshot values must be dropped")
+	// Corrupt main → .bak fallback (previous generation).
+	if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
+		t.Fatalf("corrupt: %v", err)
 	}
-	snap := s2.MonthEgressSnapshot()
-	if snap["w1"] != 9999 || len(snap) != 2 {
-		t.Fatalf("snapshot: %+v", snap)
+	got := loadBwState(path)
+	if got.Sites["w1"] != 12345 || got.Log == nil || got.Log.Inode != 4242 {
+		t.Fatalf("corrupt main must fall back to .bak, got %+v", got)
+	}
+	// Both gone → fresh state.
+	if got := loadBwState(path + ".absent"); len(got.Sites) != 0 || got.Log != nil {
+		t.Fatalf("missing state must load empty, got %+v", got)
 	}
 }

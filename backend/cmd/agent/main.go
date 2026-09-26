@@ -106,19 +106,25 @@ func serve(cfg agent.Config, log *slog.Logger) error {
 	streamer := agent.NewStreamer(cfg.ControlPlaneURL, cfg.AgentToken, agent.AgentVersion, 0)
 
 	// Bandwidth accounting wiring: the enforce path composes per-uid nft
-	// direct egress with the access-log egress month-to-date, and the
-	// sampler's accumulator survives agent restarts via bw_state.
-	sampler := streamer.TrafficSampler()
-	exec.TrafficMonthEgress = sampler.MonthEgressBytes
-	exec.TrafficSnapshot = sampler.MonthEgressSnapshot
-	if month, sites := agent.LoadBwMonthEgress(); len(sites) > 0 {
-		sampler.RestoreMonthEgress(month, sites)
+	// direct egress with the platform-controlled global nginx accounting
+	// stream (bwtail.go) — the customer-visible access log is no longer a
+	// billing input. The accountant's accumulator and log checkpoint survive
+	// restarts via bw_state; the upgrade from the access-log era seeds the
+	// new accumulator from the persisted value so the billed month carries
+	// over instead of resetting.
+	accountant := agent.NewBWAccountant()
+	if month, sites, cp := agent.LoadBwAccountantState(accountant.StatePath()); len(sites) > 0 || cp != nil {
+		accountant.Restore(month, sites, cp)
 	}
+	exec.HTTPMonthEgress = accountant.MonthEgressBytes
 
 	log.Info("epicpanel agent starting", "control_plane", cfg.ControlPlaneURL,
 		"poll_interval", cfg.PollInterval, "metrics_interval", agent.MetricsIntervalForLog())
 
 	go streamer.Run(ctx)
+	// Bandwidth accounting worker: one global-stream consumer for the whole
+	// node (5-min tally cadence; never real-time).
+	go accountant.Run(ctx)
 
 	// Job loop: claims and executes typed jobs. Kept exactly as before
 	// (KEEP contract) — but now isolated so slow jobs cannot starve

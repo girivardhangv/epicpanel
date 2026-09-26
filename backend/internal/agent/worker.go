@@ -437,6 +437,18 @@ func PollAndExecute(ctx context.Context, c *Client, e *Executor, cfg Config) (bo
 				resultJSON = b
 			}
 		}
+	case "recalc_bandwidth":
+		var p RecalcBandwidthPayload
+		if err := json.Unmarshal(job.Payload, &p); err != nil {
+			execErr = err
+		} else {
+			outcome, err := e.RecalcBandwidth(ctx, p)
+			if err != nil {
+				execErr = err
+			} else if b, err := json.Marshal(outcome); err == nil {
+				resultJSON = b
+			}
+		}
 	default:
 		// Phase 11 backup registry (coordinator-merged dispatch).
 		if fn, ok := BackupOps2[job.Type]; ok {

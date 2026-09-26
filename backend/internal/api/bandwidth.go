@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log/slog"
 	"math"
 	"net/http"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/epicbyte/epicpanel/backend/internal/audit"
 	"github.com/epicbyte/epicpanel/backend/internal/httpapi"
+	"github.com/epicbyte/epicpanel/backend/internal/jobs"
 	"github.com/epicbyte/epicpanel/backend/internal/organizations"
 	"github.com/epicbyte/epicpanel/backend/internal/websites"
 )
@@ -63,6 +66,8 @@ func (s *Server) RegisterBandwidthRoutes(mux *http.ServeMux, resolveOrg func(*ht
 		siteResolved(organizations.RoleBilling, s.getBandwidth))
 	mux.HandleFunc("GET /v1/organizations/{org_id}/websites/{website_id}/bandwidth/history",
 		siteResolved(organizations.RoleBilling, s.getBandwidthHistory))
+	mux.HandleFunc("POST /v1/organizations/{org_id}/websites/{website_id}/bandwidth/recalculate",
+		siteResolved(organizations.RoleAdmin, s.recalculateSiteBandwidth))
 	mux.HandleFunc("GET /v1/organizations/{org_id}/websites/{website_id}/quota",
 		siteResolved(organizations.RoleBilling, s.getSiteQuota))
 	mux.HandleFunc("PATCH /v1/organizations/{org_id}/websites/{website_id}/quota",
@@ -332,4 +337,183 @@ func (s *Server) patchSiteQuota(w http.ResponseWriter, r *http.Request, ws *webs
 		"site_id":   ws.ID,
 		"bandwidth": s.bandwidthQuotaBlockFor(r.Context(), updated),
 	})
+}
+
+// ============================================================================
+// Recalculation / reconciliation — the operational recovery arm. The agent
+// re-scans the raw platform accounting logs for one site + day range; the
+// fanout either reports the raw truth (apply=false: pure reconciliation) or
+// repairs the monthly authority (apply=true), and repair can only RAISE the
+// GREATEST high-water — billed usage never moves backwards. Admin-gated
+// (org admin or platform admin); customers cannot invoke it.
+// ============================================================================
+
+// recalcMirror mirrors the agent's RecalcBandwidthOutcome (the agent package
+// stays out of the control-plane import graph; job results are JSON blobs).
+type recalcMirror struct {
+	WebsiteID      string `json:"website_id"`
+	FromDay        string `json:"from_day"`
+	ToDay          string `json:"to_day"`
+	Days           []recalcMirrorDay `json:"days"`
+	TotalBytes     int64  `json:"total_bytes"`
+	FilesScanned   int    `json:"files_scanned"`
+	RecordsMatched int64  `json:"records_matched"`
+}
+
+type recalcMirrorDay struct {
+	Date          string `json:"date"`
+	RequestBytes  int64  `json:"request_bytes"`
+	ResponseBytes int64  `json:"response_bytes"`
+	TotalBytes    int64  `json:"total_bytes"`
+}
+
+// recalculateSiteBandwidth handles POST .../bandwidth/recalculate
+// {from_day, to_day, apply} — enqueues the recalc_bandwidth agent job and
+// answers 202 with the job id; the fanout applies the report/repair.
+func (s *Server) recalculateSiteBandwidth(w http.ResponseWriter, r *http.Request, ws *websites.Website) {
+	var req struct {
+		FromDay string `json:"from_day"`
+		ToDay   string `json:"to_day"`
+		Apply   bool   `json:"apply"`
+	}
+	if apiErr := httpapi.Read(r, &req); apiErr != nil {
+		httpapi.RespondError(w, apiErr)
+		return
+	}
+	from, err := time.Parse("2006-01-02", req.FromDay)
+	if err != nil {
+		httpapi.RespondError(w, httpapi.ErrValidation("from_day must be YYYY-MM-DD"))
+		return
+	}
+	to, err := time.Parse("2006-01-02", req.ToDay)
+	if err != nil {
+		httpapi.RespondError(w, httpapi.ErrValidation("to_day must be YYYY-MM-DD"))
+		return
+	}
+	if to.Before(from) {
+		httpapi.RespondError(w, httpapi.ErrValidation("to_day before from_day"))
+		return
+	}
+	if to.Sub(from) > 400*24*time.Hour {
+		httpapi.RespondError(w, httpapi.ErrValidation("range must be <= 400 days"))
+		return
+	}
+	payload := map[string]any{
+		"website_id": ws.ID.String(),
+		"from_day":   req.FromDay,
+		"to_day":     req.ToDay,
+		"apply":      req.Apply,
+	}
+	key := fmt.Sprintf("bw_recalc_%s_%s_%t_%s", req.FromDay, req.ToDay, req.Apply, ws.ID)
+	job, err := s.Jobs.EnqueueIdempotent(r.Context(), ws.ServerID, &ws.ID, jobs.TypeRecalcBandwidth, payload, key)
+	if err != nil {
+		httpapi.RespondError(w, httpapi.ErrInternal(err))
+		return
+	}
+	if s.Audit != nil {
+		org := ws.Organization
+		s.Audit.RecordBestEffort(r.Context(), audit.Entry{
+			OrganizationID: &org,
+			ActorType:      audit.ActorUser,
+			Action:         "website.bandwidth_recalc_requested",
+			ResourceType:   "website",
+			ResourceID:     ws.ID.String(),
+			Metadata:       map[string]any{"from_day": req.FromDay, "to_day": req.ToDay, "apply": req.Apply},
+		})
+	}
+	httpapi.WriteJSON(w, http.StatusAccepted, map[string]any{
+		"site_id": ws.ID,
+		"job_id":  job.ID,
+		"status":  job.Status,
+		"apply":   req.Apply,
+		"from_day": req.FromDay,
+		"to_day":   req.ToDay,
+	})
+}
+
+// applyRecalcOutcome consumes a finished recalc_bandwidth job: apply=false
+// is reconciliation only (the raw report lives in the job result); apply=true
+// repairs the monthly authority — every month covered by the range is
+// upserted with GREATEST(existing, recalculated), so an undercounting fix
+// can raise usage but nothing can ever lower the billed period.
+func (s *Server) applyRecalcOutcome(ctx context.Context, job *jobs.Job, result json.RawMessage) {
+	if job.Type != jobs.TypeRecalcBandwidth || job.Status != jobs.StatusSuccess || job.WebsiteID == nil {
+		return
+	}
+	var payload struct {
+		Apply bool `json:"apply"`
+	}
+	_ = json.Unmarshal(job.Payload, &payload)
+	if !payload.Apply {
+		return
+	}
+	var o recalcMirror
+	if err := json.Unmarshal(result, &o); err != nil {
+		slog.Warn("recalc outcome decode failed", "job", job.ID, "err", err)
+		return
+	}
+	ws, err := s.Websites.GetByIDAny(ctx, *job.WebsiteID)
+	if err != nil || ws == nil {
+		return
+	}
+	// Sum the recalculated days into calendar months (UTC) and repair each.
+	perMonth := map[time.Time]float64{}
+	for _, d := range o.Days {
+		day, err := time.Parse("2006-01-02", d.Date)
+		if err != nil {
+			continue
+		}
+		month := time.Date(day.Year(), day.Month(), 1, 0, 0, 0, 0, time.UTC)
+		perMonth[month] += float64(d.TotalBytes) / (1024 * 1024)
+	}
+	repaired := 0
+	for month, usedMB := range perMonth {
+		raised, err := s.repairBandwidthPeriod(ctx, ws, month, usedMB)
+		if err != nil {
+			slog.Warn("bandwidth recalc repair failed", "website", ws.ID, "month", month, "err", err)
+			continue
+		}
+		if raised {
+			repaired++
+		}
+	}
+	if s.Audit != nil {
+		org := ws.Organization
+		s.Audit.RecordBestEffort(ctx, audit.Entry{
+			OrganizationID: &org,
+			ActorType:      audit.ActorSystem,
+			Action:         "website.bandwidth_recalc_applied",
+			ResourceType:   "website",
+			ResourceID:     ws.ID.String(),
+			Metadata: map[string]any{
+				"from_day": o.FromDay, "to_day": o.ToDay,
+				"total_bytes": o.TotalBytes, "months_repaired": repaired,
+				"records_matched": o.RecordsMatched, "files_scanned": o.FilesScanned,
+			},
+		})
+	}
+	slog.Info("bandwidth recalc applied", "website", ws.ID, "months_repaired", repaired)
+}
+
+// repairBandwidthPeriod raises one month's workload_resource_usage row to
+// the recalculated value when it is higher (GREATEST, same monotonic
+// contract as the enforce fanout). Returns whether the row was raised.
+func (s *Server) repairBandwidthPeriod(ctx context.Context, ws *websites.Website, periodStart time.Time, usedMB float64) (bool, error) {
+	limitMB, _, limitErr := s.effectiveBandwidthLimitMB(ctx, ws)
+	if limitErr != nil {
+		limitMB = 0
+	}
+	tag, err := s.Pool.Exec(ctx, `
+		INSERT INTO workload_resource_usage
+			(organization_id, website_id, resource, period_start, used, limit_value, unit, measured_by)
+		VALUES ($1, $2, 'bandwidth', $3, $4, $5, 'MB', 'recalc')
+		ON CONFLICT (website_id, resource, period_start) DO UPDATE SET
+			used = GREATEST(workload_resource_usage.used, EXCLUDED.used),
+			measured_by = EXCLUDED.measured_by,
+			updated_at = now()
+	`, ws.Organization, ws.ID, periodStart, usedMB, limitMB)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
 }

@@ -17,6 +17,7 @@ const (
 	renewalBatch      = 100
 	fastInterval      = 30 * time.Second // leases, statuses, event reaping
 	retentionJobs     = 30 * 24 * time.Hour
+	vhostResyncEvery  = 24 * time.Hour // slow anti-drift sweep; boot-time run covers upgrades
 )
 
 // StartBackground launches the control-plane maintenance loops:
@@ -85,7 +86,39 @@ func (s *Server) StartBackground(ctx context.Context) {
 		s.enqueueScheduledBackups(ctx)
 		s.resyncCrontabs(ctx)
 		s.enqueueEnforceLimits(ctx)
+		s.resyncVhosts(ctx)
 	}()
+	// Slow vhost resync: re-render every ready site's serving config from
+	// desired state (idempotent provision jobs) so platform-wide serving
+	// changes (e.g. the bandwidth accounting stamps) converge even on sites
+	// nothing else ever touches.
+	go func() {
+		ticker := time.NewTicker(vhostResyncEvery)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				s.resyncVhosts(ctx)
+			}
+		}
+	}()
+}
+
+// resyncVhosts re-enqueues the idempotent provision/converge job for every
+// ready site (bounded per server like the other sweeps via job idempotency:
+// one pending provision per site).
+func (s *Server) resyncVhosts(ctx context.Context) {
+	sites, err := s.Websites.ReadyForLimits(ctx, 1000)
+	if err != nil {
+		slog.Warn("vhost resync scan failed", "err", err)
+		return
+	}
+	for i := range sites {
+		ws := &sites[i]
+		s.reconcileWebsiteServing(ctx, ws.ID, ws.Organization, ws.ServerID)
+	}
 }
 
 // reapExpiredLeases requeues jobs whose agent died mid-run and emits events.

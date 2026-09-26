@@ -24,6 +24,12 @@ import (
 // raw features only, never verdicts. Bot scoring lives in the control plane
 // (internal/traffic) so thresholds are tunable without agent updates and
 // every site decision stays auditable panel-side.
+//
+// This sampler is the LIVE/OBSERVABILITY pipeline only (graphs, history
+// buckets, attack detection, ~2s freshness). It is deliberately NOT the
+// billing source: billing-grade HTTP accounting runs through the
+// platform-controlled global accounting log (bwtail.go), which no customer
+// action can influence.
 // ============================================================================
 
 const (
@@ -45,20 +51,6 @@ type TrafficSampler struct {
 	nowFn    func() time.Time
 
 	state map[string]*siteTrafficState
-
-	// monthAcc accumulates per-site access-log egress month-to-date
-	// (UTC). It feeds the bandwidth quota: the web server terminates
-	// ingress at the edge and reverse-proxied response bytes never cross a
-	// per-account nft chain, so the access log is the only per-site source
-	// for the dominant traffic direction. Updated whenever a window
-	// completes; persisted by the enforce path (bw_state.go) and restored
-	// on boot so an agent restart keeps the billed period monotonic.
-	monthAcc map[string]*siteMonthEntry
-}
-
-type siteMonthEntry struct {
-	month string
-	bytes int64
 }
 
 type siteTrafficState struct {
@@ -89,67 +81,6 @@ func NewTrafficSampler() *TrafficSampler {
 		maxPaths: defaultMaxPaths,
 		nowFn:    time.Now,
 		state:    map[string]*siteTrafficState{},
-		monthAcc: map[string]*siteMonthEntry{},
-	}
-}
-
-// addMonthEgress folds a completed window's response bytes into the site's
-// month-to-date accumulator, rolling the entry over at UTC month
-// boundaries. A window that completes just after a boundary is attributed
-// to the new month (completion-time attribution; sub-window error only).
-func (t *TrafficSampler) addMonthEgress(id string, bytes int64) {
-	if bytes <= 0 {
-		return
-	}
-	cur := bwMonth(t.nowFn())
-	e := t.monthAcc[id]
-	if e == nil {
-		e = &siteMonthEntry{month: cur}
-		t.monthAcc[id] = e
-	}
-	if e.month != cur {
-		e.month = cur
-		e.bytes = 0
-	}
-	e.bytes += bytes
-}
-
-// MonthEgressBytes returns the site's access-log egress month-to-date and
-// the month it belongs to ("" when the site has no recorded traffic).
-func (t *TrafficSampler) MonthEgressBytes(id string) (int64, string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	e := t.monthAcc[id]
-	if e == nil {
-		return 0, ""
-	}
-	return e.bytes, e.month
-}
-
-// MonthEgressSnapshot copies the month-to-date map for persistence.
-func (t *TrafficSampler) MonthEgressSnapshot() map[string]int64 {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	out := make(map[string]int64, len(t.monthAcc))
-	for id, e := range t.monthAcc {
-		out[id] = e.bytes
-	}
-	return out
-}
-
-// RestoreMonthEgress seeds the accumulator from a persisted snapshot taken
-// in the same month (bw_state Sites map); anything else is a stale period
-// and starts at zero.
-func (t *TrafficSampler) RestoreMonthEgress(month string, sites map[string]int64) {
-	if month != bwMonth(t.nowFn()) || len(sites) == 0 {
-		return
-	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	for id, bytes := range sites {
-		if bytes > 0 {
-			t.monthAcc[id] = &siteMonthEntry{month: month, bytes: bytes}
-		}
 	}
 }
 
@@ -204,7 +135,6 @@ func (t *TrafficSampler) CollectCompleted() []agentproto.SiteTraffic {
 			agg.WindowS = int(t.window.Seconds())
 			agg.WebsiteID = id
 			completed = append(completed, agg)
-			t.addMonthEgress(id, agg.Bytes)
 			st.everActive = st.agg.Requests > 0
 		}
 		st.opened = now

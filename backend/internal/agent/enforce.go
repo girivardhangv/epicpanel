@@ -169,13 +169,14 @@ func (e *Executor) EnforceLimits(ctx context.Context, p EnforceJobPayload) (*Enf
 
 	// ---- Usage from the SAME layer that just enforced ----
 	out.Usage = e.measureEnforcedUsage(slice, user, p)
-	// Bandwidth period usage = per-uid direct egress (nft counter) + the
-	// access-log egress month-to-date (reverse-proxied responses). Both
-	// sides rotate with the UTC month; the high-water upsert control-plane
-	// side keeps the billed period monotonic across counter resets.
+	// Bandwidth period usage = per-uid direct egress (nft counter) + HTTP
+	// month-to-date from the platform-controlled global accounting log
+	// (bwtail.go; replaces the customer access-log accumulator). Both sides
+	// rotate with the UTC month; the high-water upsert control-plane side
+	// keeps the billed period monotonic across counter resets.
 	periodBytes := rxBytes + txBytes
-	if e.TrafficMonthEgress != nil {
-		if eg, month := e.TrafficMonthEgress(p.WebsiteID); month == bwMonth(e.now()) {
+	if e.HTTPMonthEgress != nil {
+		if eg, month := e.HTTPMonthEgress(p.WebsiteID); month == bwMonth(e.now()) {
 			periodBytes += eg
 		}
 	}
@@ -437,10 +438,10 @@ func nftAvailable() bool {
 // the site's unix uid (meta skuid, loopback excluded): the web server
 // terminates ingress at the edge and reverse-proxied responses leave via
 // the web-server user, so this counter covers the site's DIRECT external
-// egress; the proxied direction is accounted from access-log windows
-// (TrafficSampler month-to-date, composed by EnforceLimits). Rate shaping
-// (throttle) is applied as a meter/rate limit when the payload carries a
-// non-zero budget AND the default policy requests it; default is
+// egress; the proxied direction is accounted from the platform-controlled
+// global nginx accounting log (bwtail.go, composed by EnforceLimits). Rate
+// shaping (throttle) is applied as a meter/rate limit when the payload
+// carries a non-zero budget AND the default policy requests it; default is
 // accounted-only with control-plane suspend on breach (policy.go).
 func (e *Executor) enforceBandwidth(ctx context.Context, p EnforceJobPayload, user string) (MechanismOutcome, int64, int64) {
 	if !nftAvailable() {
@@ -505,23 +506,21 @@ func bwChainNeedsRule(listOut []byte, uid int) bool {
 // recreate = zeroed counters) at UTC month boundaries. The rotation stamp
 // is persisted so periods survive agent restarts; a lost state file
 // rotates deterministically (fresh period), which the control-plane
-// GREATEST high-water keeps monotonic for billing.
+// GREATEST high-water keeps monotonic for billing. Chains are this
+// writer's ONLY field in bw_state.json — the HTTP accumulator and the
+// accounting-log checkpoint belong to the bandwidth accountant (bwtail.go),
+// and both load/mutate/save under bwStateMu.
 func (e *Executor) ensureBwChain(ctx context.Context, chain string, uid int) (string, bool) {
 	run := func(args ...string) ([]byte, bool) {
 		out, err := exec.CommandContext(ctx, args[0], args[1:]...).CombinedOutput()
 		return out, err == nil
 	}
 	cur := bwMonth(e.now())
+	bwStateMu.Lock()
 	st := loadBwState(e.bwStatePath)
+	bwStateMu.Unlock()
 	out, ok := run("nft", "list", "chain", epicTable, chain)
 	if ok && !bwNeedsRotate(st.Chains[chain], cur) && !bwChainNeedsRecreate(out) && !bwChainNeedsRule(out, uid) {
-		if e.TrafficSnapshot != nil {
-			st.Sites = e.TrafficSnapshot()
-		}
-		// Persistence failure must not fail enforcement: worst case the
-		// next run re-rotates (counter restarts; the control-plane
-		// GREATEST high-water keeps the billed period monotonic).
-		_ = st.save(e.bwStatePath)
 		return "", true
 	}
 	// Recreate from scratch — the delete covers rotation and the legacy
@@ -536,9 +535,8 @@ func (e *Executor) ensureBwChain(ctx context.Context, chain string, uid int) (st
 		return fmt.Sprintf("skuid counter rule failed: %s", tail(ruleOut, 200)), false
 	}
 	st.Chains[chain] = cur
-	if e.TrafficSnapshot != nil {
-		st.Sites = e.TrafficSnapshot()
-	}
+	bwStateMu.Lock()
+	defer bwStateMu.Unlock()
 	_ = st.save(e.bwStatePath)
 	return "", true
 }

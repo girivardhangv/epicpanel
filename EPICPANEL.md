@@ -1554,6 +1554,23 @@ At the end of every significant session, update this file with: what was complet
 
 ---
 
+
+Session 2026-09-26 — bandwidth accounting stabilization (worktree
+feature/bw-accounting-stabilize, branched @ 164a434; parallel agent owns
+the main checkout): ADR-064 implemented in branch feature/bw-accounting-
+stabilize (not yet merged at write time). New: internal/agent/bwtail.go +
+recalc.go, migration 0053, docs/bandwidth-accounting.md; modified: bw_state
+(.bak generation + Log checkpoint + mutex), traffic.go (monthAcc removed),
+enforce.go/executor.go (HTTPMonthEgress hook), nginx.go (stamps + global
+conf + logrotate + Ensure ordering), main.go (accountant wiring), api
+(bandwidth.go recalc route + repair fanout, scheduler resyncVhosts,
+phase12/openapi/tokenauth gates). Verified: go build/vet clean; go test
+-p 1 full suite on disposable PG 54329 green; agent bwtail suite covers
+replay/rotation/truncation/restart/rollover; recalc repair GREATEST tested
+at API level. Deploy needs: agent binary upgrade + nginx reload (order in
+docs/bandwidth-accounting.md); billing definition is now request+response
+bytes (was response-only) — document to billing users on release.
+
 ## 26. NEW SESSION PROCEDURE
 
 1. Read `EPICPANEL.md`.
@@ -1864,6 +1881,56 @@ pages — quota surface + live rate + reason-aware banners, refreshed by the
 website.suspended/resumed/terminated bus events (no polling); admin gains
 terminate/purge confirm actions. All new routes in phase12Routes +
 authzmatrix + openapi.json (231 ops) + tokenauth scope map.
+
+
+ADR-064 — Billing-grade bandwidth accounting: global nginx accounting stream
+(2026-09-26). Replaces the CUSTOMER access log as the authoritative HTTP
+billing source (ADR-063's weak point: per-site logs under
+/srv/epicpanel/websites/<id>/logs are customer-visible/deletable); nftables
+direct-egress accounting, the monthly GREATEST authority, quota APIs,
+resume guard, suspension reasons and history are UNCHANGED.
+(1) PLATFORM LOG: /etc/nginx/conf.d/epicpanel-bandwidth.conf (root-owned,
+written by InstallNginx AND every vhost Ensure — the format definition can
+never lag a referencing vhost) defines
+log_format epicpanel_bandwidth '$epicpanel_site_id $time_iso8601
+$request_length $bytes_sent "$http_user_agent"' + http-level access_log to
+/var/log/epicpanel/bandwidth.log (0750 root:adm dir, 0640 root:adm file).
+Every generated server block (plain/secured/redirect/stubs) renders
+set $epicpanel_site_id "<uuid>" + a server-level accounting access_log —
+required because a server-level access_log REPLACES the http-level one.
+logrotate: daily, rotate 14, compress+delaycompress (keeps .1 plain for
+drain), USR1 postrotate. Customers cannot disable any of it: vhosts are
+agent-generated, the rewrite-snippet sanitizer rejects access_log/set of
+unknown vars/$epicpanel_* refs, the log is outside every site tree.
+Customer access-log deletion has ZERO billing effect.
+(2) ONE ACCOUNTANT (internal/agent/bwtail.go, 5-min tally
+EPICPANEL_AGENT_BW_TALLY_INTERVAL + boot pass): streams the global log,
+folds request+response bytes per site (record-time month attribution — no
+September traffic in October; EpicPanel- self-traffic and "-" site ids
+skipped), and persists accumulator + inode+offset checkpoint in ONE atomic
+bw_state.json write (plus .bak generation; single corrupt state cannot
+destroy accounting). Crash before the write = replay with no double count
+(the inflated accumulator never survived); crash after = never re-read.
+Rotation: inode change drains bandwidth.log.1 (then .2) from the stored
+offset before switching; in-place truncation resets to 0 (lost bytes
+logged). First-ever boot seeks to EOF (unknown history is never billed)
+and seeds the accumulator from bw_state's sites map — the upgrade carries
+the billed month over instead of resetting. Reporting stays the existing
+hourly enforce_limits composition (nft rx+tx + HTTP month-to-date) →
+GREATEST upsert: cumulative values, so replay cannot inflate billing.
+(3) RECALC/RECONCILIATION: POST
+/v1/organizations/{org}/websites/{id}/bandwidth/recalculate
+{from_day,to_day,apply} (admin+, audited; migration 0053 job type
+recalc_bandwidth) → agent re-scans all bandwidth.log generations (plain +
+gzip, streamed, 400-day cap) → per-day request/response/total truth.
+apply=false = reconciliation report only; apply=true repairs
+workload_resource_usage per month with GREATEST (repair can raise, never
+lower; daily history buckets untouched). (4) resyncVhosts (control plane,
+boot + daily) re-renders every ready site's vhost so platform-wide serving
+changes converge without per-site events. TrafficSampler is now
+observability-only (live windows/history/attack detection); its monthAcc
+billing machinery is deleted. Phase12Routes + openapi (232 ops) +
+tokenauth scope synced. Deploy/rollback: docs/bandwidth-accounting.md.
 
 Session 2026-09-25 — bandwidth & lifecycle (worktree feature/site-lifecycle-bandwidth,
 branched @ fdab823; parallel session owned the main checkout):

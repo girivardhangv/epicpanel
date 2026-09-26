@@ -1598,6 +1598,36 @@
     "parameters": []
    }
   },
+  "/v1/organizations/{org_id}/websites/{website_id}/bandwidth/recalculate": {
+   "post": {
+    "summary": "Admin-only bandwidth recalculation/reconciliation from the raw platform accounting logs: {from_day, to_day, apply}; apply=true repairs the monthly authority (GREATEST, never lowers) (admin+)",
+    "tags": [
+     "Websites"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
+    "parameters": []
+   }
+  },
   "/v1/organizations/{org_id}/websites/{website_id}/staging": {
    "post": {
     "summary": "Create staging clone (admin+)",

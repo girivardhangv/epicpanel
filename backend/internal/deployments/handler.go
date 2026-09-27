@@ -104,6 +104,7 @@ type DeployPayload struct {
 	RepoURL         string    `json:"repo_url"`
 	Branch          string    `json:"branch"`
 	WebDir          string    `json:"web_dir,omitempty"`
+	AutoBuild       bool      `json:"auto_build,omitempty"`
 	TokenEncrypted  []byte    `json:"token_encrypted,omitempty"`
 	Runtime         string    `json:"runtime,omitempty"`
 	RuntimeVersion  string    `json:"runtime_version,omitempty"`
@@ -158,6 +159,7 @@ func (h *Handler) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 		RepoURL     string  `json:"repo_url"`
 		Branch      string  `json:"branch"`
 		WebDir      *string `json:"web_dir"`
+		AutoBuild   *bool   `json:"auto_build"`
 		DeployToken *string `json:"deploy_token"`
 	}
 	if apiErr := httpapi.Read(r, &req); apiErr != nil {
@@ -195,11 +197,15 @@ func (h *Handler) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		tokenCipher = enc
 	}
-	if err := h.Websites.SetDeployConfig(r.Context(), ws.ID, req.RepoURL, req.Branch, tokenCipher, webDir); err != nil {
+	autoBuild := false
+	if req.AutoBuild != nil {
+		autoBuild = *req.AutoBuild
+	}
+	if err := h.Websites.SetDeployConfig(r.Context(), ws.ID, req.RepoURL, req.Branch, tokenCipher, webDir, autoBuild); err != nil {
 		httpapi.RespondError(w, httpapi.ErrInternal(err))
 		return
 	}
-	h.audit(r, &orgID, "website.deploy_config_updated", "website", ws.ID.String(), map[string]any{"repo_url": req.RepoURL, "branch": req.Branch, "web_dir": webDir})
+	h.audit(r, &orgID, "website.deploy_config_updated", "website", ws.ID.String(), map[string]any{"repo_url": req.RepoURL, "branch": req.Branch, "web_dir": webDir, "auto_build": autoBuild})
 	// Converge the serving config right away — but only when a release
 	// exists: with web_dir set on a never-deployed site the new docroot
 	// would resolve to an empty directory. The first successful deploy
@@ -246,7 +252,7 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 	}
 	payload := DeployPayload{
 		DeploymentID: dep.ID, WebsiteID: ws.ID, RepoURL: ws.DeployRepoURL, Branch: branch,
-		WebDir: ws.DeployWebDir,
+		WebDir: ws.DeployWebDir, AutoBuild: ws.DeployAutoBuild,
 		Runtime: string(ws.Runtime), RuntimeVersion: ws.RuntimeVersion,
 		BuildCommand: ws.AppBuildCommand, UnixUser: ws.UnixUser,
 		StartupCommand: ws.AppStartupCommand, AppPort: ws.AppPort,

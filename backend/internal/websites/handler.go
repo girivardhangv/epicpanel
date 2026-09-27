@@ -1085,6 +1085,7 @@ func (h *Handler) buildDesiredPayload(ctx context.Context, ws *Website, orgID uu
 		BackendPort:    ws.BackendPort,
 		DocrootSuffix:  ws.DocrootSuffix,
 		WebDir:         ws.DeployWebDir,
+		AutoBuild:      ws.DeployAutoBuild,
 		PrimaryDomain:  ws.PrimaryDomain,
 	}
 	// App-platform serving mode: the agent renders a reverse-proxy vhost to

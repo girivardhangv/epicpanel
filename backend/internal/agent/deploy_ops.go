@@ -51,6 +51,11 @@ type DeploySpec struct {
 	// The release must contain it or the deploy fails BEFORE activation —
 	// a typo'd web dir never goes live.
 	WebDir          string
+	// AutoBuild runs the composer/npm build gate before activation. Default
+	// OFF: a git deploy is a plain fetch (clone + activate) — the panel
+	// cannot know what the app needs, so building is the app owner's choice
+	// (this toggle, or composer/artisan via the Commands runner).
+	AutoBuild       bool
 	TokenCipherB64  string
 	Runtime         string
 	RuntimeVersion  string
@@ -129,14 +134,14 @@ func (e *Executor) DeployGit(ctx context.Context, spec DeploySpec) (*DeployOutco
 	}
 	log.stepf("cloned %s @ %s", repoURL, branch)
 
-	// Running-directory gate: the configured web dir must exist in the
-	// release (Laravel => public/). Failing here keeps the live release
-	// untouched and gives an actionable error instead of a broken vhost.
+	// Running-directory check: informational only — a missing dir means the
+	// site will 403 in that folder until the user fixes web_dir; the clone
+	// itself is still delivered (plain-fetch contract).
 	if err := checkReleaseWebDir(releaseDir, spec.WebDir); err != nil {
-		_ = os.RemoveAll(releaseDir)
-		return nil, err
+		log.step(err.Error())
+	} else {
+		log.stepf("running directory %q present in release", strings.Trim(spec.WebDir, "/"))
 	}
-	log.stepf("running directory %q present in release", strings.Trim(spec.WebDir, "/"))
 
 	sha := ""
 	if b, err := os.ReadFile(filepath.Join(releaseDir, ".git", "HEAD")); err == nil {
@@ -159,18 +164,23 @@ func (e *Executor) DeployGit(ctx context.Context, spec DeploySpec) (*DeployOutco
 	// write into the release tree.
 	_ = chownRecursive(releaseDir, uid, gid)
 
-	// Build gate: the release is built (as the site user) BEFORE activation.
-	// A failed build fails the deploy and removes the broken release — the
-	// live release is untouched. PHP: composer install when composer.json
-	// exists. Node: npm ci/install + build. Python: venv + pip. Go: go build.
-	buildLog, buildErr := e.buildRelease(ctx, spec, releaseDir)
-	log.WriteString(buildLog)
-	if buildErr != nil {
-		_ = os.RemoveAll(releaseDir)
-		return nil, fmt.Errorf("release build failed (live release untouched): %w", buildErr)
-	}
-	if buildLog != "" {
-		log.step("build completed")
+	// Build gate — OPT-IN. Default deploy = plain fetch: clone, carry over
+	// durable state, activate. The panel cannot know what the app needs
+	// (composer? npm? nothing?), and a forced build failed deploys for apps
+	// it did not understand. App owners flip auto_build or run
+	// composer/artisan themselves via the Commands runner.
+	if !spec.AutoBuild {
+		log.step("build skipped (auto-build off) — plain fetch & activate")
+	} else {
+		buildLog, buildErr := e.buildRelease(ctx, spec, releaseDir)
+		log.WriteString(buildLog)
+		if buildErr != nil {
+			_ = os.RemoveAll(releaseDir)
+			return nil, fmt.Errorf("release build failed (live release untouched): %w", buildErr)
+		}
+		if buildLog != "" {
+			log.step("build completed")
+		}
 	}
 
 	prevTarget, _ := os.Readlink(publicLink)

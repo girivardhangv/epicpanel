@@ -48,6 +48,7 @@ type Website struct {
 	BackendPort      int        `json:"backend_port"`
 	DocrootSuffix    string     `json:"docroot_suffix"`
 	DeployWebDir     string     `json:"deploy_web_dir"`
+	DeployAutoBuild  bool       `json:"deploy_auto_build"`
 	// App-platform serving mode (node/python/go): nginx proxies to the app
 	// process on AppPort; lifecycle is desired-state driven.
 	AppStartupCommand string     `json:"app_startup_command"`
@@ -105,6 +106,10 @@ type DesiredPayload struct {
 	// (e.g. "public" for Laravel): the agent serves <site>/public/<web_dir>,
 	// which follows the release symlink. Wins over DocrootSuffix when set.
 	WebDir         string            `json:"web_dir,omitempty"`
+	// AutoBuild: run the composer/npm build gate during deploys. Default
+	// OFF — a git deploy is a plain fetch (clone + activate); the panel
+	// cannot know what the app needs.
+	AutoBuild      bool              `json:"auto_build,omitempty"`
 	DocumentRoot   string            `json:"document_root"`
 	PrimaryDomain  string            `json:"primary_domain"`
 	RewriteRules   string            `json:"rewrite_rules,omitempty"`
@@ -149,7 +154,7 @@ type Store struct {
 	Pool *pgxpool.Pool
 }
 
-const cols = `id, organization_id, server_id, name, primary_domain, runtime, runtime_version, web_server, backend_port, docroot_suffix, app_startup_command, app_build_command, app_port, app_desired_state, usage_cpu_percent, usage_memory_bytes, usage_disk_mb, usage_processes, usage_sampled_at, status, unix_user, document_root, error_message, is_staging, staging_of, backup_schedule, backup_retention, deploy_repo_url, deploy_branch, last_backup_at, provisioned_at, created_at, created_by, dynamic_enabled, dynamic_tier, dynamic_state, free_perk, suspension_reason, suspended_at, suspension_metadata, terminated_at, termination_reason, bandwidth_limit_mb, deploy_web_dir`
+const cols = `id, organization_id, server_id, name, primary_domain, runtime, runtime_version, web_server, backend_port, docroot_suffix, app_startup_command, app_build_command, app_port, app_desired_state, usage_cpu_percent, usage_memory_bytes, usage_disk_mb, usage_processes, usage_sampled_at, status, unix_user, document_root, error_message, is_staging, staging_of, backup_schedule, backup_retention, deploy_repo_url, deploy_branch, last_backup_at, provisioned_at, created_at, created_by, dynamic_enabled, dynamic_tier, dynamic_state, free_perk, suspension_reason, suspended_at, suspension_metadata, terminated_at, termination_reason, bandwidth_limit_mb, deploy_web_dir, deploy_auto_build`
 
 func scanRow(row pgx.Row) (*Website, error) {
 	var w Website
@@ -160,7 +165,7 @@ func scanRow(row pgx.Row) (*Website, error) {
 		&w.Status, &w.UnixUser, &w.DocumentRoot, &w.ErrorMessage, &w.IsStaging, &w.StagingOf, &w.BackupSchedule, &w.BackupRetention,
 		&w.DeployRepoURL, &w.DeployBranch, &w.LastBackupAt, &w.ProvisionedAt, &w.CreatedAt, &w.CreatedBy,
 		&w.DynamicEnabled, &w.DynamicTier, &w.DynamicState, &w.FreePerk,
-		&w.SuspensionReason, &w.SuspendedAt, &suspensionMeta, &w.TerminatedAt, &w.TerminationReason, &w.BandwidthLimitMB, &w.DeployWebDir)
+		&w.SuspensionReason, &w.SuspendedAt, &suspensionMeta, &w.TerminatedAt, &w.TerminationReason, &w.BandwidthLimitMB, &w.DeployWebDir, &w.DeployAutoBuild)
 	if err != nil {
 		return nil, err
 	}
@@ -580,10 +585,10 @@ func isUniqueViolation(err error) bool {
 
 // SetDeployConfig stores git deployment configuration; the token is stored
 // encrypted (nil leaves the existing token untouched).
-func (s *Store) SetDeployConfig(ctx context.Context, websiteID uuid.UUID, repoURL, branch string, tokenEncrypted []byte, webDir string) error {
+func (s *Store) SetDeployConfig(ctx context.Context, websiteID uuid.UUID, repoURL, branch string, tokenEncrypted []byte, webDir string, autoBuild bool) error {
 	tag, err := s.Pool.Exec(ctx, `
-		UPDATE websites SET deploy_repo_url = $2, deploy_branch = $3, deploy_web_dir = $4, updated_at = now() WHERE id = $1
-	`, websiteID, repoURL, branch, webDir)
+		UPDATE websites SET deploy_repo_url = $2, deploy_branch = $3, deploy_web_dir = $4, deploy_auto_build = $5, updated_at = now() WHERE id = $1
+	`, websiteID, repoURL, branch, webDir, autoBuild)
 	if err != nil {
 		return err
 	}

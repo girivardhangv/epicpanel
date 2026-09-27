@@ -103,6 +103,7 @@ export interface Website {
   deploy_repo_url?: string
   deploy_branch?: string
   deploy_web_dir?: string
+  deploy_auto_build?: boolean
   app_startup_command?: string
   app_build_command?: string
   app_port?: number
@@ -924,7 +925,7 @@ export const deploymentsApi = {
   list: (orgId: string, websiteId: string) =>
     req<{ deployments: Deployment[] }>('GET', `/v1/organizations/${orgId}/websites/${websiteId}/deployments`),
   /** PATCH .../deployment-config — the token is write-only (leave null to keep the stored one). */
-  saveConfig: (orgId: string, websiteId: string, body: { repo_url: string; branch?: string; web_dir?: string; deploy_token?: string }) =>
+  saveConfig: (orgId: string, websiteId: string, body: { repo_url: string; branch?: string; web_dir?: string; auto_build?: boolean; deploy_token?: string }) =>
     req<null>('PATCH', `/v1/organizations/${orgId}/websites/${websiteId}/deployment-config`, body),
   deploy: (orgId: string, websiteId: string) =>
     req<Deployment>('POST', `/v1/organizations/${orgId}/websites/${websiteId}/deploy`),

@@ -32,6 +32,7 @@ export function SiteDeploysSection({ site, canManage, canRollback, onChanged }: 
     repo_url: site.deploy_repo_url ?? '',
     branch: site.deploy_branch ?? '',
     web_dir: site.deploy_web_dir ?? '',
+    auto_build: site.deploy_auto_build ?? false,
     token: '',
   })
   const [err, setErr] = useState('')
@@ -63,11 +64,12 @@ export function SiteDeploysSection({ site, canManage, canRollback, onChanged }: 
     setErr('')
     setBusy(true)
     try {
-      const body: { repo_url: string; branch?: string; web_dir?: string; deploy_token?: string } = {
+      const body: { repo_url: string; branch?: string; web_dir?: string; auto_build?: boolean; deploy_token?: string } = {
         repo_url: form.repo_url.trim(),
       }
       if (form.branch.trim()) body.branch = form.branch.trim()
       body.web_dir = form.web_dir.trim()
+      body.auto_build = form.auto_build
       if (form.token) body.deploy_token = form.token
       await deploymentsApi.saveConfig(orgId, site.id, body)
       pushToast('success', 'Deployment settings saved.')
@@ -151,6 +153,21 @@ export function SiteDeploysSection({ site, canManage, canRollback, onChanged }: 
             autoComplete="new-password"
           />
         </Field>
+        {canManage && (
+          <div className="sm:col-span-2 flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2 text-[10.5px] font-bold text-[#243047]">
+              <input
+                type="checkbox"
+                checked={form.auto_build}
+                onChange={(e) => setForm({ ...form, auto_build: e.target.checked })}
+              />
+              Run composer/npm build during deploy
+            </label>
+            <span className="text-[9.5px] text-muted">
+              Off (default) = plain fetch: clone &amp; serve, nothing else. Run composer/artisan yourself from Commands.
+            </span>
+          </div>
+        )}
         {canManage && (
           <div className="sm:col-span-2">
             <button className="btn-ghost !min-h-[30px] !px-3 !text-[10.5px]" onClick={save} disabled={busy || !form.repo_url.trim()}>

@@ -153,7 +153,7 @@ func PollAndExecute(ctx context.Context, c *Client, e *Executor, cfg Config) (bo
 		if err := json.Unmarshal(job.Payload, &p); err != nil {
 			execErr = err
 		} else {
-			outcome, err := e.RollbackGit(ctx, p.WebsiteID, p.TargetReleaseDir)
+			outcome, err := e.RollbackGit(ctx, p.WebsiteID, p.TargetReleaseDir, p.TargetCommitSHA)
 			if err != nil {
 				execErr = err
 			} else if b, err := json.Marshal(outcome); err == nil {
@@ -557,11 +557,14 @@ func deploySpecFromPayload(p DeployJobPayload) DeploySpec {
 	}
 }
 
-// RollbackJobPayload matches deployments.RollbackPayload.
+// RollbackJobPayload matches deployments.RollbackPayload. TargetCommitSHA
+// drives workdir-model sites (reset --hard); TargetReleaseDir stays for
+// legacy sites still on the release symlink.
 type RollbackJobPayload struct {
 	DeploymentID     string `json:"deployment_id"`
 	WebsiteID        string `json:"website_id"`
 	TargetReleaseDir string `json:"target_release_dir"`
+	TargetCommitSHA  string `json:"target_commit_sha,omitempty"`
 }
 
 // StagingJobPayload drives clone_staging (source=prod, target=staging) and

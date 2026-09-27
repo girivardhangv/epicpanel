@@ -87,7 +87,7 @@ func (e *Executor) InstallLaravel(ctx context.Context, p LaravelPayload) (*Larav
 		}
 	}
 
-	uid, gid, err := siteOwnerIDs(p.WebsiteID)
+	uid, gid, err := e.siteOwnerIDs(p.WebsiteID)
 	if err != nil {
 		return nil, fmt.Errorf("site owner: %w", err)
 	}

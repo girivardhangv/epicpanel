@@ -213,7 +213,7 @@ func (e *Executor) EnsurePool(ctx context.Context, p PoolSpec) error {
 			if err := os.MkdirAll(dir, 0o750); err != nil {
 				return fmt.Errorf("create %s dir: %w", d, err)
 			}
-			if uid, gid, err := siteOwnerIDs(p.WebsiteID); err == nil {
+			if uid, gid, err := e.siteOwnerIDs(p.WebsiteID); err == nil {
 				_ = chownRecursive(dir, uid, gid)
 			}
 		}

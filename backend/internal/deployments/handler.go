@@ -1,11 +1,12 @@
 package deployments
 
 import (
-	"regexp"
 	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"os"
+	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
@@ -35,6 +36,10 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /v1/organizations/{org_id}/websites/{website_id}/deployment-config", h.requireOrg(organizations.RoleDeveloper, h.UpdateConfig))
 	mux.HandleFunc("POST /v1/organizations/{org_id}/websites/{website_id}/deploy", h.requireOrg(organizations.RoleDeveloper, h.Deploy))
 	mux.HandleFunc("POST /v1/organizations/{org_id}/websites/{website_id}/rollback", h.requireOrg(organizations.RoleAdmin, h.Rollback))
+	// Running-directory dropdown source: the directories inside the site's
+	// workdir (workdir root option first). Same read rank as the deployments
+	// list — it exposes nothing beyond directory names inside the site tree.
+	mux.HandleFunc("GET /v1/organizations/{org_id}/websites/{website_id}/running-dir-options", h.requireOrg(organizations.RoleBilling, h.RunningDirOptions))
 }
 
 func (h *Handler) requireOrg(min organizations.Role, next http.HandlerFunc) http.HandlerFunc {
@@ -122,9 +127,13 @@ type DeployPayload struct {
 }
 
 type RollbackPayload struct {
-	DeploymentID     uuid.UUID `json:"deployment_id"`
-	WebsiteID        uuid.UUID `json:"website_id"`
-	TargetReleaseDir string    `json:"target_release_dir"`
+	DeploymentID uuid.UUID `json:"deployment_id"`
+	WebsiteID    uuid.UUID `json:"website_id"`
+	// TargetCommitSHA drives workdir-model sites (agent resets --hard to
+	// this commit). TargetReleaseDir stays for legacy sites still serving
+	// through the release symlink — the agent picks based on the layout.
+	TargetCommitSHA  string `json:"target_commit_sha,omitempty"`
+	TargetReleaseDir string `json:"target_release_dir"`
 }
 
 func (h *Handler) websiteFromPath(r *http.Request, orgID uuid.UUID) (*websites.Website, *httpapi.APIError) {
@@ -311,13 +320,75 @@ func (h *Handler) Rollback(w http.ResponseWriter, r *http.Request) {
 		httpapi.RespondError(w, httpapi.ErrInternal(err))
 		return
 	}
-	payload := RollbackPayload{DeploymentID: dep.ID, WebsiteID: ws.ID, TargetReleaseDir: last.ReleaseDir}
+	payload := RollbackPayload{DeploymentID: dep.ID, WebsiteID: ws.ID, TargetReleaseDir: last.ReleaseDir, TargetCommitSHA: last.CommitSHA}
 	if _, err := h.Jobs.Enqueue(r.Context(), ws.ServerID, &ws.ID, jobs.TypeRollbackWebsite, payload); err != nil {
 		httpapi.RespondError(w, httpapi.ErrInternal(err))
 		return
 	}
-	h.audit(r, &orgID, "deployment.rollback_triggered", "deployment", dep.ID.String(), map[string]any{"target": last.ReleaseDir})
+	h.audit(r, &orgID, "deployment.rollback_triggered", "deployment", dep.ID.String(), map[string]any{"target": last.ReleaseDir, "sha": last.CommitSHA})
 	httpapi.WriteJSON(w, http.StatusAccepted, dep)
+}
+
+// dirOption is one running-directory dropdown entry.
+type dirOption struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+}
+
+// runningDirOptionsFor lists the dropdown entries for a site tree base:
+// the workdir's directories (repo root option first), else the legacy
+// public dir's subdirs, else common framework presets.
+func runningDirOptionsFor(base string) ([]dirOption, string) {
+	options := []dirOption{{Value: "", Label: "workdir (repo root)"}}
+	source := "presets"
+	var entries []os.DirEntry
+	if e, err := os.ReadDir(base + "/workdir"); err == nil {
+		source = "workdir"
+		entries = e
+	} else if e, errPub := os.ReadDir(base + "/public"); errPub == nil {
+		// Legacy site mid-migration: its public tree mirrors the repo.
+		source = "workdir"
+		entries = e
+	}
+	seen := map[string]bool{"": true}
+	if source != "presets" {
+		for _, en := range entries {
+			if !en.IsDir() || strings.HasPrefix(en.Name(), ".") {
+				continue
+			}
+			if len(options) >= 100 {
+				break
+			}
+			if seen[en.Name()] {
+				continue
+			}
+			seen[en.Name()] = true
+			options = append(options, dirOption{Value: en.Name(), Label: en.Name()})
+		}
+	} else {
+		for _, name := range []string{"public", "web", "dist", "build", "out", "html"} {
+			options = append(options, dirOption{Value: name, Label: name})
+		}
+	}
+	return options, source
+}
+
+// RunningDirOptions serves the dropdown: exact listing when the site tree
+// is listable (control plane and agent are co-located — agent ops are local
+// FS operations), presets otherwise.
+func (h *Handler) RunningDirOptions(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := OrgIDFromRequest(r)
+	if !ok {
+		httpapi.RespondError(w, httpapi.ErrInternal(errOrgContext))
+		return
+	}
+	ws, apiErr := h.websiteFromPath(r, orgID)
+	if apiErr != nil {
+		httpapi.RespondError(w, apiErr)
+		return
+	}
+	options, source := runningDirOptionsFor("/srv/epicpanel/websites/" + ws.ID.String())
+	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"options": options, "source": source})
 }
 
 // GET .../deployments

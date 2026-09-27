@@ -14,9 +14,10 @@ import (
 // customer route is org-scoped.
 func TestProbeTableIntegrity(t *testing.T) {
 	classes := map[string]bool{"public": true, "customer": true, "admin": true, "agent": true}
-	// Real role tiers (organizations.RoleRank): any = rank >= 1, developer
-	// = rank >= 2, admin = organization admin (rank 4).
-	roles := map[string]bool{"": true, "any": true, "developer": true, "admin": true}
+	// Real role tiers (organizations.RoleRank): billing = rank >= 1, any =
+	// lowest member rank, developer = rank >= 2, admin = organization admin
+	// (rank 4).
+	roles := map[string]bool{"": true, "any": true, "billing": true, "developer": true, "admin": true}
 	for _, p := range probeTable {
 		if !classes[p.Class] {
 			t.Errorf("%s %s: unknown class %q", p.Method, p.Path, p.Class)

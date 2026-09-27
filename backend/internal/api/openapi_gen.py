@@ -143,9 +143,10 @@ R("get", "/v1/organizations/{org_id}/databases/{db_id}/pma-sso", "phpMyAdmin SSO
 # ------------------------------------------------------------- deployments -
 t = "Deployments"
 R("get", "/v1/organizations/{org_id}/websites/{website_id}/deployments", "Deployment history (billing+)", t, x_scope="deployments:read")
-R("patch", "/v1/organizations/{org_id}/websites/{website_id}/deployment-config", "Set repo/branch/token/web_dir (developer+). deploy_token enables PRIVATE repo fetch (encrypted at rest, injected agent-side, never returned); web_dir is the repo-relative running directory (e.g. public for Laravel) served through the release symlink", t, x_scope="deployments:write")
+R("patch", "/v1/organizations/{org_id}/websites/{website_id}/deployment-config", "Set repo/branch/token/web_dir (developer+). deploy_token enables PRIVATE repo fetch (encrypted at rest, injected agent-side, never returned); web_dir is the repo-relative running directory (e.g. public for Laravel) inside the site workdir (<site>/workdir/<web_dir>); deploys update the workdir in place (git fetch + reset)", t, x_scope="deployments:write")
 R("post", "/v1/organizations/{org_id}/websites/{website_id}/deploy", "Trigger deploy -> job", t, x_scope="deployments:write")
-R("post", "/v1/organizations/{org_id}/websites/{website_id}/rollback", "Rollback to last release (admin+)", t, x_scope="deployments:write")
+R("post", "/v1/organizations/{org_id}/websites/{website_id}/rollback", "Rollback to the last successful deployment (admin+): workdir sites reset --hard to that commit, legacy release-symlink sites re-point the symlink", t, x_scope="deployments:write")
+R("get", "/v1/organizations/{org_id}/websites/{website_id}/running-dir-options", "Running-directory dropdown options: directories inside the site workdir (billing+)", t, x_scope="deployments:read")
 
 # ----------------------------------------------------------------- backups -
 t = "Backups"

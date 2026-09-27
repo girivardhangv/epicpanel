@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/google/uuid"
 )
@@ -17,10 +16,10 @@ type CloneOutcome struct {
 	Databases   []string `json:"databases"`
 }
 
-// CloneStaging copies the production site's public content (resolving the
-// current release) into the staging tree, then clones each attached database
-// prod_db -> staging_db via the engine's root socket (credentials never leave
-// the box).
+// CloneStaging copies the production site's content (workdir — or the
+// legacy public release for not-yet-migrated sites) into the staging tree,
+// then clones each attached database prod_db -> staging_db via the engine's
+// root socket (credentials never leave the box).
 func (e *Executor) CloneStaging(ctx context.Context, prodWebsiteID, stagingWebsiteID string, databases []DBClone) (*CloneOutcome, error) {
 	if err := uuidParseID(prodWebsiteID); err != nil {
 		return nil, fmt.Errorf("invalid production website id")
@@ -29,31 +28,25 @@ func (e *Executor) CloneStaging(ctx context.Context, prodWebsiteID, stagingWebsi
 		return nil, fmt.Errorf("invalid staging website id")
 	}
 
-	prodPublic := filepath.Join("/srv/epicpanel/websites", prodWebsiteID, "public")
+	src := e.currentContentDir(prodWebsiteID)
 	stagingBase := filepath.Join("/srv/epicpanel/websites", stagingWebsiteID)
-	stagingPublic := filepath.Join(stagingBase, "public")
-
-	// Resolve the current release (public may be a symlink into releases).
-	src := prodPublic
-	if link, err := os.Readlink(prodPublic); err == nil {
-		src = link
-	}
+	stagingWorkdir := e.siteWorkdir(stagingWebsiteID)
 	if _, err := os.Stat(src); err != nil {
 		return nil, fmt.Errorf("production content missing: %w", err)
 	}
 
-	if err := os.RemoveAll(stagingPublic); err != nil {
+	if err := os.RemoveAll(stagingWorkdir); err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(stagingPublic, 0o755); err != nil {
+	if err := os.MkdirAll(stagingWorkdir, 0o755); err != nil {
 		return nil, err
 	}
-	if err := copyTree(src, stagingPublic); err != nil {
+	if err := copyTree(src, stagingWorkdir); err != nil {
 		return nil, fmt.Errorf("copy files: %w", err)
 	}
 
 	// Staging tree must be owned by the staging site's user.
-	if uid, gid, err := siteOwnerIDs(stagingWebsiteID); err == nil {
+	if uid, gid, err := e.siteOwnerIDs(stagingWebsiteID); err == nil {
 		_ = chownRecursive(stagingBase, uid, gid)
 	}
 
@@ -112,9 +105,10 @@ func (e *Executor) CloneStaging(ctx context.Context, prodWebsiteID, stagingWebsi
 	return &CloneOutcome{FilesCopied: true, Databases: cloned}, nil
 }
 
-// PromoteStaging copies staging content back onto production (files via the
-// release mechanism: creates a new release from staging public content) and
-// restores staging databases over production ones.
+// PromoteStaging copies staging content back onto production (in-place
+// swap of the prod workdir — the git pointer file survives so the deploy
+// history/rollback keep working) and restores staging databases over
+// production ones.
 func (e *Executor) PromoteStaging(ctx context.Context, stagingWebsiteID, prodWebsiteID string, databases []DBClone) (*CloneOutcome, error) {
 	if err := uuidParseID(stagingWebsiteID); err != nil {
 		return nil, fmt.Errorf("invalid staging website id")
@@ -123,41 +117,34 @@ func (e *Executor) PromoteStaging(ctx context.Context, stagingWebsiteID, prodWeb
 		return nil, fmt.Errorf("invalid production website id")
 	}
 
-	stagingPublic := filepath.Join("/srv/epicpanel/websites", stagingWebsiteID, "public")
-	src := stagingPublic
-	if link, err := os.Readlink(stagingPublic); err == nil {
-		src = link
-	}
+	src := e.currentContentDir(stagingWebsiteID)
 	if _, err := os.Stat(src); err != nil {
 		return nil, fmt.Errorf("staging content missing: %w", err)
 	}
 
-	// New production release from staging content (atomic switch + rollbackable).
-	releasesDir := siteReleasesDir(prodWebsiteID)
-	if err := os.MkdirAll(releasesDir, 0o755); err != nil {
+	// In-place promotion: replace the prod workdir content with the staging
+	// tree, preserving workdir/.git (the --separate-git-dir pointer — the
+	// git database itself lives at <prod-site>/.git and is untouched).
+	workdir := e.siteWorkdir(prodWebsiteID)
+	if err := os.MkdirAll(workdir, 0o755); err != nil {
 		return nil, err
 	}
-	releaseID, err := randomURLSafe(6)
+	entries, err := os.ReadDir(workdir)
 	if err != nil {
 		return nil, err
 	}
-	releaseDir := filepath.Join(releasesDir, time.Now().UTC().Format("20060102-150405")+"-promote-"+releaseID)
-	if err := copyTree(src, releaseDir); err != nil {
+	for _, en := range entries {
+		if en.Name() == ".git" {
+			continue
+		}
+		_ = os.RemoveAll(filepath.Join(workdir, en.Name()))
+	}
+	if err := copyTree(src, workdir); err != nil {
 		return nil, err
 	}
-	if uid, gid, err := siteOwnerIDs(prodWebsiteID); err == nil {
-		_ = chownRecursive(releaseDir, uid, gid)
+	if uid, gid, err := e.siteOwnerIDs(prodWebsiteID); err == nil {
+		_ = chownRecursive(workdir, uid, gid)
 	}
-	publicLink := filepath.Join("/srv/epicpanel/websites", prodWebsiteID, "public")
-	tmpLink := publicLink + ".new"
-	_ = os.Remove(tmpLink)
-	if err := os.Symlink(releaseDir, tmpLink); err != nil {
-		return nil, err
-	}
-	if err := os.Rename(tmpLink, publicLink); err != nil {
-		return nil, err
-	}
-	e.pruneReleases(releasesDir, 5)
 
 	var promoted []string
 	for _, db := range databases {

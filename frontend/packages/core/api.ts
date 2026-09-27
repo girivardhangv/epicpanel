@@ -931,6 +931,9 @@ export const deploymentsApi = {
     req<Deployment>('POST', `/v1/organizations/${orgId}/websites/${websiteId}/deploy`),
   rollback: (orgId: string, websiteId: string) =>
     req<Deployment>('POST', `/v1/organizations/${orgId}/websites/${websiteId}/rollback`),
+  /** GET .../running-dir-options — directories inside the site workdir for the running-directory dropdown. */
+  runningDirOptions: (orgId: string, websiteId: string) =>
+    req<{ options: { value: string; label: string }[]; source: 'workdir' | 'presets' }>('GET', `/v1/organizations/${orgId}/websites/${websiteId}/running-dir-options`),
 }
 
 export const ftpApi = {

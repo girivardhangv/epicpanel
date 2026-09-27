@@ -2924,7 +2924,7 @@
   },
   "/v1/organizations/{org_id}/websites/{website_id}/deployment-config": {
    "patch": {
-    "summary": "Set repo/branch/token/web_dir (developer+). deploy_token enables PRIVATE repo fetch (encrypted at rest, injected agent-side, never returned); web_dir is the repo-relative running directory (e.g. public for Laravel) served through the release symlink",
+    "summary": "Set repo/branch/token/web_dir (developer+). deploy_token enables PRIVATE repo fetch (encrypted at rest, injected agent-side, never returned); web_dir is the repo-relative running directory (e.g. public for Laravel) inside the site workdir (<site>/workdir/<web_dir>); deploys update the workdir in place (git fetch + reset)",
     "tags": [
      "Deployments"
     ],
@@ -2984,7 +2984,7 @@
   },
   "/v1/organizations/{org_id}/websites/{website_id}/rollback": {
    "post": {
-    "summary": "Rollback to last release (admin+)",
+    "summary": "Rollback to the last successful deployment (admin+): workdir sites reset --hard to that commit, legacy release-symlink sites re-point the symlink",
     "tags": [
      "Deployments"
     ],
@@ -3009,6 +3009,36 @@
      }
     },
     "x_scope": "deployments:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/running-dir-options": {
+   "get": {
+    "summary": "Running-directory dropdown options: directories inside the site workdir (billing+)",
+    "tags": [
+     "Deployments"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "deployments:read",
     "parameters": []
    }
   },

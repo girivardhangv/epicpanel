@@ -8,9 +8,10 @@ import { GitBranch, GitCommitHorizontal, Rocket, RotateCcw, Save } from 'lucide-
 
 // ============================================================================
 // Git Deployments section for the site page: repo/branch config, the
-// RUNNING DIRECTORY (web_dir — the directory inside the release the site
-// serves from, e.g. "public" for Laravel), the write-only deploy token for
-// private repos, deploy/rollback actions and the deployment history.
+// RUNNING DIRECTORY (web_dir — the directory inside the site's workdir the
+// site serves from, e.g. "public" for Laravel, picked from a dropdown of
+// the workdir's actual folders), the write-only deploy token for private
+// repos, deploy/rollback actions and the deployment history.
 // ============================================================================
 
 const depStatusClass: Record<string, string> = {
@@ -38,10 +39,15 @@ export function SiteDeploysSection({ site, canManage, canRollback, onChanged }: 
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   const [deploying, setDeploying] = useState(false)
+  // Running-directory dropdown source: the actual directories inside the
+  // site's workdir (null = endpoint unavailable → free-text fallback).
+  const [dirOptions, setDirOptions] = useState<{ value: string; label: string }[] | null>(null)
   const pollRef = useRef<number | null>(null)
 
   const loadDeps = useCallback(() => {
     deploymentsApi.list(orgId, site.id).then((r) => setDeps(r.deployments ?? [])).catch(() => setDeps([]))
+    // Refresh the dropdown too — deploys change the workdir's contents.
+    deploymentsApi.runningDirOptions(orgId, site.id).then((r) => setDirOptions(r.options ?? [])).catch(() => setDirOptions(null))
   }, [orgId, site.id])
 
   useEffect(() => {
@@ -87,7 +93,7 @@ export function SiteDeploysSection({ site, canManage, canRollback, onChanged }: 
     setDeploying(true)
     try {
       await deploymentsApi.deploy(orgId, site.id)
-      pushToast('success', 'Deploy queued — building the release now.')
+      pushToast('success', 'Deploy queued — updating workdir now.')
       loadDeps()
       pollBurst()
     } catch (ex: any) {
@@ -138,12 +144,26 @@ export function SiteDeploysSection({ site, canManage, canRollback, onChanged }: 
             placeholder="main"
           />
         </Field>
-        <Field label="Running directory" hint="Inside the release — 'public' for Laravel, empty = repo root">
-          <input
-            className="input" value={form.web_dir} disabled={!canManage}
-            onChange={(e) => setForm({ ...form, web_dir: e.target.value })}
-            placeholder="public"
-          />
+        <Field label="Running directory" hint="Inside workdir — 'public' for Laravel; repo root = workdir itself">
+          {dirOptions ? (
+            <select
+              className="input" value={form.web_dir} disabled={!canManage}
+              onChange={(e) => setForm({ ...form, web_dir: e.target.value })}
+            >
+              {(dirOptions.some((o) => o.value === form.web_dir) || !form.web_dir
+                ? dirOptions
+                : [{ value: form.web_dir, label: form.web_dir }, ...dirOptions]
+              ).map((o) => (
+                <option key={o.value || '__root'} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          ) : (
+            <input
+              className="input" value={form.web_dir} disabled={!canManage}
+              onChange={(e) => setForm({ ...form, web_dir: e.target.value })}
+              placeholder="public"
+            />
+          )}
         </Field>
         <Field label="Deploy token" hint="Private repos only — write-only, leave blank to keep the saved one">
           <input
@@ -173,9 +193,9 @@ export function SiteDeploysSection({ site, canManage, canRollback, onChanged }: 
             <button className="btn-ghost !min-h-[30px] !px-3 !text-[10.5px]" onClick={save} disabled={busy || !form.repo_url.trim()}>
               {busy ? (<><Spinner size={12} /> Saving…</>) : (<><Save size={12} /> Save settings</>)}
             </button>
-            {configured && form.web_dir && (
+            {configured && (
               <span className="ml-3 align-middle text-[9.5px] text-muted">
-                Site will serve from the release's <span className="font-mono">/{form.web_dir}</span> — a deploy fails early if that folder is missing. Takes effect on your next deploy.
+                Site serves from <span className="font-mono">workdir/{form.web_dir || '(repo root)'}</span> — a deploy reports early if that folder is missing from the repo. Takes effect on your next deploy.
               </span>
             )}
           </div>

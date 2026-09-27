@@ -20,7 +20,7 @@ func (e *Executor) SyncSSHKeys(ctx context.Context, websiteID string, publicKeys
 	if err != nil {
 		return fmt.Errorf("site user: %w", err)
 	}
-	uid, _, err := siteOwnerIDs(websiteID)
+	uid, _, err := e.siteOwnerIDs(websiteID)
 	if err != nil {
 		return err
 	}

@@ -138,6 +138,7 @@ var phase12Routes = []string{
 	"GET /v1/organizations/{org_id}/websites/{website_id}/config",
 	"GET /v1/organizations/{org_id}/websites/{website_id}/crons",
 	"GET /v1/organizations/{org_id}/websites/{website_id}/deployments",
+	"GET /v1/organizations/{org_id}/websites/{website_id}/running-dir-options",
 	"GET /v1/organizations/{org_id}/websites/{website_id}/dns-zone",
 	"GET /v1/organizations/{org_id}/websites/{website_id}/domains",
 	"GET /v1/organizations/{org_id}/websites/{website_id}/dynamic",

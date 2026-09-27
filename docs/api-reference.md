@@ -172,10 +172,16 @@ curl $H -X PATCH $P/organizations/$ORG/websites/$SITE/deployment-config \
 Private repos (GitHub/GitLab): set deploy_token to a personal access token
 with contents-read scope — it is encrypted at rest, injected into the clone
 URL agent-side only, and never returned by any API. Laravel-style apps:
-web_dir is the running directory INSIDE the release ("public" for Laravel,
-"web" for legacy Symfony, "" = release root); the vhost docroot resolves
-through the release symlink, so deploys keep swapping atomically. A deploy
-fails before activation if web_dir does not exist in the release.
+web_dir is the running directory INSIDE the site workdir ("public" for
+Laravel, "web" for legacy Symfony, "" = workdir root); the vhost docroot
+resolves as <site>/workdir/<web_dir> and deploys update the workdir IN
+PLACE (git fetch + reset --hard, untracked durable files like .env,
+storage/, uploads/ survive). A deploy reports early if web_dir does not
+exist in the fetched tree. The running directory is picked from a dropdown
+of the workdir's actual directories:
+curl $H $P/organizations/$ORG/websites/$SITE/running-dir-options
+Rollback resets --hard to the last successful deployment's commit (legacy
+release-symlink sites still re-point the symlink).
 curl $H -X POST $P/organizations/$ORG/websites/$SITE/deploy
 curl $H -X POST $P/organizations/$ORG/websites/$SITE/crons -d '{"schedule":"*/15 * * * *","command":"php cron.php"}'
 curl $H -X POST $P/organizations/$ORG/websites/$SITE/ftp-accounts -d '{"protocol":"sftp","label":"deployer","password":"...","home_subdir":"public"}'

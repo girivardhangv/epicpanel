@@ -113,7 +113,7 @@ func (e *Executor) DeployApp(ctx context.Context, p AppSpec) (*AppOutcome, error
 	if err := p.decodeEnv(); err != nil {
 		return nil, err
 	}
-	uid, gid, err := siteOwnerIDs(p.WebsiteID)
+	uid, gid, err := e.siteOwnerIDs(p.WebsiteID)
 	if err != nil {
 		return nil, fmt.Errorf("site owner: %w", err)
 	}
@@ -186,7 +186,7 @@ func nodeRuntimeBinDir(version string) string {
 }
 
 func (e *Executor) deployNodeApp(ctx context.Context, p AppSpec, appRoot string, log *strings.Builder) error {
-	uid, gid, err := siteOwnerIDs(p.WebsiteID)
+	uid, gid, err := e.siteOwnerIDs(p.WebsiteID)
 	if err != nil {
 		return err
 	}
@@ -221,7 +221,7 @@ func (e *Executor) deployNodeApp(ctx context.Context, p AppSpec, appRoot string,
 }
 
 func (e *Executor) deployPythonApp(ctx context.Context, p AppSpec, appRoot string, log *strings.Builder) error {
-	uid, gid, err := siteOwnerIDs(p.WebsiteID)
+	uid, gid, err := e.siteOwnerIDs(p.WebsiteID)
 	if err != nil {
 		return err
 	}
@@ -248,7 +248,7 @@ func (e *Executor) deployPythonApp(ctx context.Context, p AppSpec, appRoot strin
 }
 
 func (e *Executor) deployGoApp(ctx context.Context, p AppSpec, appRoot string, log *strings.Builder) error {
-	uid, gid, err := siteOwnerIDs(p.WebsiteID)
+	uid, gid, err := e.siteOwnerIDs(p.WebsiteID)
 	if err != nil {
 		return err
 	}
@@ -301,7 +301,7 @@ func (e *Executor) StartApp(ctx context.Context, p AppSpec) (*AppOutcome, error)
 		}
 		p.InternalPort = port
 	}
-	uid, gid, err := siteOwnerIDs(p.WebsiteID)
+	uid, gid, err := e.siteOwnerIDs(p.WebsiteID)
 	if err != nil {
 		return nil, fmt.Errorf("site owner: %w", err)
 	}

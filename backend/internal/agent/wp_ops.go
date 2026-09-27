@@ -89,7 +89,7 @@ func (e *Executor) InstallWordPress(ctx context.Context, p WPPayload) (*WPOutcom
 		_ = os.Chmod(wpcli, 0o755)
 	}
 
-	uid, gid, err := siteOwnerIDs(p.WebsiteID)
+	uid, gid, err := e.siteOwnerIDs(p.WebsiteID)
 	if err != nil {
 		return nil, fmt.Errorf("site owner: %w", err)
 	}

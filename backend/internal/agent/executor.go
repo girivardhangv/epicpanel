@@ -107,17 +107,18 @@ func isAppRuntime(rt string) bool {
 	return false
 }
 
-// effectiveDocroot resolves the serving directory: siteBase/public, or
+// effectiveDocroot resolves the serving directory: siteBase/workdir, or
 // siteBase/<suffix> when a validated override is set. The suffix is
 // re-validated here (defense in depth) and its directory is created when
 // missing so framework layouts (e.g. Laravel "public") serve cleanly.
 // effectiveDocroot resolves the serving docroot for a suffix relative to the
 // site tree. materialize=false (deploy-managed sites: the running directory
-// comes from the first cloned release) only computes the PATH — creating the
-// directory and dropping a placeholder index into it would manufacture the
-// "empty folder with a default index" the user then rightly asks about.
+// materializes with the first cloned release) only computes the PATH —
+// creating the directory and dropping a placeholder index into it would
+// manufacture the "empty folder with a default index" the user then rightly
+// asks about.
 func effectiveDocroot(siteBase, suffix string, materialize bool) (string, error) {
-	docRoot := filepath.Join(siteBase, "public")
+	docRoot := filepath.Join(siteBase, "workdir")
 	if strings.TrimSpace(suffix) == "" {
 		return docRoot, nil
 	}
@@ -154,6 +155,86 @@ func effectiveDocroot(siteBase, suffix string, materialize bool) (string, error)
 	return effective, nil
 }
 
+// migrateLegacySiteLayout converts pre-workdir site trees to the in-place
+// workdir model, before the docroot resolves and the vhost re-renders:
+//   - public/ is a real directory (manual/static site): RENAME to workdir —
+//     atomic, instant, nothing copied.
+//   - public is a live release symlink (legacy git site): SEED workdir from
+//     the release content (copy) so this provision's vhost re-render keeps
+//     serving identical files with zero gap; the legacy link + releases are
+//     cleaned up below once the vhost points at the workdir.
+//   - public is a DANGLING symlink (its release was pruned/removed): drop
+//     the link — this is the exact state that bricked provisions with
+//     `mkdir <site>/public: file exists` (MkdirAll hits EEXIST on a dead
+//     link); the site then starts from a clean workdir placeholder.
+//
+// Idempotent: a site already on workdir is left untouched.
+func migrateLegacySiteLayout(siteBase string) {
+	workdir := filepath.Join(siteBase, "workdir")
+	if fi, err := os.Lstat(workdir); err == nil {
+		if fi.IsDir() && fi.Mode()&os.ModeSymlink == 0 {
+			return // already migrated
+		}
+		// workdir exists but is not a real dir (stray link/file): clear it.
+		_ = os.RemoveAll(workdir)
+	}
+	public := filepath.Join(siteBase, "public")
+	pi, err := os.Lstat(public)
+	if err != nil {
+		return // no legacy layout — fresh site
+	}
+	if pi.Mode()&os.ModeSymlink != 0 {
+		target, linkErr := os.Readlink(public)
+		if linkErr != nil {
+			return
+		}
+		if _, statErr := os.Stat(target); statErr != nil {
+			slog.Warn("removed dangling public symlink during workdir migration", "site", siteBase, "target", target)
+			_ = os.Remove(public)
+			return
+		}
+		if err := os.MkdirAll(workdir, 0o750); err != nil {
+			return
+		}
+		if err := copyTree(target, workdir); err != nil {
+			slog.Warn("workdir seed from live release failed; legacy layout kept", "site", siteBase, "err", err)
+			_ = os.RemoveAll(workdir)
+			return
+		}
+		return
+	}
+	if pi.IsDir() {
+		if err := os.Rename(public, workdir); err != nil {
+			slog.Warn("public → workdir rename failed", "site", siteBase, "err", err)
+		}
+	}
+}
+
+// cleanupLegacyReleaseLayout removes the retired release-symlink scaffolding
+// (public link/dir + releases history) once the workdir model fully owns the
+// site: workdir has content AND a git work tree (the site can roll back by
+// commit — no release dirs needed anymore), and the vhost has JUST been
+// re-rendered to point at the workdir. Runs on every provision — no-op for
+// sites born on workdir or still awaiting their first in-place deploy.
+func (e *Executor) cleanupLegacyReleaseLayout(siteBase string) {
+	workdir := filepath.Join(siteBase, "workdir")
+	entries, err := os.ReadDir(workdir)
+	if err != nil || len(entries) == 0 {
+		return // fresh/never-deployed site — nothing to retire
+	}
+	if !e.hasWorkdirGit(filepath.Base(siteBase)) {
+		return // still rollback-able via the legacy symlink — keep it until then
+	}
+	public := filepath.Join(siteBase, "public")
+	if pi, err := os.Lstat(public); err == nil {
+		if pi.Mode()&os.ModeSymlink != 0 || pi.IsDir() {
+			_ = os.RemoveAll(public)
+		}
+	}
+	_ = os.RemoveAll(filepath.Join(siteBase, "releases"))
+	_ = os.RemoveAll("/srv/epicpanel/releases/" + filepath.Base(siteBase))
+}
+
 // DomainPayload carries per-domain serving config (aliases + ssl).
 type DomainPayload struct {
 	Domain   string `json:"domain"`
@@ -185,20 +266,26 @@ func (e *Executor) ProvisionWebsite(ctx context.Context, payload ProvisionPayloa
 	}
 
 	siteBase := filepath.Join(e.docRootBase, payload.WebsiteID)
-	// Standard layout first (public/, logs/, tmp/ always exist); the serving
+	// Migrate legacy layouts FIRST: public/ real dir → workdir (rename),
+	// public release-symlink → workdir seeded from the live release, a
+	// DANGLING public symlink (pruned release — bricked provisions with
+	// "mkdir ...: file exists") → dropped. The vhost re-render below then
+	// points at a populated workdir with zero serving gap.
+	migrateLegacySiteLayout(siteBase)
+	// Standard layout first (workdir/, logs/, tmp/ always exist); the serving
 	// docroot then resolves to the override when set (e.g. Laravel public/).
-	// WebDir (git-deploy running directory) is relative to the WEB ROOT:
-	// <site>/public/<web_dir> follows the release symlink, so deploys keep
-	// swapping atomically underneath the rendered docroot path.
-	stdPublic := filepath.Join(siteBase, "public")
+	// WebDir (git-deploy running directory) is relative to the WORKDIR:
+	// <site>/workdir/<web_dir> — the repo work tree holds all repo files and
+	// folders directly, and the running directory picks which one serves.
+	stdWorkdir := filepath.Join(siteBase, "workdir")
 	docSuffix := payload.DocrootSuffix
 	materialize := true
 	if webDir := strings.Trim(payload.WebDir, "/"); webDir != "" {
 		// Deploy-managed site: the running directory materializes with the
 		// first successful release (cloned files land there); before that the
-		// site keeps its standard public/ placeholder, NOT an empty composed
+		// site keeps its standard workdir placeholder, NOT an empty composed
 		// folder with a manufactured default index.
-		docSuffix = "public/" + webDir
+		docSuffix = "workdir/" + webDir
 		materialize = false
 	}
 	docRoot, err2 := effectiveDocroot(siteBase, docSuffix, materialize)
@@ -211,7 +298,7 @@ func (e *Executor) ProvisionWebsite(ctx context.Context, payload ProvisionPayloa
 	if err := os.MkdirAll(siteBase, 0o750); err != nil {
 		return nil, fmt.Errorf("create site base: %w", err)
 	}
-	for _, dir := range []string{stdPublic, logDir, tmpDir} {
+	for _, dir := range []string{stdWorkdir, logDir, tmpDir} {
 		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return nil, fmt.Errorf("create dir %s: %w", dir, err)
 		}
@@ -398,6 +485,10 @@ func (e *Executor) ProvisionWebsite(ctx context.Context, payload ProvisionPayloa
 		e.RemoveOLSSite(ctx, payload.WebsiteID)
 	}
 
+	// The workdir model now owns serving (vhost re-rendered above): retire
+	// the legacy public link + releases history. No-op for fresh sites.
+	e.cleanupLegacyReleaseLayout(siteBase)
+
 	slog.Info("website provisioned", "website", payload.WebsiteID, "user", payload.UnixUser, "uid", uid, "docroot", docRoot, "runtime", payload.Runtime, "runtime_version", payload.RuntimeVersion, "web_servers", payload.WebServer)
 	return &ProvisionOutcome{UnixUser: payload.UnixUser, DocumentRoot: docRoot}, nil
 }
@@ -518,11 +609,11 @@ func grantWebServerAccess(siteBase, docRoot string, docRootExists bool) error {
 		for inter := filepath.Dir(docRoot); inter != siteBase && strings.HasPrefix(inter, siteBase); inter = filepath.Dir(inter) {
 			commands = append(commands, []string{"-m", "u:" + webServerUser + ":--x", inter})
 		}
-		stdPublic := filepath.Join(siteBase, "public")
-		if stdPublic != docRoot {
+		stdWorkdir := filepath.Join(siteBase, "workdir")
+		if stdWorkdir != docRoot {
 			commands = append(commands,
-				[]string{"-R", "-m", "u:" + webServerUser + ":r-X", stdPublic},
-				[]string{"-d", "-m", "u:" + webServerUser + ":r-x", stdPublic},
+				[]string{"-R", "-m", "u:" + webServerUser + ":r-X", stdWorkdir},
+				[]string{"-d", "-m", "u:" + webServerUser + ":r-x", stdWorkdir},
 			)
 		}
 		for _, args := range commands {
@@ -553,9 +644,9 @@ func grantWebServerAccess(siteBase, docRoot string, docRootExists bool) error {
 	if err := os.Chmod(docRoot, 0o755); err != nil {
 		return fmt.Errorf("chmod doc root: %w", err)
 	}
-	stdPublic := filepath.Join(siteBase, "public")
-	if stdPublic != docRoot {
-		_ = os.Chmod(stdPublic, 0o755)
+	stdWorkdir := filepath.Join(siteBase, "workdir")
+	if stdWorkdir != docRoot {
+		_ = os.Chmod(stdWorkdir, 0o755)
 	}
 	return nil
 }

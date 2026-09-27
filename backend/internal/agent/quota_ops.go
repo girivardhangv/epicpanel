@@ -168,7 +168,7 @@ func (e *Executor) EnsurePrivateTmp(ctx context.Context, websiteID string) error
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return err
 	}
-	if uid, gid, err := siteOwnerIDs(websiteID); err == nil {
+	if uid, gid, err := e.siteOwnerIDs(websiteID); err == nil {
 		_ = os.Chown(dir, uid, gid)
 	}
 	return nil

@@ -1555,6 +1555,56 @@ At the end of every significant session, update this file with: what was complet
 ---
 
 
+ADR-067 — In-place workdir deploys (releases model retired) (2026-09-27).
+Owner call: no timestamped release directories — a git deploy updates the
+site's WORKDIR in place and everything the repo ships lives directly in it.
+(1) LAYOUT: <site>/workdir holds the repo work tree (workdir/public for
+Laravel); <site>/workdir/.git is a POINTER FILE to <site>/.git
+(--separate-git-dir) so the git database never sits under a docroot and
+the work tree stays exactly the repo's files. logs/ tmp/ unchanged. The
+vhost/FPM docroot resolves <site>/workdir/<web_dir> (web_dir from the
+running-dir dropdown; priority web_dir > docroot_suffix > workdir root).
+(2) DEPLOY: first deploy clones fresh (--separate-git-dir, --depth 1 with
+full-clone fallback) into workdir, carrying .env/uploads/storage/sqlite
+from the current content and preserving any manual content under
+tmp/initial-manual-<ts>; later deploys run `git fetch + reset --hard
+FETCH_HEAD` in place — untracked durable files survive naturally (the old
+carryOverFromCurrent release-to-release machinery is gone), and the live
+.env additionally wins over a repo-tracked one via stash/restore. Web_dir
+is checked BEFORE the reset (git ls-tree FETCH_HEAD, informational per the
+plain-fetch contract). Build gate opt-in as before; on build/app-health
+failure the workdir resets to the previous commit (reflog) or the
+preserved content is restored. (3) ROLLBACK: workdir sites reset --hard to
+the recorded commit (unshallow-on-demand: shallow clones don't carry old
+SHAs); legacy sites keep the release-symlink flip. Agent accepts both
+(target_commit_sha > target_release_dir). (4) MIGRATION of existing sites
+(provision converge, zero-touch): public real dir (manual site) → atomic
+RENAME to workdir; public release-symlink (git site) → workdir SEEDED from
+the live release (copy) so the same provision's vhost re-render keeps
+serving identical files; DANGLING public symlink (pruned release — the
+"mkdir <site>/public: file exists" provision bricker) → link dropped.
+Legacy public + releases history are removed by the NEXT provision only
+once the site has a workdir git tree (rollback-by-commit live). The
+post-deploy fanout converge (server.go) re-renders vhosts to the workdir
+docroot automatically. (5) UI/API: running directory is a DROPDOWN fed by
+GET .../running-dir-options (workdir subdirs, workdir-root option first,
+legacy-public fallback, framework presets; billing+) — frontend
+SiteDeploys renders it with a free-text fallback; rollback payload carries
+target_commit_sha; commands runner project-root walk bounded by
+<site>/workdir; staging clone/promote operate on workdir (promote swaps
+content in place, preserving the git pointer). Backups (tar -h over the
+site tree) now include .git — restores bring rollback history back too.
+Tests: TestMigrateLegacySiteLayout, TestCleanupLegacyReleaseLayout,
+TestDeployGitWorkdirLifecycle (real local git repo: clone → in-place
+update with durable-file survival → sha rollback), TestDeployGitPreserves
+ManualContent, TestRunningDirOptionsFor; phase12Routes + authzmatrix
+(probe vocabulary gained the documented "billing" tier) + openapi all
+synced. Live: api binary hot-swapped + restarted on the dev box (new route
+registered, PROPFIND 405 probe); NOTE the node agent binary at
+/usr/local/bin needs `install.sh update`/manual install (no root in the
+dev session) before THIS box's agent runs the new model.
+
+
 ADR-065 — Private-repo deploys + running directory (deploy web_dir) (2026-09-26).
 (1) PRIVATE REPOS were already supported end-to-end (encrypted deploy_token
 at rest -> agent decrypts -> withGitToken injects https://epicpanel:<token>@

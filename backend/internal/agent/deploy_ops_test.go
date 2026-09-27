@@ -27,19 +27,19 @@ func TestCheckReleaseWebDir(t *testing.T) {
 }
 
 // TestEffectiveDocrootWebDirComposition — the deploy running directory
-// resolves UNDER the web root (<site>/public/<web_dir>), which follows the
-// release symlink after the first deploy; traversal stays refused.
+// resolves UNDER the web root (<site>/workdir/<web_dir>) — the in-place git
+// work tree, no release symlink involved; traversal stays refused.
 func TestEffectiveDocrootWebDirComposition(t *testing.T) {
 	base := t.TempDir()
-	got, err := effectiveDocroot(base, "public/public", true)
+	got, err := effectiveDocroot(base, "workdir/public", true)
 	if err != nil {
-		t.Fatalf("public/public: %v", err)
+		t.Fatalf("workdir/public: %v", err)
 	}
-	if want := filepath.Join(base, "public", "public"); got != want {
+	if want := filepath.Join(base, "workdir", "public"); got != want {
 		t.Fatalf("docroot = %q, want %q", got, want)
 	}
-	if got, err := effectiveDocroot(base, "", true); err != nil || got != filepath.Join(base, "public") {
-		t.Fatalf("empty suffix must give the standard public dir: %q %v", got, err)
+	if got, err := effectiveDocroot(base, "", true); err != nil || got != filepath.Join(base, "workdir") {
+		t.Fatalf("empty suffix must give the standard workdir: %q %v", got, err)
 	}
 	// Traversal is neutralized by anchoring (Clean("/"+suffix) absorbs the
 	// ".." segments above the root): "../../etc" resolves INSIDE the tree.
@@ -156,12 +156,9 @@ func TestCarryOverSqliteData(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(oldRel, "database", "database.sqlite"), []byte("REALDATA"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// The carry-over reads the CURRENT release through the public symlink.
-	link := filepath.Join(base, "public")
-	if err := os.Symlink(oldRel, link); err != nil {
-		t.Fatal(err)
-	}
-	carryOverFromCurrent(link, newRel)
+	// The carry-over reads the resolved source dir (the executor resolves
+	// the legacy public symlink via currentContentDir before calling this).
+	carryOverDurable(oldRel, newRel)
 	if b, err := os.ReadFile(filepath.Join(newRel, ".env")); err != nil || string(b) != "APP_KEY=x" {
 		t.Fatalf(".env carry-over: %v", err)
 	}
@@ -171,22 +168,22 @@ func TestCarryOverSqliteData(t *testing.T) {
 }
 
 // TestProjectDirFor — project commands (composer/artisan) must run at the
-// PROJECT ROOT: for git-deployed sites the docroot is the release's running
-// directory (<site>/public/<web_dir>) while composer.json/artisan live at
-// the release root (<site>/public) — one level up, inside the web root.
+// PROJECT ROOT: for git-deployed sites the docroot is the running directory
+// (<site>/workdir/<web_dir>) while composer.json/artisan live at the workdir
+// root — one level up, inside the web root.
 func TestProjectDirFor(t *testing.T) {
 	site := t.TempDir()
-	webRoot := filepath.Join(site, "public")
+	webRoot := filepath.Join(site, "workdir")
 	docroot := filepath.Join(webRoot, "public")
 	if err := os.MkdirAll(docroot, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// composer.json at the release root (web root symlink level).
+	// composer.json at the workdir root (web root level).
 	if err := os.WriteFile(filepath.Join(webRoot, "composer.json"), []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if got := projectDirFor(docroot, site, "composer.json"); got != webRoot {
-		t.Fatalf("composer must run at the release root, got %q", got)
+		t.Fatalf("composer must run at the workdir root, got %q", got)
 	}
 	// artisan missing → fallback to the caller's workDir.
 	if got := projectDirFor(docroot, site, "artisan"); got != docroot {

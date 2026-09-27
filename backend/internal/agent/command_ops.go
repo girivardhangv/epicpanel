@@ -95,8 +95,8 @@ func (e *Executor) RunSiteCommand(ctx context.Context, p CommandPayload) (*Comma
 	siteBase := filepath.Join(e.docRootBase, p.WebsiteID)
 
 	// Project commands live at the PROJECT ROOT, which for git-deployed
-	// sites is the RELEASE ROOT (<site>/public) — one level ABOVE the
-	// running-directory docroot (<site>/public/<web_dir>): composer.json and
+	// sites is the WORKDIR (<site>/workdir) — one level ABOVE the
+	// running-directory docroot (<site>/workdir/<web_dir>): composer.json and
 	// artisan are never inside public/. Walk up (bounded by the web root)
 	// to where the project actually is; plain sites resolve to the docroot.
 	switch p.Argv[0] {
@@ -106,7 +106,7 @@ func (e *Executor) RunSiteCommand(ctx context.Context, p CommandPayload) (*Comma
 		workDir = projectDirFor(workDir, siteBase, "artisan")
 	}
 
-	uid, gid, err := siteOwnerIDs(p.WebsiteID)
+	uid, gid, err := e.siteOwnerIDs(p.WebsiteID)
 	if err != nil {
 		return nil, fmt.Errorf("site owner: %w", err)
 	}
@@ -161,11 +161,11 @@ func (e *Executor) RunSiteCommand(ctx context.Context, p CommandPayload) (*Comma
 }
 
 // projectDirFor walks up from workDir (bounded by the site's web root so it
-// never leaves the release) to the nearest directory containing marker
+// never leaves the workdir) to the nearest directory containing marker
 // (composer.json / artisan). Falls back to workDir when the marker is not
 // found — the caller's error then reflects reality.
 func projectDirFor(workDir, siteBase, marker string) string {
-	webRoot := filepath.Join(siteBase, "public")
+	webRoot := filepath.Join(siteBase, "workdir")
 	dir := workDir
 	for {
 		if fileExists(filepath.Join(dir, marker)) {
@@ -176,7 +176,7 @@ func projectDirFor(workDir, siteBase, marker string) string {
 			break
 		}
 		// Never walk above the web root: everything above it is panel-owned
-		// site scaffolding (logs/, tmp/, releases history), not the project.
+		// site scaffolding (logs/, tmp/, the git database), not the project.
 		if !strings.HasPrefix(parent, webRoot+string(filepath.Separator)) && parent != webRoot {
 			break
 		}

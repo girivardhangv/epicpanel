@@ -73,6 +73,7 @@ var probeTable = []routeProbe{
 	{"GET", "/v1/organizations/{org_id}/domains", "customer", "any"},
 	{"GET", "/v1/organizations/{org_id}/package", "customer", "any"},
 	{"GET", "/v1/organizations/{org_id}/websites/{website_id}/crons", "customer", "developer"},
+	{"GET", "/v1/organizations/{org_id}/websites/{website_id}/running-dir-options", "customer", "billing"},
 	{"GET", "/v1/organizations/{org_id}/websites/{website_id}/bandwidth", "customer", "any"},
 	{"PATCH", "/v1/organizations/{org_id}/websites/{website_id}/quota", "customer", "admin"},
 	{"POST", "/v1/organizations/{org_id}/websites/{website_id}/terminate", "customer", "admin"},

@@ -1582,6 +1582,18 @@ pinned by TestDeployWebDirAndServingConverge reading the pending provision
 payload). deploy payload + DeploySpec + DeployJobPayload carry web_dir.
 OpenAPI deployment-config description updated (no new routes).
 
+Session 2026-09-27i — COMMANDS RUN AT THE PROJECT ROOT (release v0.5.15,
+master 80b1cd7): with plain-fetch deploys the site 500s until vendor/
+exists, and the Commands runner could not fix it — it ran everything in
+the DOCROOT (<site>/public/<web_dir>) while composer.json/artisan live at
+the RELEASE ROOT (<site>/public), one level up. RunSiteCommand now walks
+up (bounded by the web root) to the marker per command: composer ->
+nearest composer.json, artisan -> nearest artisan; plain sites resolve to
+the docroot unchanged. TestProjectDirFor pins the resolution. Post-deploy
+workflow for Laravel sites: Commands -> composer install (vendor lands in
+the current release) -> php artisan migrate --force; or flip the
+auto_build toggle to have the panel do it every deploy.
+
 Session 2026-09-27h — PLAIN-FETCH DEPLOYS (release v0.5.14, master
 65401ba), owner's design call: the panel CANNOT know what an app needs,
 and the forced build gate turned every fresh clone into a failed deploy

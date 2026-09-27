@@ -9,6 +9,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/epicbyte/epicpanel/backend/internal/nginxcfg"
 )
 
 var ErrNotFound = errors.New("website not found")
@@ -113,6 +115,10 @@ type DesiredPayload struct {
 	DocumentRoot   string            `json:"document_root"`
 	PrimaryDomain  string            `json:"primary_domain"`
 	RewriteRules   string            `json:"rewrite_rules,omitempty"`
+	// SiteConfig is the structured, context-aware customization document
+	// (ADR-068). When present it REPLACES the legacy RewriteRules string
+	// in the rendered vhost; when absent the legacy string renders as before.
+	SiteConfig     *nginxcfg.SiteConfig `json:"site_config,omitempty"`
 	Domains        []DesiredDomain   `json:"domains,omitempty"`
 	Redirects      []DesiredRedirect `json:"redirects,omitempty"`
 	// FPM pool sizing derived from the org's hosting package via the

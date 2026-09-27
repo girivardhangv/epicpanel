@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/epicbyte/epicpanel/backend/internal/agent/pages"
+	"github.com/epicbyte/epicpanel/backend/internal/nginxcfg"
 )
 
 // Executor performs typed infrastructure operations on the local machine.
@@ -72,7 +73,11 @@ type ProvisionPayload struct {
 	WebDir        string          `json:"web_dir,omitempty"`
 	PrimaryDomain string          `json:"primary_domain"`
 	RewriteRules  string          `json:"rewrite_rules,omitempty"`
-	Domains       []DomainPayload `json:"domains,omitempty"`
+	// SiteConfig is the structured, context-aware customization document
+	// (ADR-068); when present it replaces the legacy RewriteRules string
+	// in the rendered vhost. Re-validated agent-side before render.
+	SiteConfig *nginxcfg.SiteConfig `json:"site_config,omitempty"`
+	Domains    []DomainPayload      `json:"domains,omitempty"`
 	// Redirects are domain-level redirects (301/302/307/308) rendered by the
 	// selected web server(s).
 	Redirects []RedirectRule `json:"redirects,omitempty"`
@@ -414,6 +419,7 @@ func (e *Executor) ProvisionWebsite(ctx context.Context, payload ProvisionPayloa
 			DocumentRoot:  docRoot,
 			FpmSocket:     fpmSocket,
 			RewriteRules:  payload.RewriteRules,
+			SiteConfig:    payload.SiteConfig,
 			BackendPort:   payload.BackendPort,
 			Redirects:     payload.Redirects,
 			Suspended:     payload.Suspended,

@@ -1214,7 +1214,7 @@
   },
   "/v1/organizations/{org_id}/websites/{website_id}/config": {
    "get": {
-    "summary": "Rendered site config (billing+)",
+    "summary": "Site web-server config: legacy rewrite_rules + structured config document + version (billing+)",
     "tags": [
      "Websites"
     ],
@@ -1239,6 +1239,34 @@
      }
     },
     "x_scope": "websites:read",
+    "parameters": []
+   },
+   "put": {
+    "summary": "Replace the structured web-server config document (context-aware, versioned) -> reconcile job (developer+)",
+    "tags": [
+     "Websites"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
     "parameters": []
    }
   },
@@ -1274,7 +1302,97 @@
   },
   "/v1/organizations/{org_id}/websites/{website_id}/config/rewrite": {
    "put": {
-    "summary": "Set nginx rewrite rules (developer+)",
+    "summary": "LEGACY: set raw server-context nginx directives (developer+)",
+    "tags": [
+     "Websites"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/config/validate": {
+   "post": {
+    "summary": "Dry-run validation of a config document: errors + would-be-dropped warnings, stores nothing (developer+)",
+    "tags": [
+     "Websites"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:write",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/config/versions": {
+   "get": {
+    "summary": "Config version history (last 20, newest first) (billing+)",
+    "tags": [
+     "Websites"
+    ],
+    "security": [
+     {
+      "bearer": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "default": {
+      "description": "error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x_scope": "websites:read",
+    "parameters": []
+   }
+  },
+  "/v1/organizations/{org_id}/websites/{website_id}/config/rollback": {
+   "post": {
+    "summary": "Roll back to a previous config version as a NEW version -> reconcile job (developer+)",
     "tags": [
      "Websites"
     ],

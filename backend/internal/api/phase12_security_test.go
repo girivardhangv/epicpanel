@@ -267,6 +267,10 @@ var phase12Routes = []string{
 	"POST /v1/setup/verify-hostname",
 	"PUT /v1/organizations/{org_id}/billing/payment-method",
 	"PUT /v1/organizations/{org_id}/websites/{website_id}/config/rewrite",
+	"PUT /v1/organizations/{org_id}/websites/{website_id}/config",
+	"POST /v1/organizations/{org_id}/websites/{website_id}/config/validate",
+	"GET /v1/organizations/{org_id}/websites/{website_id}/config/versions",
+	"POST /v1/organizations/{org_id}/websites/{website_id}/config/rollback",
 	"PUT /v1/organizations/{org_id}/websites/{website_id}/files/content",
 }
 

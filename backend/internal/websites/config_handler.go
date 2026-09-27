@@ -1,85 +1,82 @@
 package websites
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
-	"regexp"
-	"strings"
+
+	"github.com/google/uuid"
 
 	"github.com/epicbyte/epicpanel/backend/internal/httpapi"
 	"github.com/epicbyte/epicpanel/backend/internal/jobs"
+	"github.com/epicbyte/epicpanel/backend/internal/nginxcfg"
 )
 
-// nginxDirectiveRe is the allowlist of nginx directives accepted in the
-// per-site rewrite/config snippet. Everything else is rejected server-side
-// AND agent-side, so a stored snippet can never inject arbitrary nginx
-// configuration (e.g. `include`, `root`, `alias`, `daemon`).
-var nginxDirectiveRe = regexp.MustCompile(`^[a-z_]+$`)
+// maxConfigJSON caps the structured config document (well above any sane
+// configuration; the model is structured, not free-form).
+const maxConfigJSON = 64 * 1024
 
-var nginxAllowedDirectives = map[string]bool{
-	"rewrite": true, "if": true, "return": true, "set": true, "break": true,
-	"expires": true, "add_header": true, "try_files": true, "autoindex": true,
-	"deny": true, "allow": true, "error_page": true, "client_max_body_size": true,
-	"client_body_buffer_size": true, "index": true, "satisfy": true,
-	"auth_basic": true, "auth_basic_user_file": true,
-}
-
-// validateRewriteRules checks each non-empty, non-comment line is an
-// allowlisted nginx directive. Block-scoped `if (...)` lines are validated
-// loosely (their inner directives on following lines still go through this).
-// forbiddenDirectiveTokens must never appear anywhere in a snippet line:
-// they would let one line smuggle new server-block directives (audit S6 —
-// the first-token-only check left the rest of the line unvalidated).
-var forbiddenDirectiveTokens = []string{";", "{", "}", "`", "proxy_pass", "fastcgi_pass", "include", "root ", "alias ", "daemon", "error_log", "access_log", "listen ", "server_name", "location "}
-
-// varRefRe constrains nginx variable references to well-known capture refs
-// and safe built-ins (rewrite backrefs like $1, $uri, $args, ...).
-var varRefRe = regexp.MustCompile(`^(\d|uri|args|query_string|request_uri|host|scheme|request_method|remote_addr|https|server_port|http_[a-z0-9_]+)`)
-
-func validateRewriteRules(rules string) error {
-	for _, raw := range strings.Split(rules, "\n") {
-		line := strings.TrimSpace(strings.TrimRight(strings.TrimSpace(raw), ";"))
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
+// siteRulesFor builds the validation context for a website: what the
+// managed vhost looks like (PHP handler? reverse proxy?) and which
+// loopback ports belong to THIS site.
+func (h *Handler) siteRulesFor(ctx context.Context, ws *Website) nginxcfg.SiteRules {
+	rules := nginxcfg.SiteRules{PHP: ws.Runtime == RuntimePHP}
+	if isAppRuntime(ws.Runtime) {
+		rules.Proxy = true
+	}
+	own := map[int]bool{}
+	if ws.AppPort > 0 {
+		own[ws.AppPort] = true
+		rules.OwnPorts = append(rules.OwnPorts, ws.AppPort)
+	}
+	if ws.BackendPort > 0 {
+		own[ws.BackendPort] = true
+		rules.OwnPorts = append(rules.OwnPorts, ws.BackendPort)
+	}
+	// PortOwner: a loopback port allocated to a DIFFERENT website on the
+	// same server must not be a proxy target (multi-tenant routing, ADR-068).
+	if ws.ServerID != uuid.Nil {
+		other := map[int]bool{}
+		if appPorts, err := h.Websites.UsedAppPorts(ctx, ws.ServerID); err == nil {
+			for p := range appPorts {
+				if !own[p] {
+					other[p] = true
+				}
+			}
 		}
-		fields := strings.Fields(line)
-		if len(fields) == 0 {
-			continue
+		if backendPorts, err := h.Websites.UsedBackendPorts(ctx, ws.ServerID); err == nil {
+			for p := range backendPorts {
+				if !own[p] {
+					other[p] = true
+				}
+			}
 		}
-		head := fields[0]
-		if !nginxDirectiveRe.MatchString(head) || !nginxAllowedDirectives[head] {
-			return errBadRule(line)
-		}
-		// The whole line is validated, not just the first token (audit S6).
-		if err := validateDirectiveLine(line); err != nil {
-			return err
+		if len(other) > 0 {
+			rules.PortOwner = func(port int) string {
+				if other[port] {
+					return "another-website"
+				}
+				return ""
+			}
 		}
 	}
-	return nil
+	return rules
 }
 
-func validateDirectiveLine(line string) error {
-	for _, tok := range forbiddenDirectiveTokens {
-		if strings.Contains(line, tok) {
-			return errBadRule(line)
-		}
+// mapConfigErr converts an nginxcfg validation error to a 422 with the
+// friendly, actionable message (spec §25: never a bare "unsupported
+// directive").
+func mapConfigErr(err error) *httpapi.APIError {
+	if errors.Is(err, nginxcfg.ErrValidation) {
+		return httpapi.ErrValidation(err.Error())
 	}
-	for _, seg := range strings.Split(line, "$")[1:] {
-		if seg == "" || !varRefRe.MatchString(seg) {
-			return errBadRule(line)
-		}
-	}
-	return nil
-}
-
-type ruleError string
-
-func (e ruleError) Error() string { return string(e) }
-
-func errBadRule(line string) error {
-	return ruleError("unsupported directive in rewrite rules: " + line)
+	return httpapi.ErrInternal(err)
 }
 
 // GET .../websites/{id}/config
+// Returns the legacy rewrite_rules string (still consumed by older
+// clients) plus the structured config document and its version.
 func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	orgID, ok := OrgIDFromRequest(r)
 	if !ok {
@@ -99,9 +96,183 @@ func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	httpapi.WriteJSON(w, http.StatusOK, cfg)
 }
 
+// PUT .../websites/{id}/config {"config": {...SiteConfig}}
+// Structured, context-aware replacement of the whole customization
+// document. Validated strictly (save-time), versioned, then the desired
+// state converges via the idempotent provision job.
+func (h *Handler) SetSiteConfig(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := OrgIDFromRequest(r)
+	if !ok {
+		httpapi.RespondError(w, httpapi.ErrInternal(errOrgContext))
+		return
+	}
+	ws, apiErr := h.websiteFromPath(r, orgID)
+	if apiErr != nil {
+		httpapi.RespondError(w, apiErr)
+		return
+	}
+	cfg, apiErr := readSiteConfig(r)
+	if apiErr != nil {
+		httpapi.RespondError(w, apiErr)
+		return
+	}
+	rules := h.siteRulesFor(r.Context(), ws)
+	if err := nginxcfg.ValidateSiteConfig(cfg, rules); err != nil {
+		httpapi.RespondError(w, mapConfigErr(err))
+		return
+	}
+	actor := actorIDFrom(r)
+	saved, err := h.Configs.SetConfig(r.Context(), ws.ID, cfg, actor)
+	if err != nil {
+		httpapi.RespondError(w, httpapi.ErrInternal(err))
+		return
+	}
+	h.auditUser(r, &orgID, "website.site_config_updated", "website", ws.ID.String(), map[string]any{"version": saved.Version})
+	h.convergeConfig(w, r, ws, orgID, saved)
+}
+
+// POST .../websites/{id}/config/validate {"config": {...}}
+// Dry-run: full validation, nothing stored, nothing converged.
+func (h *Handler) ValidateSiteConfig(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := OrgIDFromRequest(r)
+	if !ok {
+		httpapi.RespondError(w, httpapi.ErrInternal(errOrgContext))
+		return
+	}
+	ws, apiErr := h.websiteFromPath(r, orgID)
+	if apiErr != nil {
+		httpapi.RespondError(w, apiErr)
+		return
+	}
+	cfg, apiErr := readSiteConfig(r)
+	if apiErr != nil {
+		httpapi.RespondError(w, apiErr)
+		return
+	}
+	rules := h.siteRulesFor(r.Context(), ws)
+	if err := nginxcfg.ValidateSiteConfig(cfg, rules); err != nil {
+		httpapi.RespondError(w, mapConfigErr(err))
+		return
+	}
+	// Render check: report what the user layer would silently drop, so
+	// the UI can surface drop candidates as explicit warnings.
+	_, dropped := nginxcfg.BuildUserLayer(cfg, rules)
+	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"valid": true, "warnings": dropped})
+}
+
+// GET .../websites/{id}/config/versions
+func (h *Handler) ListConfigVersions(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := OrgIDFromRequest(r)
+	if !ok {
+		httpapi.RespondError(w, httpapi.ErrInternal(errOrgContext))
+		return
+	}
+	ws, apiErr := h.websiteFromPath(r, orgID)
+	if apiErr != nil {
+		httpapi.RespondError(w, apiErr)
+		return
+	}
+	versions, err := h.Configs.ListVersions(r.Context(), ws.ID, 20)
+	if err != nil {
+		httpapi.RespondError(w, httpapi.ErrInternal(err))
+		return
+	}
+	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"versions": versions})
+}
+
+// POST .../websites/{id}/config/rollback {"to_version": N}
+// Rollback is a NEW version containing the old document (append-only
+// history; version numbers never decrease).
+func (h *Handler) RollbackConfig(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := OrgIDFromRequest(r)
+	if !ok {
+		httpapi.RespondError(w, httpapi.ErrInternal(errOrgContext))
+		return
+	}
+	ws, apiErr := h.websiteFromPath(r, orgID)
+	if apiErr != nil {
+		httpapi.RespondError(w, apiErr)
+		return
+	}
+	var req struct {
+		ToVersion int `json:"to_version"`
+	}
+	if apiErr := httpapi.Read(r, &req); apiErr != nil {
+		httpapi.RespondError(w, apiErr)
+		return
+	}
+	cfg, err := h.Configs.GetVersion(r.Context(), ws.ID, req.ToVersion)
+	if errors.Is(err, ErrConfigNotFound) {
+		httpapi.RespondError(w, httpapi.ErrNotFound("config version not found"))
+		return
+	}
+	if err != nil {
+		httpapi.RespondError(w, httpapi.ErrInternal(err))
+		return
+	}
+	// The site's serving shape may have changed since the version was
+	// stored (runtime switch, app removed) — re-validate before applying.
+	rules := h.siteRulesFor(r.Context(), ws)
+	if err := nginxcfg.ValidateSiteConfig(cfg, rules); err != nil {
+		httpapi.RespondError(w, httpapi.ErrValidation("version no longer compatible with this site: "+err.Error()))
+		return
+	}
+	saved, err := h.Configs.SetConfig(r.Context(), ws.ID, cfg, actorIDFrom(r))
+	if err != nil {
+		httpapi.RespondError(w, httpapi.ErrInternal(err))
+		return
+	}
+	h.auditUser(r, &orgID, "website.site_config_rollback", "website", ws.ID.String(), map[string]any{"from_version": req.ToVersion, "version": saved.Version})
+	h.convergeConfig(w, r, ws, orgID, saved)
+}
+
+// readSiteConfig parses and size-caps the request's config document.
+func readSiteConfig(r *http.Request) (*nginxcfg.SiteConfig, *httpapi.APIError) {
+	var req struct {
+		Config json.RawMessage `json:"config"`
+	}
+	if apiErr := httpapi.Read(r, &req); apiErr != nil {
+		return nil, apiErr
+	}
+	if len(req.Config) > maxConfigJSON {
+		return nil, httpapi.ErrValidation("configuration document too large (max 64KB)")
+	}
+	cfg := &nginxcfg.SiteConfig{}
+	if err := json.Unmarshal(req.Config, cfg); err != nil {
+		return nil, httpapi.ErrValidation("invalid configuration document: " + err.Error())
+	}
+	cfg.Schema = 2
+	return cfg, nil
+}
+
+// actorIDFrom resolves the acting user for version attribution.
+func actorIDFrom(r *http.Request) *uuid.UUID {
+	if usr, ok := httpapi.UserFrom(r.Context()); ok {
+		if uid, err := uuid.Parse(usr.ID); err == nil {
+			return &uid
+		}
+	}
+	return nil
+}
+
+// convergeConfig re-enqueues the idempotent provision job so the agent
+// re-renders the vhost with the new config (ready sites only).
+func (h *Handler) convergeConfig(w http.ResponseWriter, r *http.Request, ws *Website, orgID uuid.UUID, cfg *WebsiteConfig) {
+	if ws.Status == StatusReady || ws.Status == StatusFailed {
+		payload, apiErr := h.buildDesiredPayload(r.Context(), ws, orgID, ws.UnixUser, ws.RuntimeVersion)
+		if apiErr == nil {
+			_, _ = h.Jobs.EnqueueIdempotent(r.Context(), ws.ServerID, &ws.ID, jobs.TypeProvisionWebsite, payload, "provision_website_"+ws.ID.String())
+		}
+	}
+	httpapi.WriteJSON(w, http.StatusOK, cfg)
+}
+
 // PUT .../websites/{id}/config/rewrite {"rewrite_rules": "..."}
-// Saves the snippet and re-enqueues the provision job so the agent re-renders
-// the vhost with the rules included (validated with nginx -t before reload).
+// LEGACY endpoint, contract unchanged: a raw server-context snippet.
+// Validation now runs through the context-aware core (superset of the old
+// flat allowlist — every previously accepted snippet still passes). The
+// string is stored in rewrite_rules and rendered when no structured
+// config document exists for the site.
 func (h *Handler) SetRewriteRules(w http.ResponseWriter, r *http.Request) {
 	orgID, ok := OrgIDFromRequest(r)
 	if !ok {
@@ -124,8 +295,8 @@ func (h *Handler) SetRewriteRules(w http.ResponseWriter, r *http.Request) {
 		httpapi.RespondError(w, httpapi.ErrValidation("rewrite rules too large (max 16KB)"))
 		return
 	}
-	if err := validateRewriteRules(req.RewriteRules); err != nil {
-		httpapi.RespondError(w, httpapi.ErrValidation(err.Error()))
+	if err := nginxcfg.ValidateSnippet(req.RewriteRules, nginxcfg.CtxServer, h.siteRulesFor(r.Context(), ws)); err != nil {
+		httpapi.RespondError(w, mapConfigErr(err))
 		return
 	}
 	cfg, err := h.Configs.SetRules(r.Context(), ws.ID, req.RewriteRules)
@@ -134,13 +305,5 @@ func (h *Handler) SetRewriteRules(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.auditUser(r, &orgID, "website.rewrite_rules_updated", "website", ws.ID.String(), nil)
-
-	// Reconcile the vhost so the rules go live (only for ready sites).
-	if ws.Status == StatusReady || ws.Status == StatusFailed {
-		payload, apiErr := h.buildDesiredPayload(r.Context(), ws, orgID, ws.UnixUser, ws.RuntimeVersion)
-		if apiErr == nil {
-			_, _ = h.Jobs.EnqueueIdempotent(r.Context(), ws.ServerID, &ws.ID, jobs.TypeProvisionWebsite, payload, "provision_website_"+ws.ID.String())
-		}
-	}
-	httpapi.WriteJSON(w, http.StatusOK, cfg)
+	h.convergeConfig(w, r, ws, orgID, cfg)
 }

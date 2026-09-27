@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/epicbyte/epicpanel/backend/internal/agent/pages"
+	"github.com/epicbyte/epicpanel/backend/internal/nginxcfg"
 )
 
 // VhostSpec describes the serving configuration for one website across all
@@ -22,9 +23,14 @@ type VhostSpec struct {
 	UnixUser     string
 	DocumentRoot string
 	FpmSocket    string // empty = static only
-	// RewriteRules is an optional user-provided nginx directive snippet
-	// (rewrite rules, extra headers…). Allowlist-validated before rendering.
+	// RewriteRules is the LEGACY user-provided nginx directive snippet.
+	// It renders only when SiteConfig is absent (sites that never saved a
+	// structured config); validated by the shared rewrite core before render.
 	RewriteRules string
+	// SiteConfig is the structured, context-aware customization document
+	// (ADR-068). When non-nil it replaces the legacy snippet: nginxcfg
+	// re-validates every section at render time and builds the user layer.
+	SiteConfig *nginxcfg.SiteConfig
 	// ProxyPass, when set (e.g. "http://127.0.0.1:6123"), makes nginx the
 	// edge: dynamic traffic reverse-proxies to the backend web server
 	// (Apache/OpenLiteSpeed) instead of serving files directly.
@@ -51,6 +57,9 @@ type VhostSpec struct {
 	// Path overrides for tests (empty = production locations).
 	AcmeWebroot string
 	LogsBase    string
+	// BWLogPath overrides the platform bandwidth accounting stream path
+	// (tests; empty = /var/log/epicpanel/bandwidth.log).
+	BWLogPath string
 	// Domains is primary-first; per-domain SSL modes apply.
 	Domains []DomainSpec
 }
@@ -170,7 +179,7 @@ func RenderVhost(v VhostSpec) string {
 	// excluded from every other plain :80 server_name, so the redirect block
 	// is the authoritative match.
 	for _, r := range redirects {
-		fmt.Fprintf(&b, "server {\n\tlisten 80;\n\tserver_name %s;\n\n%s\treturn %d %s;\n}\n\n", r.From, renderSiteIDLines(v.WebsiteID), r.Status, r.To)
+		fmt.Fprintf(&b, "server {\n\tlisten 80;\n\tserver_name %s;\n\n%s\treturn %d %s;\n}\n\n", r.From, v.renderSiteIDLinesFor(), r.Status, r.To)
 	}
 
 	for _, root := range order {
@@ -181,10 +190,13 @@ func RenderVhost(v VhostSpec) string {
 			DocumentRoot: g.docroot,
 			FpmSocket:    v.FpmSocket,
 			RewriteRules: v.RewriteRules,
+			SiteConfig:   v.SiteConfig,
 			ProxyPass:    v.ProxyPass,
+			LogsBase:     v.LogsBase,
+			BWLogPath:    v.BWLogPath,
 			Domains:      g.secured,
 		}
-		common := gv.commonLocations() + gv.renderRewriteRules()
+		common := gv.commonLocations(gv.userLayer()) + gv.renderUserLayer(gv.userLayer()) + gv.renderRewriteRules()
 
 		var plainNames, securedNames []string
 		for _, name := range g.names {
@@ -199,7 +211,7 @@ func RenderVhost(v VhostSpec) string {
 			fmt.Fprintf(&b, "server {\n\tlisten 80;\n\tserver_name %s;\n\n%s}\n\n", strings.Join(plainNames, " "), common)
 		}
 		if len(g.secured) > 0 {
-			fmt.Fprintf(&b, "server {\n\tlisten 80;\n\tserver_name %s;\n\n%s\tlocation ^~ /.well-known/acme-challenge/ {\n\t\troot %s;\n\t}\n\n\tlocation / {\n\t\treturn 301 https://$host$request_uri;\n\t}\n}\n\n", strings.Join(securedNames, " "), renderSiteIDLines(v.WebsiteID), acmeWebroot)
+			fmt.Fprintf(&b, "server {\n\tlisten 80;\n\tserver_name %s;\n\n%s\tlocation ^~ /.well-known/acme-challenge/ {\n\t\troot %s;\n\t}\n\n\tlocation / {\n\t\treturn 301 https://$host$request_uri;\n\t}\n}\n\n", strings.Join(securedNames, " "), v.renderSiteIDLinesFor(), acmeWebroot)
 			first := g.secured[0]
 			fmt.Fprintf(&b, "server {\n\tlisten 443 ssl;\n\tserver_name %s;\n\n\tssl_certificate %s;\n\tssl_certificate_key %s;\n\tssl_protocols TLSv1.2 TLSv1.3;\n\n%s}\n\n", strings.Join(securedNames, " "), first.CertPath, first.KeyPath, common)
 		}
@@ -207,10 +219,14 @@ func RenderVhost(v VhostSpec) string {
 	return b.String()
 }
 
-// renderRewriteRules returns the sanitized user snippet indented for a server
-// block, or "" when none configured. Validated by the shared rewrite core
+// renderRewriteRules returns the sanitized LEGACY user snippet indented
+// for a server block, or "" when none configured. Only used for sites
+// without a structured SiteConfig. Validated by the shared rewrite core
 // (see sanitizeRewriteLine) before rendering.
 func (v VhostSpec) renderRewriteRules() string {
+	if v.SiteConfig != nil {
+		return "" // structured config owns the user layer
+	}
 	rules := strings.TrimSpace(v.RewriteRules)
 	if rules == "" {
 		return ""
@@ -225,9 +241,81 @@ func (v VhostSpec) renderRewriteRules() string {
 	return out.String()
 }
 
-func (v VhostSpec) commonLocations() string {
-	accessLog := fmt.Sprintf("/srv/epicpanel/websites/%s/logs/nginx-access.log", v.WebsiteID)
-	errorLog := fmt.Sprintf("/srv/epicpanel/websites/%s/logs/nginx-error.log", v.WebsiteID)
+// userLayer validates the structured SiteConfig and builds the renderable
+// user layer. The agent never trusts stored content: sections that fail
+// re-validation are dropped loudly (logged) and never rendered.
+func (v VhostSpec) userLayer() *nginxcfg.UserLayer {
+	if v.SiteConfig == nil {
+		return &nginxcfg.UserLayer{ErrorPageCodes: map[int]bool{}}
+	}
+	rules := nginxcfg.SiteRules{PHP: v.FpmSocket != "", Proxy: v.ProxyPass != ""}
+	layer, dropped := nginxcfg.BuildUserLayer(v.SiteConfig, rules)
+	for _, d := range dropped {
+		slog.Warn("dropping invalid section from stored site config", "website", v.WebsiteID, "detail", d)
+	}
+	return layer
+}
+
+// renderUserLayer renders the validated structured user layer as the
+// EPICPANEL USER CONFIG section of a server block (ADR-068 layering):
+// server-level directives first, then the generated custom location
+// blocks. Returns "" when the site has no structured config.
+func (v VhostSpec) renderUserLayer(layer *nginxcfg.UserLayer) string {
+	if v.SiteConfig == nil {
+		return ""
+	}
+	var out strings.Builder
+	section := false
+	start := func() {
+		if !section {
+			out.WriteString("\n\t# EPICPANEL USER CONFIG — validated (ADR-068)\n")
+			section = true
+		}
+	}
+	// File mode: server-level body cap. Proxy mode: injected into the
+	// managed proxy location instead (a location-level 100m default would
+	// otherwise shadow the server-level value).
+	if layer.ClientMaxBodySize != "" && v.ProxyPass == "" {
+		start()
+		out.WriteString("\tclient_max_body_size " + layer.ClientMaxBodySize + ";\n")
+	}
+	if len(layer.ServerLines) > 0 {
+		start()
+		var body string
+		if stmts, err := nginxcfg.ParseSnippet(strings.Join(layer.ServerLines, "\n")); err == nil {
+			// Server lines include structured rewrites and raw advanced
+			// lines; if blocks keep their structure via the parser.
+			body = nginxcfg.IndentSnippet(stmts, "\t\t")
+		} else {
+			// Unreachable (BuildUserLayer validated); fail safe by
+			// rendering nothing rather than unvalidated content.
+			body = ""
+		}
+		out.WriteString(body)
+	}
+	for _, loc := range layer.Locations {
+		start()
+		out.WriteString("\n\t" + loc.Header + "\n")
+		// Location bodies are validated structured lines; ParseSnippet +
+		// IndentSnippet restore if-block structure and terminate them.
+		if stmts, err := nginxcfg.ParseSnippet(strings.Join(loc.Lines, "\n")); err == nil {
+			out.WriteString(nginxcfg.IndentSnippet(stmts, "\t\t"))
+		} else {
+			for _, l := range loc.Lines {
+				out.WriteString("\t\t" + nginxcfg.Terminate(l) + "\n")
+			}
+		}
+		out.WriteString("\t}\n")
+	}
+	if section {
+		out.WriteString("\t# END EPICPANEL USER CONFIG\n")
+	}
+	return out.String()
+}
+
+func (v VhostSpec) commonLocations(layer *nginxcfg.UserLayer) string {
+	accessLog := fmt.Sprintf("%s/%s/logs/nginx-access.log", v.logsBasePath(), v.WebsiteID)
+	errorLog := fmt.Sprintf("%s/%s/logs/nginx-error.log", v.logsBasePath(), v.WebsiteID)
 
 	phpSection := ""
 	if v.FpmSocket != "" {
@@ -241,15 +329,23 @@ func (v VhostSpec) commonLocations() string {
 
 	// nginx-edge mode: everything (except ACME challenges) goes to the
 	// backend web server (Apache/OpenLiteSpeed) on its internal port — or to
-	// the site's application process (node/python/go systemd unit) on its
-	// loopback port. Upgrade/Connection headers keep WebSockets working
+	// the site's application process (node/python/go) on its loopback port.
+	// Upgrade/Connection headers keep WebSockets working
 	// ($epicpanel_connection_upgrade is the http-level map written by
 	// InstallNginx; the namespaced variable never collides with user maps);
 	// generous timeouts for long-poll/SSE workloads and a request-body cap
 	// are part of the proxy contract.
-	rootSection := fmt.Sprintf("	root %s;\n	index index.php index.html index.htm;\n\n	location / {\n		try_files $uri $uri/ =404;\n	}\n\n", v.DocumentRoot)
+	// ADR-068: the user layer may extend this block with proxy-safe
+	// directives (RootExtra filtered by BuildUserLayer) and override the
+	// body cap (a location-level value would shadow a server-level one).
+	rootSection := fmt.Sprintf("	root %s;\n	index index.php index.html index.htm;\n\n	location / {\n		try_files %s;\n%s	}\n\n",
+		v.DocumentRoot, tryFilesFor(layer), indentExtras(layer.RootExtra))
 	phpHeader := ""
 	if v.ProxyPass != "" {
+		bodyCap := "100m"
+		if layer.ClientMaxBodySize != "" {
+			bodyCap = layer.ClientMaxBodySize
+		}
 		rootSection = ""
 		phpSection = ""
 		phpHeader = fmt.Sprintf(`
@@ -267,9 +363,9 @@ func (v VhostSpec) commonLocations() string {
 		proxy_send_timeout 300s;
 		proxy_read_timeout 300s;
 		proxy_buffering off;
-		client_max_body_size 100m;
-	}
-`, v.ProxyPass, wsMapVar(v.WebsiteID))
+		client_max_body_size %s;
+%s	}
+`, v.ProxyPass, wsMapVar(v.WebsiteID), bodyCap, indentExtras(layer.ProxyExtra))
 	}
 
 	return fmt.Sprintf(`	%s
@@ -285,7 +381,29 @@ func (v VhostSpec) commonLocations() string {
 		deny all;
 	}
 %s%s
-`, rootSection, accessLog, errorLog, renderSiteIDLines(v.WebsiteID), v.acmeWebrootPath(), errorPagesSection(), phpHeader, phpSection)
+`, rootSection, accessLog, errorLog, v.renderSiteIDLinesFor(), v.acmeWebrootPath(), errorPagesSection(layer.ErrorPageCodes), phpHeader, phpSection)
+}
+
+// tryFilesFor resolves the managed location / try_files argument: the
+// user's validated override or the platform default (static file serving).
+func tryFilesFor(layer *nginxcfg.UserLayer) string {
+	if layer != nil && layer.RootTryFiles != "" {
+		return layer.RootTryFiles
+	}
+	return "$uri $uri/ =404"
+}
+
+// indentExtras renders validated extra lines inside a managed location
+// block (terminated + indented; empty slice → "").
+func indentExtras(lines []string) string {
+	if len(lines) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, l := range lines {
+		b.WriteString("\t\t" + nginxcfg.Terminate(l) + "\n")
+	}
+	return b.String()
 }
 
 // epicpanelDefaultPagesDir is the panel-owned directory holding the global
@@ -306,13 +424,46 @@ func renderSiteIDLines(websiteID string) string {
 	return fmt.Sprintf("\tset $epicpanel_site_id \"%s\";\n\taccess_log %s epicpanel_bandwidth;\n", websiteID, bwLogPath)
 }
 
+// renderSiteIDLinesFor is the bandwidth-path-injectable form used by the
+// live vhost renderer (tests isolate the platform accounting stream).
+func (v VhostSpec) renderSiteIDLinesFor() string {
+	path := bwLogPath
+	if v.BWLogPath != "" {
+		path = v.BWLogPath
+	}
+	return fmt.Sprintf("\tset $epicpanel_site_id \"%s\";\n\taccess_log %s epicpanel_bandwidth;\n", v.WebsiteID, path)
+}
+
 // errorPagesSection wires the panel's default status pages into a live
 // vhost: nginx-generated 404s render "Sorry, Wrong Page"; origin
 // unreachable/overloaded (nginx-generated 502/504) renders "Server Busy".
 // Application-generated error responses pass through untouched
 // (fastcgi_intercept_errors / proxy_intercept_errors default off) — the
 // panel never masks what a site's own code answers.
-func errorPagesSection() string {
+// ADR-068: user config may override specific codes; a user-overridden
+// code suppresses the managed default for THAT code (later directives do
+// not reliably win in nginx, so the conflict is resolved at render).
+func errorPagesSection(userCodes map[int]bool) string {
+	suppress := func(codes ...int) bool {
+		for _, c := range codes {
+			if userCodes[c] {
+				return true
+			}
+		}
+		return false
+	}
+	notFound := ""
+	if !suppress(404) {
+		notFound = "error_page 404 /epicpanel-notfound.html;\n"
+	}
+	busy := ""
+	if !suppress(502, 504) {
+		busy = "error_page 502 504 /epicpanel-busy.html;\n"
+	} else if !suppress(504) {
+		busy = "error_page 504 /epicpanel-busy.html;\n"
+	} else if !suppress(502) {
+		busy = "error_page 502 /epicpanel-busy.html;\n"
+	}
 	return fmt.Sprintf(`
 	location = /epicpanel-busy.html {
 		root %s;
@@ -324,9 +475,7 @@ func errorPagesSection() string {
 		internal;
 	}
 
-	error_page 404 /epicpanel-notfound.html;
-	error_page 502 504 /epicpanel-busy.html;
-`, epicpanelDefaultPagesDir, epicpanelDefaultPagesDir)
+	%s%s`, epicpanelDefaultPagesDir, epicpanelDefaultPagesDir, notFound, busy)
 }
 
 // acmeWebrootPath resolves the ACME webroot (injectable for tests).

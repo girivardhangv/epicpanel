@@ -1605,6 +1605,61 @@ registered, PROPFIND 405 probe); NOTE the node agent binary at
 dev session) before THIS box's agent runs the new model.
 
 
+ADR-068 — Context-aware nginx configuration system (2026-09-27).
+Replaces the flat "Rewrite Rules & Custom Config" allowlist (0018 +
+audit-S6 hardening) with a structured, context-aware, versioned model.
+Root cause of the old complaint: nginx directives are CONTEXT-SENSITIVE
+but the old validator was one flat first-token allowlist — `location /
+{ try_files ... }` (WordPress/Laravel) was structurally impossible and
+even $-anchored rewrite regexes were rejected by the old var-ref check.
+(1) SHARED CORE internal/nginxcfg (imported by control plane AND agent —
+save-time validation + render-time re-validation, defense in depth):
+directive registry with allowed contexts (server/location/if) + security
+level (USER vs RESTRICTED/MANAGED: include, root, alias, listen,
+server_name, location as raw text, fastcgi_pass, auth_request, perl/js,
+access_log/error_log, upstream, map...), per-directive argument schemas
+(sizes, times, status codes, IPs/CIDRs, header names, proxy targets),
+friendly §25-style errors ("Detected a location block — use the
+Locations tab…"), $var allowlist (captures + safe builtins; $epicpanel_*
+unspoofable), loopback-only proxy_pass with PORT-OWNERSHIP (control
+plane rejects ports allocated to other sites — multi-tenant routing
+guard), conflict detection (duplicate locations; shadowing of managed /
+, ACME, dotfile-deny, PHP handler; managed error_page defaults drop
+per-code when user overrides). Structured SiteConfig (schema 2):
+server_directives (raw, if-blocks supported), root_location (try_files
+override + extras; proxy sites get proxy-safe subset only), locations
+(generated wrappers — users never type location {}), headers (CRLF-
+safe), ip_access, error_pages, client_max_body_size, asset_caching,
+redirects. (2) STORAGE migration 0056: website_configs gains config_json
+JSONB + version; append-only website_config_versions (last 20);
+rollback = old doc as a NEW version; legacy rewrite_rules TEXT KEPT —
+sites without a structured doc render byte-compatibly as before;
+Apache/OLS keep the legacy string path (structured sections are nginx-
+only, UI gates on web_server). (3) API: PUT + POST validate + GET
+versions + POST rollback under /config (developer+ writes, billing+
+reads; legacy PUT /config/rewrite contract unchanged, now validated by
+the context-aware superset); save = strict validate → version++ →
+idempotent provision job; NO downtime path changes (candidate nginx -t
+before reload, restore-on-failure — existing SwapValidated). (4) AGENT
+render: "EPICPANEL USER CONFIG — validated (ADR-068)" layer after
+managed directives; user body cap injected INTO the managed proxy block
+(a location-level default would shadow it); invalid stored sections are
+DROPPED loudly, never rendered. Platform accounting/site-ID stamping
+invariant preserved ($epicpanel_* unreachable, access_log platform-
+owned). (5) UI: WebServerConfigCard (frontend/src/components) — tabbed
+Presets/Redirects/Locations/Headers/Access/Error Pages/Advanced with
+history+rollback, validate dry-run with would-drop warnings, presets
+that fill sections without wiping others; legacy textarea only for
+non-nginx sites. New: internal/nginxcfg tests (30 cases incl. legacy
+superset + save/render agreement), agent layered-render tests, REAL
+`nginx -t` integration test (isolated prefix, unprivileged listeners;
+positive + tamper-rejected), API lifecycle test (versions, rollback,
+conflicts, cross-tenant 404, role gates). Verified: build green,
+nginxcfg/agent/websites/authzmatrix/api suites green on disposable PG
+54329, tsc + vite build green, phase12Routes + authzmatrix probes +
+openapi_gen (237 ops) synced.
+
+
 ADR-065 — Private-repo deploys + running directory (deploy web_dir) (2026-09-26).
 (1) PRIVATE REPOS were already supported end-to-end (encrypted deploy_token
 at rest -> agent decrypts -> withGitToken injects https://epicpanel:<token>@

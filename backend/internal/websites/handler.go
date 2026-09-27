@@ -158,6 +158,10 @@ func (h *Handler) Register(mux *http.ServeMux, requireAgent func(http.HandlerFun
 	mux.HandleFunc("GET /v1/organizations/{org_id}/websites/{website_id}/jobs", h.requireOrg(organizations.RoleDeveloper, h.ListJobs))
 	mux.HandleFunc("GET /v1/organizations/{org_id}/websites/{website_id}/config", h.requireOrg(organizations.RoleBilling, h.GetConfig))
 	mux.HandleFunc("GET /v1/organizations/{org_id}/websites/{website_id}/usage", h.requireOrg(organizations.RoleBilling, h.GetUsage))
+	mux.HandleFunc("PUT /v1/organizations/{org_id}/websites/{website_id}/config", h.requireOrg(organizations.RoleDeveloper, h.SetSiteConfig))
+	mux.HandleFunc("POST /v1/organizations/{org_id}/websites/{website_id}/config/validate", h.requireOrg(organizations.RoleDeveloper, h.ValidateSiteConfig))
+	mux.HandleFunc("GET /v1/organizations/{org_id}/websites/{website_id}/config/versions", h.requireOrg(organizations.RoleBilling, h.ListConfigVersions))
+	mux.HandleFunc("POST /v1/organizations/{org_id}/websites/{website_id}/config/rollback", h.requireOrg(organizations.RoleDeveloper, h.RollbackConfig))
 	mux.HandleFunc("PUT /v1/organizations/{org_id}/websites/{website_id}/config/rewrite", h.requireOrg(organizations.RoleDeveloper, h.SetRewriteRules))
 	mux.HandleFunc("GET /v1/organizations/{org_id}/websites/{website_id}/app", h.requireOrg(organizations.RoleBilling, h.GetApp))
 	mux.HandleFunc("PUT /v1/organizations/{org_id}/websites/{website_id}/app", h.requireOrg(organizations.RoleDeveloper, h.SetApp))
@@ -1101,6 +1105,7 @@ func (h *Handler) buildDesiredPayload(ctx context.Context, ws *Website, orgID uu
 	if h.Configs != nil {
 		if cfg, err := h.Configs.Get(ctx, ws.ID); err == nil {
 			payload.RewriteRules = cfg.RewriteRules
+			payload.SiteConfig = cfg.Config
 		}
 	}
 	if h.Domains != nil {

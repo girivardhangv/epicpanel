@@ -13,6 +13,7 @@ import { Card, CardHeader, StatusBadge, EmptyState, SkeletonRows } from '@/compo
 import { PageTitle, UsageCard, MiniItem, Breadcrumbs } from '@/components/ref'
 import { Modal, Field, ErrorNote, Select } from '@/components/ui'
 import { WordPressModal } from '@/components/WordPressModal'
+import { WebServerConfigCard } from '@/components/WebServerConfigCard'
 import { fmtBytes, timeAgo } from '@/lib/types'
 import type { Website, Database, Domain } from '@/lib/types'
 
@@ -46,10 +47,6 @@ export function SiteDetailPage() {
   const [showWP, setShowWP] = useState(false)
   const [showDelete, setShowDelete] = useState(false)
   const [err, setErr] = useState('')
-  const [rules, setRules] = useState('')
-  const [rulesBusy, setRulesBusy] = useState(false)
-  const [rulesErr, setRulesErr] = useState('')
-  const [rulesSaved, setRulesSaved] = useState('')
   const [serverRuntimes, setServerRuntimes] = useState<{ type: string; version: string; status: string }[]>([])
   const [wsBusy, setWsBusy] = useState(false)
   const [wsMsg, setWsMsg] = useState('')
@@ -107,7 +104,6 @@ export function SiteDetailPage() {
 
   useEffect(() => {
     void load()
-    void loadConfig()
   }, [org?.id, websiteId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const deleteSite = async () => {
@@ -378,29 +374,6 @@ export function SiteDetailPage() {
     }, 2000)
     return () => clearInterval(t)
   }, [lifeAction, org?.id, websiteId]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  const loadConfig = async () => {
-    if (!org) return
-    try {
-      const cfg = await api.get<{ rewrite_rules: string }>(`/v1/organizations/${org.id}/websites/${websiteId}/config`)
-      setRules(cfg.rewrite_rules ?? '')
-    } catch { /* first load before card mounts */ }
-  }
-
-  const saveRules = async () => {
-    if (!org) return
-    setRulesErr('')
-    setRulesBusy(true)
-    try {
-      await api.put(`/v1/organizations/${org.id}/websites/${websiteId}/config/rewrite`, { rewrite_rules: rules })
-      setRulesSaved('Saved — the web server config is being updated.')
-      setTimeout(() => setRulesSaved(''), 4000)
-    } catch (ex: any) {
-      setRulesErr(ex.message)
-    } finally {
-      setRulesBusy(false)
-    }
-  }
 
   const loadUsage = async () => {
     if (!org) return
@@ -963,26 +936,10 @@ export function SiteDetailPage() {
         {wsMsg && <div className="mt-3 rounded-[9px] border border-[#cef0e1] bg-ok-soft px-3 py-2 text-[11px] font-semibold text-ok">{wsMsg}</div>}
       </Card>
 
-      {/* Rewrite rules */}
-      <Card className="mb-4">
-        <CardHeader className="mx-4 mt-4 !mb-0" title="Rewrite Rules & Custom Config" subtitle="nginx directives applied to every server block of this site" />
-        <p className="mb-3 text-[11px] leading-relaxed text-muted">
-          Allowed: <code className="rounded bg-surface-2 px-1">rewrite</code>, <code className="rounded bg-surface-2 px-1">return</code>, <code className="rounded bg-surface-2 px-1">if</code>, <code className="rounded bg-surface-2 px-1">try_files</code>, <code className="rounded bg-surface-2 px-1">add_header</code>, <code className="rounded bg-surface-2 px-1">deny</code>, <code className="rounded bg-surface-2 px-1">allow</code>, <code className="rounded bg-surface-2 px-1">expires</code>, <code className="rounded bg-surface-2 px-1">error_page</code>, <code className="rounded bg-surface-2 px-1">client_max_body_size</code>.
-        </p>
-        <textarea
-          className="input min-h-[120px] font-mono text-[12px]"
-          value={rules}
-          onChange={(e) => setRules(e.target.value)}
-          placeholder={'# e.g. serve .php for legacy .html URLs:\nlocation ~ \\.html$ {\n\trewrite ^(.*)\\.html$ $1.php last;\n}'}
-        />
-        {rulesErr && <div className="mt-2 rounded-[9px] border border-[#ffd0d7] bg-danger-soft px-3 py-2 text-[11px] font-semibold text-danger">{rulesErr}</div>}
-        {rulesSaved && <div className="mt-2 rounded-[9px] border border-[#cef0e1] bg-ok-soft px-3 py-2 text-[11px] font-semibold text-ok">{rulesSaved}</div>}
-        <div className="mt-3 flex justify-end">
-          <button className="btn-primary" onClick={saveRules} disabled={rulesBusy}>
-            {rulesBusy ? 'Applying…' : 'Save & Apply'}
-          </button>
-        </div>
-      </Card>
+      {/* Web server configuration (ADR-068: context-aware, tabbed) */}
+      {org && (
+        <WebServerConfigCard orgId={org.id} websiteId={site.id} webServer={site.web_server || 'nginx'} />
+      )}
 
       {/* App process */}
       {(site.runtime === 'node' || site.runtime === 'python' || site.runtime === 'go') && (

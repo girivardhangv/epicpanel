@@ -185,10 +185,10 @@ func (e *Executor) DeployGit(ctx context.Context, spec DeploySpec) (*DeployOutco
 			envStash, hadEnv = string(b), true
 		}
 		prevSHA, _ := execGitSHA(ctx, workdir)
-		if err := e.run(ctx, "git", "-C", workdir, "fetch", "--depth", "1", "origin", branch); err != nil {
+		if err := e.run(ctx, "git", gitArgv(workdir, "fetch", "--depth", "1", "origin", branch)...); err != nil {
 			// Dumb-HTTP remotes and some mirrors don't support shallow fetch;
 			// fall back to a full fetch before failing the deployment.
-			if err2 := e.run(ctx, "git", "-C", workdir, "fetch", "origin", branch); err2 != nil {
+			if err2 := e.run(ctx, "git", gitArgv(workdir, "fetch", "origin", branch)...); err2 != nil {
 				return nil, fmt.Errorf("git fetch: %w", err2)
 			}
 		}
@@ -197,7 +197,7 @@ func (e *Executor) DeployGit(ctx context.Context, spec DeploySpec) (*DeployOutco
 		} else {
 			log.stepf("running directory %q present in the fetched tree", strings.Trim(spec.WebDir, "/"))
 		}
-		if err := e.run(ctx, "git", "-C", workdir, "reset", "--hard", "FETCH_HEAD"); err != nil {
+		if err := e.run(ctx, "git", gitArgv(workdir, "reset", "--hard", "FETCH_HEAD")...); err != nil {
 			return nil, fmt.Errorf("git reset: %w", err)
 		}
 		if hadEnv {
@@ -220,7 +220,7 @@ func (e *Executor) DeployGit(ctx context.Context, spec DeploySpec) (*DeployOutco
 				// Best effort: put the previous commit back so the site keeps
 				// serving old code instead of a half-built tree.
 				if prevSHA != "" {
-					_ = e.run(ctx, "git", "-C", workdir, "reset", "--hard", prevSHA)
+					_ = e.run(ctx, "git", gitArgv(workdir, "reset", "--hard", prevSHA)...)
 				}
 				return nil, fmt.Errorf("release build failed (workdir reset to previous commit): %w", buildErr)
 			}
@@ -359,7 +359,7 @@ func (e *Executor) deployFailureRestore(ctx context.Context, websiteID, workdir 
 			if b, err := os.ReadFile(envPath); err == nil {
 				envStash, hadEnv = string(b), true
 			}
-			_ = e.run(ctx, "git", "-C", workdir, "reset", "--hard", prev)
+			_ = e.run(ctx, "git", gitArgv(workdir, "reset", "--hard", prev)...)
 			if hadEnv {
 				_ = os.WriteFile(envPath, []byte(envStash), 0o600)
 			}
@@ -388,7 +388,7 @@ func (e *Executor) deployFailureRestore(ctx context.Context, websiteID, workdir 
 func gitPrevSHA(ctx context.Context, workdir, newSHA string) (string, error) {
 	c, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(c, "git", "-C", workdir, "reflog", "--format=%H", "-n", "10").Output()
+	out, err := exec.CommandContext(c, "git", gitArgv(workdir, "reflog", "--format=%H", "-n", "10")...).Output()
 	if err != nil {
 		return "", err
 	}
@@ -417,12 +417,12 @@ func (e *Executor) RollbackGit(ctx context.Context, websiteID, targetReleaseDir,
 		}
 		c, cancel := context.WithTimeout(ctx, 30*time.Second)
 		catFile := func() error {
-			return exec.CommandContext(c, "git", "-C", workdir, "cat-file", "-e", sha+"^{commit}").Run()
+			return exec.CommandContext(c, "git", gitArgv(workdir, "cat-file", "-e", sha+"^{commit}")...).Run()
 		}
 		if err := catFile(); err != nil {
 			// Shallow history (deploys fetch --depth 1) doesn't carry the old
 			// commit — unshallow once, then re-check.
-			_ = e.run(ctx, "git", "-C", workdir, "fetch", "--unshallow", "origin")
+			_ = e.run(ctx, "git", gitArgv(workdir, "fetch", "--unshallow", "origin")...)
 			if catErr := catFile(); catErr != nil {
 				cancel()
 				return nil, fmt.Errorf("commit %s not found in the site's git history: %w", sha, catErr)
@@ -434,7 +434,7 @@ func (e *Executor) RollbackGit(ctx context.Context, websiteID, targetReleaseDir,
 		if b, err := os.ReadFile(envPath); err == nil {
 			envStash, hadEnv = string(b), true
 		}
-		if err := e.run(ctx, "git", "-C", workdir, "reset", "--hard", sha); err != nil {
+		if err := e.run(ctx, "git", gitArgv(workdir, "reset", "--hard", sha)...); err != nil {
 			return nil, fmt.Errorf("git reset: %w", err)
 		}
 		if hadEnv {
@@ -598,7 +598,7 @@ func checkFetchedWebDir(ctx context.Context, workdir, webDir string) error {
 	}
 	c, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(c, "git", "-C", workdir, "ls-tree", "--name-only", "FETCH_HEAD", "--", webDir).Output()
+	out, err := exec.CommandContext(c, "git", gitArgv(workdir, "ls-tree", "--name-only", "FETCH_HEAD", "--", webDir)...).Output()
 	if err != nil || len(strings.TrimSpace(string(out))) == 0 {
 		return fmt.Errorf("running directory %q not found in the fetched tree — check the deployment web_dir setting", webDir)
 	}
@@ -637,10 +637,20 @@ func decodeDeployToken(cipherB64 string) (string, error) {
 	return secretbox.Decrypt(raw)
 }
 
+// gitSafePrefix is prepended to every git invocation that operates on a
+// site tree: the agent runs git as root while the workdir/gitdir are owned
+// by the site user after the chown — without safe.directory git refuses
+// with "detected dubious ownership" (caught live on the second deploy).
+// safe.directory=* is protected config; passing it on the command line
+// keeps the exception scoped to the agent's own invocations.
+func gitArgv(workdir string, args ...string) []string {
+	return append([]string{"-c", "safe.directory=*", "-C", workdir}, args...)
+}
+
 func execGitSHA(ctx context.Context, dir string) (string, error) {
 	c, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(c, "git", "-C", dir, "rev-parse", "HEAD").Output()
+	out, err := exec.CommandContext(c, "git", gitArgv(dir, "rev-parse", "HEAD")...).Output()
 	if err != nil {
 		return "", err
 	}

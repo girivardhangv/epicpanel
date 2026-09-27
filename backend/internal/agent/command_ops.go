@@ -92,6 +92,19 @@ func (e *Executor) RunSiteCommand(ctx context.Context, p CommandPayload) (*Comma
 			workDir = appDir
 		}
 	}
+	siteBase := filepath.Join(e.docRootBase, p.WebsiteID)
+
+	// Project commands live at the PROJECT ROOT, which for git-deployed
+	// sites is the RELEASE ROOT (<site>/public) — one level ABOVE the
+	// running-directory docroot (<site>/public/<web_dir>): composer.json and
+	// artisan are never inside public/. Walk up (bounded by the web root)
+	// to where the project actually is; plain sites resolve to the docroot.
+	switch p.Argv[0] {
+	case "composer":
+		workDir = projectDirFor(workDir, siteBase, "composer.json")
+	case "artisan":
+		workDir = projectDirFor(workDir, siteBase, "artisan")
+	}
 
 	uid, gid, err := siteOwnerIDs(p.WebsiteID)
 	if err != nil {
@@ -145,4 +158,29 @@ func (e *Executor) RunSiteCommand(ctx context.Context, p CommandPayload) (*Comma
 		}
 	}
 	return &CommandOutcome{Output: output, Dir: workDir}, nil
+}
+
+// projectDirFor walks up from workDir (bounded by the site's web root so it
+// never leaves the release) to the nearest directory containing marker
+// (composer.json / artisan). Falls back to workDir when the marker is not
+// found — the caller's error then reflects reality.
+func projectDirFor(workDir, siteBase, marker string) string {
+	webRoot := filepath.Join(siteBase, "public")
+	dir := workDir
+	for {
+		if fileExists(filepath.Join(dir, marker)) {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir || parent == webRoot && !strings.HasPrefix(workDir, webRoot) {
+			break
+		}
+		// Never walk above the web root: everything above it is panel-owned
+		// site scaffolding (logs/, tmp/, releases history), not the project.
+		if !strings.HasPrefix(parent, webRoot+string(filepath.Separator)) && parent != webRoot {
+			break
+		}
+		dir = parent
+	}
+	return workDir
 }

@@ -169,3 +169,38 @@ func TestCarryOverSqliteData(t *testing.T) {
 		t.Fatalf("sqlite data carry-over: %v", err)
 	}
 }
+
+// TestProjectDirFor — project commands (composer/artisan) must run at the
+// PROJECT ROOT: for git-deployed sites the docroot is the release's running
+// directory (<site>/public/<web_dir>) while composer.json/artisan live at
+// the release root (<site>/public) — one level up, inside the web root.
+func TestProjectDirFor(t *testing.T) {
+	site := t.TempDir()
+	webRoot := filepath.Join(site, "public")
+	docroot := filepath.Join(webRoot, "public")
+	if err := os.MkdirAll(docroot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// composer.json at the release root (web root symlink level).
+	if err := os.WriteFile(filepath.Join(webRoot, "composer.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := projectDirFor(docroot, site, "composer.json"); got != webRoot {
+		t.Fatalf("composer must run at the release root, got %q", got)
+	}
+	// artisan missing → fallback to the caller's workDir.
+	if got := projectDirFor(docroot, site, "artisan"); got != docroot {
+		t.Fatalf("missing marker must fall back to workDir, got %q", got)
+	}
+	// Marker at the docroot itself wins.
+	if err := os.WriteFile(filepath.Join(docroot, "artisan"), []byte("#!/usr/bin/env php"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := projectDirFor(docroot, site, "artisan"); got != docroot {
+		t.Fatalf("marker at docroot must win, got %q", got)
+	}
+	// Never walks above the web root (panel scaffolding is not the project).
+	if got := projectDirFor(webRoot, site, "composer.json"); got != webRoot {
+		t.Fatalf("must stop at the web root, got %q", got)
+	}
+}

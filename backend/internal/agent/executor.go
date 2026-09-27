@@ -28,6 +28,9 @@ type Executor struct {
 	now         func() time.Time
 	bwStatePath string
 	bwLogDir    string
+	// chownFn is injectable for tests running without root (defaults to
+	// chownRecursive); same seam family as nowFn/bwStatePath.
+	chownFn func(root string, uid, gid int) error
 	// HTTPMonthEgress is wired by main to the global accounting-log
 	// accountant (nil in tests → nft-only accounting): the site's HTTP
 	// month-to-date bytes (request + response) from the platform-owned
@@ -36,7 +39,7 @@ type Executor struct {
 }
 
 func NewExecutor() *Executor {
-	return &Executor{docRootBase: "/srv/epicpanel/websites", ctx: context.Background(), pm: DetectPackageManager(), now: time.Now, bwStatePath: bwStatePath, bwLogDir: bwLogDir}
+	return &Executor{docRootBase: "/srv/epicpanel/websites", ctx: context.Background(), pm: DetectPackageManager(), now: time.Now, bwStatePath: bwStatePath, bwLogDir: bwLogDir, chownFn: chownRecursive}
 }
 
 func (e *Executor) ensureBaseDirs() error {
@@ -123,6 +126,17 @@ func effectiveDocroot(siteBase, suffix string, materialize bool) (string, error)
 	if rel == "" || rel == "." || strings.HasPrefix(rel, "..") {
 		return "", fmt.Errorf("invalid docroot suffix %q", suffix)
 	}
+	// Strict charset: this path lands in nginx `root` and FPM pool
+	// directives. Anything nginx/php-fpm treat as syntax (spaces, $, ;, {},
+	// quotes, glob chars) must never reach the rendered configs — a single
+	// bad value bricks the vhost (nginx -t fails, site stuck failed).
+	for _, r := range rel {
+		ok := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' ||
+			r == '.' || r == '_' || r == '-' || r == '/'
+		if !ok {
+			return "", fmt.Errorf("invalid docroot suffix %q (allowed: letters, digits, . _ - /)", suffix)
+		}
+	}
 	for _, seg := range strings.Split(rel, "/") {
 		if seg == "" || seg == "." || seg == ".." {
 			return "", fmt.Errorf("invalid docroot suffix %q", suffix)
@@ -208,7 +222,7 @@ func (e *Executor) ProvisionWebsite(ctx context.Context, payload ProvisionPayloa
 		return nil, err
 	}
 
-	if err := chownRecursive(siteBase, uid, gid); err != nil {
+	if err := e.chownFn(siteBase, uid, gid); err != nil {
 		return nil, fmt.Errorf("chown site tree: %w", err)
 	}
 

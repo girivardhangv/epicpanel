@@ -1,6 +1,7 @@
 package deployments
 
 import (
+	"regexp"
 	"context"
 	"encoding/json"
 	"log/slog"
@@ -92,6 +93,10 @@ type errStr string
 
 func (e errStr) Error() string { return string(e) }
 
+// validRelPathRe is the strict charset for running-directory values
+// (letters, digits, dot, underscore, hyphen, slash).
+var validRelPathRe = regexp.MustCompile(`^[a-zA-Z0-9._/-]+$`)
+
 func encryptToken(token string) ([]byte, error) {
 	return secretbox.Encrypt(token)
 }
@@ -182,8 +187,11 @@ func (h *Handler) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	webDir = strings.Trim(strings.TrimSpace(webDir), "/")
 	if webDir != "" {
-		if strings.Contains(webDir, "..") || strings.Count(webDir, "/") > 3 || len(webDir) > 100 {
-			httpapi.RespondError(w, httpapi.ErrValidation("web_dir must be a short relative path inside the repo"))
+		// Strict charset — the value is rendered into nginx `root` and the
+		// FPM pool; a stray space or $ bricks the vhost and the site lands
+		// in a failed re-provision loop.
+		if !validRelPathRe.MatchString(webDir) || strings.Contains(webDir, "..") || strings.Count(webDir, "/") > 3 {
+			httpapi.RespondError(w, httpapi.ErrValidation("web_dir allows only letters, digits, dot, underscore, hyphen and / (max 4 levels)"))
 			return
 		}
 	}

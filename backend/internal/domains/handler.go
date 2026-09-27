@@ -217,9 +217,10 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	// relative path of the site tree).
 	suffix := strings.Trim(strings.TrimSpace(req.DocrootSuffix), "/")
 	if suffix != "" {
-		if strings.Contains(suffix, "..") || strings.Count(suffix, "/") > 3 || len(suffix) > 100 {
+		// Strict charset (rendered into nginx root / pool directives).
+		if !validDocrootRe.MatchString(suffix) || strings.Contains(suffix, "..") || strings.Count(suffix, "/") > 3 || len(suffix) > 100 {
 			_ = h.Domains.Delete(r.Context(), orgID, d.ID)
-			httpapi.RespondError(w, httpapi.ErrValidation("docroot_suffix must be a short relative path"))
+			httpapi.RespondError(w, httpapi.ErrValidation("docroot_suffix allows only letters, digits, dot, underscore, hyphen and / (max 4 levels)"))
 			return
 		}
 		if err := h.Domains.SetDocrootSuffix(r.Context(), d.ID, suffix); err != nil {
@@ -456,3 +457,6 @@ type VerifyDNSPayload struct {
 	DomainID uuid.UUID `json:"domain_id"`
 	Domain   string    `json:"domain"`
 }
+
+// validDocrootRe is the strict charset for per-domain running directories.
+var validDocrootRe = regexp.MustCompile(`^[a-zA-Z0-9._/-]+$`)

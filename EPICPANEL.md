@@ -1582,6 +1582,20 @@ pinned by TestDeployWebDirAndServingConverge reading the pending provision
 payload). deploy payload + DeploySpec + DeployJobPayload carry web_dir.
 OpenAPI deployment-config description updated (no new routes).
 
+Session 2026-09-27h — PLAIN-FETCH DEPLOYS (release v0.5.14, master
+65401ba), owner's design call: the panel CANNOT know what an app needs,
+and the forced build gate turned every fresh clone into a failed deploy
+(composer missing -> installer script broken -> wrong default php ->
+sqlite absent). A git deploy is now EXACTLY clone + carry durable state +
+activate + serve; the composer/npm build is OPT-IN per site
+(websites.deploy_auto_build, migration 0055, PATCH deployment-config
+auto_build, UI checkbox default OFF) and the running-directory check is
+informational (warn + activate, never fail the fetch). App owners run
+composer/artisan themselves via the Commands runner (site-PHP-pinned) or
+flip the toggle. Full deploy output stays in the deployment row. The
+sqlite creation + data carry-over (v0.5.13) remain in place for
+auto_build users.
+
 Session 2026-09-27g — LARAVEL+SQLITE DEPLOYS (release v0.5.13, master
 12aa33d): the 'Full output' view surfaced the real cause — the app runs
 SQLite and the database file is gitignored, so a fresh clone lacks it;

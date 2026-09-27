@@ -1582,6 +1582,24 @@ pinned by TestDeployWebDirAndServingConverge reading the pending provision
 payload). deploy payload + DeploySpec + DeployJobPayload carry web_dir.
 OpenAPI deployment-config description updated (no new routes).
 
+Session 2026-09-27j — RUNNING-DIR CHARSET HARDENING (release v0.5.16,
+master 27a462e): user-reported "changing the running dir re-provisions the
+site and it fails" (site status flips to provisioning then failed on the
+AWS box; exact agent error not yet captured). Leading hypothesis: a
+web_dir value with characters nginx treats as syntax (space, \$, quotes)
+lands raw in the vhost root directive -> nginx -t fails -> provision
+fails -> site stuck failed. Hardened ALL THREE layers with one charset
+rule (letters, digits, . _ - /; no '..'; max 4 levels): deployments
+web_dir, domains docroot_suffix (same pre-existing gap), and agent-side
+effectiveDocroot (defense in depth for older control planes). Traversal
+check restored next to the regex (regex alone allowed '../etc').
+TestProvisionWebDirRepro pins the deployed-site provision flow (public
+symlink + web_dir) up to the root-only boundary; chownFn seam added to
+the Executor for non-root tests. OPEN ITEM: capture the actual
+failed-provision error from the AWS job console to confirm; recovery for
+an affected site = set web_dir to a clean value (e.g. public) -> converge
+-> provision succeeds.
+
 Session 2026-09-27i — COMMANDS RUN AT THE PROJECT ROOT (release v0.5.15,
 master 80b1cd7): with plain-fetch deploys the site 500s until vendor/
 exists, and the Commands runner could not fix it — it ran everything in

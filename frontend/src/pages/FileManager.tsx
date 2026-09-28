@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import {
   ArrowLeft, Folder, FileText, Trash2, Pencil, Download, Upload,
-  FilePlus, FolderPlus, ChevronRight, Save, X, Search,
+  FilePlus, FolderPlus, ChevronRight, Save, X, Search, PackageOpen, Copy,
+  FolderInput, FileArchive,
 } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
@@ -30,11 +31,17 @@ export function FileManagerPage() {
   const [editing, setEditing] = useState<{ path: string; content: string } | null>(null)
   const [saveBusy, setSaveBusy] = useState(false)
   const [filter, setFilter] = useState('')
+  const [notice, setNotice] = useState('')
+  // {kind, entry} — path-prompt for extract/copy/move/compress
+  const [prompt, setPrompt] = useState<{ kind: 'extract' | 'copy' | 'move' | 'compress'; entry: Entry } | null>(null)
+  const [promptTo, setPromptTo] = useState('')
+  const [promptErr, setPromptErr] = useState('')
 
   const base = `/v1/organizations/${org?.id}/websites/${websiteId}/files`
 
   const load = useCallback(async (p: string) => {
     setError('')
+    setNotice('')
     try {
       const r = await api.get<{ entries: Entry[] }>(`${base}?path=${encodeURIComponent(p)}`)
       setEntries([...r.entries].sort((a, b) => (a.is_dir === b.is_dir ? a.name.localeCompare(b.name) : a.is_dir ? -1 : 1)))
@@ -65,6 +72,48 @@ export function FileManagerPage() {
   const rename = async (e: Entry, to: string) => {
     await api.patch(base, { path: join(path, e.name), to: join(path, to) })
     await load(path)
+  }
+
+  const extract = async (e: Entry, to: string) => {
+    const r = await api.post<{ entries: number }>(`${base}/extract`, {
+      path: join(path, e.name), to: to === '' ? path : to, overwrite: false,
+    })
+    setNotice(`Extracted ${r.entries} entries from ${e.name}.`)
+    await load(path)
+  }
+
+  const copy = async (e: Entry, to: string) => {
+    await api.post(`${base}/copy`, { path: join(path, e.name), to })
+    setNotice(`Copied ${e.name}.`)
+    await load(path)
+  }
+
+  const move = async (e: Entry, destDir: string) => {
+    const dest = destDir === '/' ? e.name : destDir.replace(/\/$/, '') + '/' + e.name
+    await api.patch(base, { path: join(path, e.name), to: dest })
+    setNotice(`Moved ${e.name} to ${destDir}.`)
+    await load(path)
+  }
+
+  const compress = async (e: Entry, to: string) => {
+    const r = await api.post<{ files: number }>(`${base}/compress`, {
+      paths: [join(path, e.name)], to: to || e.name + '.zip',
+    })
+    setNotice(`Compressed ${r.files} files into ${to || e.name + '.zip'}.`)
+    await load(path)
+  }
+
+  const runPrompt = async () => {
+    if (!prompt) return
+    try {
+      if (prompt.kind === 'extract') await extract(prompt.entry, promptTo)
+      else if (prompt.kind === 'copy') await copy(prompt.entry, promptTo)
+      else if (prompt.kind === 'move') await move(prompt.entry, promptTo)
+      else await compress(prompt.entry, promptTo)
+      setPrompt(null)
+    } catch (ex: any) {
+      setPromptErr(ex.message)
+    }
   }
 
   const create = async (name: string, type: 'dir' | 'file') => {
@@ -149,6 +198,9 @@ export function FileManagerPage() {
           {error} — check the path or refresh.
         </div>
       )}
+      {notice && (
+        <div className="mb-4 rounded-[9px] border border-[#cef0e1] bg-ok-soft px-3 py-2 text-[11px] font-semibold text-ok">{notice}</div>
+      )}
 
       <Card className="!p-0">
         <div className="flex items-center gap-2 border-b border-line bg-[#fbfcfe] px-4 py-3">
@@ -173,11 +225,36 @@ export function FileManagerPage() {
                   onEdit={e.is_dir ? undefined : () => openEditor(e)}
                   onDelete={() => del(e)}
                   onRename={(to) => rename(e, to)}
+                  onAction={(kind) => { setPromptErr(''); setPromptTo(kind === 'extract' ? path : kind === 'move' ? '/' : kind === 'compress' ? e.name + '.zip' : join(path, e.name)); setPrompt({ kind, entry: e }) }}
                 />
               ))}
           </div>
         )}
       </Card>
+
+      {/* Extract / copy / move / compress path prompt */}
+      <Modal open={!!prompt} onClose={() => setPrompt(null)} title={{
+        extract: `Extract ${prompt?.entry.name ?? ''} to`,
+        copy: `Copy ${prompt?.entry.name ?? ''} to`,
+        move: `Move ${prompt?.entry.name ?? ''} to folder`,
+        compress: 'Compress to zip archive',
+      }[prompt?.kind ?? 'extract']}>
+        <ErrorNote message={promptErr} />
+        {prompt?.kind === 'compress' ? (
+          <Field label="Archive name">
+            <input className="input" value={promptTo} onChange={(ev) => setPromptTo(ev.target.value)} autoFocus
+              onKeyDown={(ev) => ev.key === 'Enter' && runPrompt()} placeholder="archive.zip" />
+          </Field>
+        ) : (
+          <Field label={prompt?.kind === 'move' ? 'Destination folder (site-relative)' : 'Destination path (site-relative)'}>
+            <input className="input font-mono" value={promptTo} onChange={(ev) => setPromptTo(ev.target.value)} autoFocus
+              onKeyDown={(ev) => ev.key === 'Enter' && runPrompt()} placeholder={prompt?.kind === 'move' ? '/' : '/public_html/target'} />
+          </Field>
+        )}
+        <button className="btn-brand w-full justify-center" onClick={runPrompt} disabled={!promptTo}>
+          {prompt?.kind === 'extract' ? 'Extract' : prompt?.kind === 'copy' ? 'Copy' : prompt?.kind === 'move' ? 'Move' : 'Compress'}
+        </button>
+      </Modal>
 
       {/* Editor */}
       <Modal open={!!editing} onClose={() => setEditing(null)} title={`Editing ${editing?.path ?? ''}`} width="max-w-3xl">
@@ -202,7 +279,9 @@ export function FileManagerPage() {
   )
 }
 
-function FileRow({ entry: e, downloadBase, dirPath, onOpen, onEdit, onDelete, onRename }: {
+const extractable = (name: string) => /\.(zip|tar|tar\.gz|tgz)$/i.test(name)
+
+function FileRow({ entry: e, downloadBase, dirPath, onOpen, onEdit, onDelete, onRename, onAction }: {
   entry: Entry
   downloadBase: string
   dirPath: string
@@ -210,6 +289,7 @@ function FileRow({ entry: e, downloadBase, dirPath, onOpen, onEdit, onDelete, on
   onEdit?: () => void
   onDelete: () => void
   onRename: (to: string) => void
+  onAction: (kind: 'extract' | 'copy' | 'move' | 'compress') => void
 }) {
   const [renaming, setRenaming] = useState(false)
   const [to, setTo] = useState(e.name)
@@ -261,6 +341,20 @@ function FileRow({ entry: e, downloadBase, dirPath, onOpen, onEdit, onDelete, on
         )}
         <button className="rounded-lg p-2 text-sub transition hover:bg-app hover:text-ink" onClick={() => { setTo(e.name); setRenaming(true) }} title="Rename" aria-label={`Rename ${e.name}`}>
           <Pencil size={15} />
+        </button>
+        {!e.is_dir && extractable(e.name) && (
+          <button className="rounded-lg p-2 text-sub transition hover:bg-app hover:text-ink" onClick={() => onAction('extract')} title="Extract archive" aria-label={`Extract ${e.name}`}>
+            <PackageOpen size={15} />
+          </button>
+        )}
+        <button className="rounded-lg p-2 text-sub transition hover:bg-app hover:text-ink" onClick={() => onAction('copy')} title="Copy" aria-label={`Copy ${e.name}`}>
+          <Copy size={15} />
+        </button>
+        <button className="rounded-lg p-2 text-sub transition hover:bg-app hover:text-ink" onClick={() => onAction('move')} title="Move to folder" aria-label={`Move ${e.name}`}>
+          <FolderInput size={15} />
+        </button>
+        <button className="rounded-lg p-2 text-sub transition hover:bg-app hover:text-ink" onClick={() => onAction('compress')} title="Compress to zip" aria-label={`Compress ${e.name}`}>
+          <FileArchive size={15} />
         </button>
         <button className="rounded-lg p-2 text-sub transition hover:border-[#ffd0d7] hover:bg-danger-soft hover:text-danger" onClick={onDelete} title="Delete" aria-label={`Delete ${e.name}`}>
           <Trash2 size={15} />

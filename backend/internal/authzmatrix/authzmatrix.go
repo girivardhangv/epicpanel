@@ -59,6 +59,7 @@ var probeTable = []routeProbe{
 	{"GET", "/v1/admin/observability/customers", "admin", ""},
 	{"GET", "/v1/admin/observability/workloads", "admin", ""},
 	{"GET", "/v1/admin/users", "admin", ""},
+	{"POST", "/v1/organizations/{org_id}/servers/{server_id}/services/{service}/restart", "admin", ""},
 	// Platform admin API key management: list reachable by key, but
 	// create/revoke are session-only (a leaked key must not mint keys).
 	{"GET", "/v1/admin/api-keys", "admin", ""},
@@ -80,6 +81,10 @@ var probeTable = []routeProbe{
 	{"PUT", "/v1/organizations/{org_id}/websites/{website_id}/config", "customer", "developer"},
 	{"POST", "/v1/organizations/{org_id}/websites/{website_id}/config/validate", "customer", "developer"},
 	{"POST", "/v1/organizations/{org_id}/websites/{website_id}/config/rollback", "customer", "developer"},
+	{"POST", "/v1/organizations/{org_id}/websites/{website_id}/reconcile", "customer", "admin"},
+	{"POST", "/v1/organizations/{org_id}/websites/{website_id}/files/extract", "customer", "developer"},
+	{"POST", "/v1/organizations/{org_id}/websites/{website_id}/files/copy", "customer", "developer"},
+	{"POST", "/v1/organizations/{org_id}/websites/{website_id}/files/compress", "customer", "developer"},
 	{"PUT", "/v1/organizations/{org_id}/websites/{website_id}/config/rewrite", "customer", "developer"},
 	{"GET", "/v1/organizations/{org_id}/websites/{website_id}/bandwidth", "customer", "any"},
 	{"PATCH", "/v1/organizations/{org_id}/websites/{website_id}/quota", "customer", "admin"},

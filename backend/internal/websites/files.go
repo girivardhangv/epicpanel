@@ -22,7 +22,18 @@ import (
 // SiteRoot is the filesystem boundary for the file manager. All operations
 // are confined to /srv/epicpanel/websites/<websiteID>/ — enforced by
 // resolving the real path and verifying containment (symlink-proof).
-const SiteRoot = "/srv/epicpanel/websites"
+// A var (not const) ONLY so integration tests can repoint it at a temp dir.
+var SiteRoot = "/srv/epicpanel/websites"
+
+// Extraction/copy resource caps: an uploaded archive must never be able to
+// exhaust the node (zip bomb / decompression-bomb guard).
+const (
+	extractMaxEntries      = 20000       // files+dirs per archive
+	extractMaxEntrySize    = 512 << 20   // 512 MB per uncompressed entry
+	extractMaxTotalSize    = 2 << 30     // 2 GB total uncompressed
+	compressMaxInputSize   = 2 << 30     // 2 GB total compressed input selection
+	copyMaxTotalSize       = 2 << 30     // 2 GB per copy operation
+)
 
 // Register mounts the file manager routes (org-scoped + RBAC).
 func (h *Handler) RegisterFiles(mux *http.ServeMux) {
@@ -30,6 +41,9 @@ func (h *Handler) RegisterFiles(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/organizations/{org_id}/websites/{website_id}/files/content", h.requireOrg(organizations.RoleDeveloper, h.filesRead))
 	mux.HandleFunc("PUT /v1/organizations/{org_id}/websites/{website_id}/files/content", h.requireOrg(organizations.RoleDeveloper, h.filesWrite))
 	mux.HandleFunc("POST /v1/organizations/{org_id}/websites/{website_id}/files", h.requireOrg(organizations.RoleDeveloper, h.filesCreate))
+	mux.HandleFunc("POST /v1/organizations/{org_id}/websites/{website_id}/files/extract", h.requireOrg(organizations.RoleDeveloper, h.filesExtract))
+	mux.HandleFunc("POST /v1/organizations/{org_id}/websites/{website_id}/files/copy", h.requireOrg(organizations.RoleDeveloper, h.filesCopy))
+	mux.HandleFunc("POST /v1/organizations/{org_id}/websites/{website_id}/files/compress", h.requireOrg(organizations.RoleDeveloper, h.filesCompress))
 	mux.HandleFunc("PATCH /v1/organizations/{org_id}/websites/{website_id}/files", h.requireOrg(organizations.RoleDeveloper, h.filesRename))
 	mux.HandleFunc("DELETE /v1/organizations/{org_id}/websites/{website_id}/files", h.requireOrg(organizations.RoleDeveloper, h.filesDelete))
 	mux.HandleFunc("GET /v1/organizations/{org_id}/websites/{website_id}/files/download", h.requireOrg(organizations.RoleDeveloper, h.filesDownload))
@@ -73,6 +87,14 @@ func safeJoin(base, rel string) (string, error) {
 		return "", fmt.Errorf("path escapes site boundary")
 	}
 	return resolved, nil
+}
+
+// chownToSiteOwner keeps extracted/copied/written files owned by the site's
+// unix user (best-effort; the API runs as root on managed nodes).
+func (h *Handler) chownToSiteOwner(base, p string) {
+	if uid, gid, err := siteOwnerIDsFromPath(base); err == nil {
+		_ = os.Chown(p, uid, gid)
+	}
 }
 
 type fileEntry struct {
@@ -203,9 +225,7 @@ func (h *Handler) filesWrite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Keep site ownership consistent.
-	if uid, gid, err := siteOwnerIDsFromPath(base); err == nil {
-		_ = os.Chown(p, uid, gid)
-	}
+	h.chownToSiteOwner(base, p)
 	h.auditUser(r, &orgID, "file.written", "website", ws.ID.String(), map[string]any{"path": req.Path})
 	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
@@ -457,9 +477,7 @@ func (h *Handler) filesUpload(w http.ResponseWriter, r *http.Request) {
 		httpapi.RespondError(w, httpapi.ErrInternal(err))
 		return
 	}
-	if uid, gid, err := siteOwnerIDsFromPath(base); err == nil {
-		_ = os.Chown(dst, uid, gid)
-	}
+	h.chownToSiteOwner(base, dst)
 	h.auditUser(r, &orgID, "file.uploaded", "website", ws.ID.String(), map[string]any{"path": r.URL.Query().Get("path"), "name": name})
 	httpapi.WriteJSON(w, http.StatusCreated, map[string]any{"ok": true, "name": name})
 }

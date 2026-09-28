@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "dev:customer": "vite --config apps/customer/vite.config.ts",
-    "build": "tsc -b && vite build && vite build --config apps/customer/vite.config.ts",
+    "build": "tsc -b && vite build && vite build --config apps/customer/vite.config.ts && vite build --config apps/admin/vite.config.ts",
     "build:customer": "vite build --config apps/customer/vite.config.ts",
     "typecheck": "tsc -b",
     "preview": "vite preview"

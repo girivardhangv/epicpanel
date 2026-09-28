@@ -124,6 +124,7 @@ func (s *Server) Handler() http.Handler {
 		}
 	}
 	srvH.Register(mux)
+	srvH.RegisterServiceOps(mux)
 
 	// Live job feed for a server (software install progress on the dashboard).
 	mux.HandleFunc("GET /v1/organizations/{org_id}/servers/{server_id}/jobs", httpapi.RequireUser(func(w http.ResponseWriter, r *http.Request) {

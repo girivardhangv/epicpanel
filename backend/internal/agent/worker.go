@@ -73,6 +73,15 @@ func PollAndExecute(ctx context.Context, c *Client, e *Executor, cfg Config) (bo
 		if b, err := json.Marshal(items); err == nil {
 			resultJSON = b
 		}
+	case "restart_service":
+		var p struct {
+			Service string `json:"service"`
+		}
+		if err := json.Unmarshal(job.Payload, &p); err != nil {
+			execErr = err
+		} else {
+			execErr = e.RestartService(ctx, p.Service)
+		}
 	case "site_usage":
 		var p SiteUsageJobPayload
 		if err := json.Unmarshal(job.Payload, &p); err != nil {

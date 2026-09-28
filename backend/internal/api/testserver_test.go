@@ -1,8 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -205,6 +207,38 @@ func (c *testClient) do(method, path string, payload any) response {
 		// 204 No Content and empty bodies are fine
 		decoded = map[string]any{}
 	}
+	return response{status: resp.StatusCode, body: decoded}
+}
+
+// doUpload POSTs a multipart file upload (the testClient jar attaches the
+// session cookie automatically).
+func (c *testClient) doUpload(path, name string, content []byte) response {
+	c.t.Helper()
+	body := &bytes.Buffer{}
+	w := multipart.NewWriter(body)
+	fw, err := w.CreateFormFile("file", name)
+	if err != nil {
+		c.t.Fatalf("form file: %v", err)
+	}
+	if _, err := fw.Write(content); err != nil {
+		c.t.Fatalf("form write: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		c.t.Fatalf("form close: %v", err)
+	}
+	req, err := http.NewRequest("POST", c.base+path, body)
+	if err != nil {
+		c.t.Fatalf("new upload request: %v", err)
+	}
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	req.Header.Set("X-EpicPanel", "1")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		c.t.Fatalf("upload %s: %v", path, err)
+	}
+	defer resp.Body.Close()
+	var decoded map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&decoded)
 	return response{status: resp.StatusCode, body: decoded}
 }
 

@@ -267,6 +267,36 @@ func (h *Handler) convergeConfig(w http.ResponseWriter, r *http.Request, ws *Web
 	httpapi.WriteJSON(w, http.StatusOK, cfg)
 }
 
+// POST .../websites/{id}/reconcile (admin+)
+// On-demand desired-state converge: re-enqueues the idempotent provision
+// job so the agent re-renders the vhost/FPM pool from stored state. The
+// same path the hourly sweep and every config save use — exposed for ops
+// recovery (e.g. after manual server work or a failed deploy converge).
+func (h *Handler) Reconcile(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := OrgIDFromRequest(r)
+	if !ok {
+		httpapi.RespondError(w, httpapi.ErrInternal(errOrgContext))
+		return
+	}
+	ws, apiErr := h.websiteFromPath(r, orgID)
+	if apiErr != nil {
+		httpapi.RespondError(w, apiErr)
+		return
+	}
+	payload, apiErr := h.buildDesiredPayload(r.Context(), ws, orgID, ws.UnixUser, ws.RuntimeVersion)
+	if apiErr != nil {
+		httpapi.RespondError(w, apiErr)
+		return
+	}
+	job, err := h.Jobs.EnqueueIdempotent(r.Context(), ws.ServerID, &ws.ID, jobs.TypeProvisionWebsite, payload, "provision_website_"+ws.ID.String())
+	if err != nil {
+		httpapi.RespondError(w, httpapi.ErrInternal(err))
+		return
+	}
+	h.auditUser(r, &orgID, "website.reconcile_requested", "website", ws.ID.String(), nil)
+	httpapi.WriteJSON(w, http.StatusAccepted, map[string]any{"job_id": job.ID})
+}
+
 // PUT .../websites/{id}/config/rewrite {"rewrite_rules": "..."}
 // LEGACY endpoint, contract unchanged: a raw server-context snippet.
 // Validation now runs through the context-aware core (superset of the old

@@ -271,6 +271,11 @@ var phase12Routes = []string{
 	"POST /v1/organizations/{org_id}/websites/{website_id}/config/validate",
 	"GET /v1/organizations/{org_id}/websites/{website_id}/config/versions",
 	"POST /v1/organizations/{org_id}/websites/{website_id}/config/rollback",
+	"POST /v1/organizations/{org_id}/websites/{website_id}/reconcile",
+	"POST /v1/organizations/{org_id}/websites/{website_id}/files/extract",
+	"POST /v1/organizations/{org_id}/websites/{website_id}/files/copy",
+	"POST /v1/organizations/{org_id}/websites/{website_id}/files/compress",
+	"POST /v1/organizations/{org_id}/servers/{server_id}/services/{service}/restart",
 	"PUT /v1/organizations/{org_id}/websites/{website_id}/files/content",
 }
 
@@ -278,7 +283,7 @@ var phase12Routes = []string{
 const probeUUID = "00000000-0000-0000-0000-000000000001"
 
 func concretePath(pattern string) string {
-	for _, seg := range []string{"org_id", "website_id", "server_id", "user_id", "bot_id", "instance_id", "db_id", "domain_id", "record_id", "zone_id", "account_id", "key_id", "token_id", "sa_id", "cron_id", "job_id", "alert_id", "rule_id", "schedule_id", "backup_id", "runtime_id", "subscription_id", "order_id", "invoice_id", "product_id", "pkg_id", "provider", "id"} {
+	for _, seg := range []string{"org_id", "website_id", "server_id", "user_id", "bot_id", "instance_id", "db_id", "domain_id", "record_id", "zone_id", "service", "account_id", "key_id", "token_id", "sa_id", "cron_id", "job_id", "alert_id", "rule_id", "schedule_id", "backup_id", "runtime_id", "subscription_id", "order_id", "invoice_id", "product_id", "pkg_id", "provider", "id"} {
 		pattern = strings.ReplaceAll(pattern, "{"+seg+"}", probeUUID)
 	}
 	return pattern

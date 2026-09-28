@@ -4,7 +4,7 @@ import { Link, useParams } from 'react-router-dom'
 import { Globe, ArrowLeft, Folder, Clock, Network, KeyRound, History, Plus, Trash2, ShieldQuestion, RefreshCw } from 'lucide-react'
 import { api, useAuth, domainsApi, redirectsApi, fmtBytes, timeAgo, useLiveSiteSample, DynamicResourcesCard, BandwidthCard } from '@epicpanel/core'
 import type { Website, Domain, Redirect } from '@epicpanel/core'
-import { Card, CardHeader, StatusBadge, EmptyState, SkeletonRows, MiniItem, Breadcrumbs, RowActions, pushToast, UsageCard } from '@epicpanel/ui'
+import { Card, CardHeader, StatusBadge, EmptyState, SkeletonRows, MiniItem, Breadcrumbs, RowActions, pushToast, UsageCard, WebServerConfigCard } from '@epicpanel/ui'
 import { Modal, Field, ErrorNote, ConfirmDialog } from '@epicpanel/forms'
 import { SiteAppsSection } from './SiteApps'
 import { SiteDeploysSection } from './SiteDeploys'
@@ -180,6 +180,11 @@ export function SiteDetailPage() {
       {/* Git deployments: repo/branch/running-directory config (private-repo
           token write-only), deploy + rollback, history. */}
       {site && <SiteDeploysSection site={site} canManage={canManage} canRollback={myRole === 'owner' || myRole === 'admin'} onChanged={load} />}
+
+      {/* Web server configuration (ADR-068: context-aware, tabbed). */}
+      {site && canManage && org && (
+        <WebServerConfigCard orgId={org.id} websiteId={site.id} webServer={site.web_server || 'nginx'} />
+      )}
 
       {/* Domains */}
       <Card className="mb-4 overflow-hidden !p-0">

@@ -162,6 +162,7 @@ func (h *Handler) Register(mux *http.ServeMux, requireAgent func(http.HandlerFun
 	mux.HandleFunc("POST /v1/organizations/{org_id}/websites/{website_id}/config/validate", h.requireOrg(organizations.RoleDeveloper, h.ValidateSiteConfig))
 	mux.HandleFunc("GET /v1/organizations/{org_id}/websites/{website_id}/config/versions", h.requireOrg(organizations.RoleBilling, h.ListConfigVersions))
 	mux.HandleFunc("POST /v1/organizations/{org_id}/websites/{website_id}/config/rollback", h.requireOrg(organizations.RoleDeveloper, h.RollbackConfig))
+	mux.HandleFunc("POST /v1/organizations/{org_id}/websites/{website_id}/reconcile", h.requireOrg(organizations.RoleAdmin, h.Reconcile))
 	mux.HandleFunc("PUT /v1/organizations/{org_id}/websites/{website_id}/config/rewrite", h.requireOrg(organizations.RoleDeveloper, h.SetRewriteRules))
 	mux.HandleFunc("GET /v1/organizations/{org_id}/websites/{website_id}/app", h.requireOrg(organizations.RoleBilling, h.GetApp))
 	mux.HandleFunc("PUT /v1/organizations/{org_id}/websites/{website_id}/app", h.requireOrg(organizations.RoleDeveloper, h.SetApp))

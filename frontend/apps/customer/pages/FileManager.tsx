@@ -3,7 +3,8 @@ import { Spinner } from '../loading'
 import { useParams, Link } from 'react-router-dom'
 import {
   ArrowLeft, Folder, FileText, FileCode2, Trash2, Pencil, Download, Upload,
-  FilePlus, FolderPlus, Save, X, Search,
+  FilePlus, FolderPlus, Save, X, Search, PackageOpen, Copy, FolderInput,
+  FileArchive,
 } from 'lucide-react'
 import { api, useAuth, fmtBytes } from '@epicpanel/core'
 import { Card, EmptyState, SkeletonRows, Breadcrumbs, ConfirmDialog, pushToast } from '@epicpanel/ui'
@@ -49,6 +50,9 @@ export function FileManagerPage() {
   const [saveBusy, setSaveBusy] = useState(false)
   const [confirm, setConfirm] = useState<{ title: string; message: string; action: () => Promise<void> } | null>(null)
   const [confirmBusy, setConfirmBusy] = useState(false)
+  const [prompt, setPrompt] = useState<{ kind: 'extract' | 'copy' | 'move' | 'compress'; entry: Entry } | null>(null)
+  const [promptTo, setPromptTo] = useState('')
+  const [promptErr, setPromptErr] = useState('')
 
   const base = `/v1/organizations/${org?.id}/websites/${websiteId}/files`
 
@@ -91,6 +95,48 @@ export function FileManagerPage() {
   const rename = async (e: Entry, to: string) => {
     await api.patch(base, { path: join(path, e.name), to: join(path, to) })
     await load(path)
+  }
+
+  const extract = async (e: Entry, to: string) => {
+    const r = await api.post<{ entries: number }>(`${base}/extract`, {
+      path: join(path, e.name), to: to === '' ? path : to, overwrite: false,
+    })
+    pushToast('success', `Extracted ${r.entries} entries from ${e.name}.`)
+    await load(path)
+  }
+
+  const copy = async (e: Entry, to: string) => {
+    await api.post(`${base}/copy`, { path: join(path, e.name), to })
+    pushToast('success', `Copied ${e.name}.`)
+    await load(path)
+  }
+
+  const move = async (e: Entry, destDir: string) => {
+    const dest = destDir === '/' ? e.name : destDir.replace(/\/$/, '') + '/' + e.name
+    await api.patch(base, { path: join(path, e.name), to: dest })
+    pushToast('success', `Moved ${e.name} to ${destDir}.`)
+    await load(path)
+  }
+
+  const compress = async (e: Entry, to: string) => {
+    const r = await api.post<{ files: number }>(`${base}/compress`, {
+      paths: [join(path, e.name)], to: to || e.name + '.zip',
+    })
+    pushToast('success', `Compressed ${r.files} files into ${to || e.name + '.zip'}.`)
+    await load(path)
+  }
+
+  const runPrompt = async () => {
+    if (!prompt) return
+    try {
+      if (prompt.kind === 'extract') await extract(prompt.entry, promptTo)
+      else if (prompt.kind === 'copy') await copy(prompt.entry, promptTo)
+      else if (prompt.kind === 'move') await move(prompt.entry, promptTo)
+      else await compress(prompt.entry, promptTo)
+      setPrompt(null)
+    } catch (ex: any) {
+      setPromptErr(ex.message)
+    }
   }
 
   const upload = async (file: File) => {
@@ -208,6 +254,11 @@ export function FileManagerPage() {
                     onEdit={e.is_dir ? undefined : () => void openEditor(e)}
                     onDelete={() => del(e)}
                     onRename={(to) => void rename(e, to)}
+                    onAction={(kind) => {
+                      setPromptErr('')
+                      setPromptTo(kind === 'extract' ? path : kind === 'move' ? '/' : kind === 'compress' ? e.name + '.zip' : join(path, e.name))
+                      setPrompt({ kind, entry: e })
+                    }}
                   />
                 ))}
               </tbody>
@@ -236,6 +287,30 @@ export function FileManagerPage() {
         )}
       </Modal>
 
+      {/* Extract / copy / move / compress path prompt */}
+      <Modal open={!!prompt} onClose={() => setPrompt(null)} title={{
+        extract: `Extract ${prompt?.entry.name ?? ''} to`,
+        copy: `Copy ${prompt?.entry.name ?? ''} to`,
+        move: `Move ${prompt?.entry.name ?? ''} to folder`,
+        compress: 'Compress to zip archive',
+      }[prompt?.kind ?? 'extract']}>
+        <ErrorNote message={promptErr} />
+        {prompt?.kind === 'compress' ? (
+          <Field label="Archive name">
+            <input className="input" value={promptTo} onChange={(ev) => setPromptTo(ev.target.value)} autoFocus
+              onKeyDown={(ev) => ev.key === 'Enter' && void runPrompt()} placeholder="archive.zip" />
+          </Field>
+        ) : (
+          <Field label={prompt?.kind === 'move' ? 'Destination folder (site-relative)' : 'Destination path (site-relative)'}>
+            <input className="input font-mono" value={promptTo} onChange={(ev) => setPromptTo(ev.target.value)} autoFocus
+              onKeyDown={(ev) => ev.key === 'Enter' && void runPrompt()} placeholder={prompt?.kind === 'move' ? '/' : '/public_html/target'} />
+          </Field>
+        )}
+        <button className="btn-brand w-full justify-center" onClick={runPrompt} disabled={!promptTo}>
+          {prompt?.kind === 'extract' ? 'Extract' : prompt?.kind === 'copy' ? 'Copy' : prompt?.kind === 'move' ? 'Move' : 'Compress'}
+        </button>
+      </Modal>
+
       <ConfirmDialog
         open={!!confirm}
         onClose={() => setConfirm(null)}
@@ -261,7 +336,9 @@ export function FileManagerPage() {
   )
 }
 
-function FileRow({ entry: e, dirPath, base, onOpen, onEdit, onDelete, onRename }: {
+const extractable = (name: string) => /\.(zip|tar|tar\.gz|tgz)$/i.test(name)
+
+function FileRow({ entry: e, dirPath, base, onOpen, onEdit, onDelete, onRename, onAction }: {
   entry: Entry
   dirPath: string
   base: string
@@ -269,6 +346,7 @@ function FileRow({ entry: e, dirPath, base, onOpen, onEdit, onDelete, onRename }
   onEdit?: () => void
   onDelete: () => void
   onRename: (to: string) => void
+  onAction: (kind: 'extract' | 'copy' | 'move' | 'compress') => void
 }) {
   const [renaming, setRenaming] = useState(false)
   const [to, setTo] = useState(e.name)
@@ -325,6 +403,12 @@ function FileRow({ entry: e, dirPath, base, onOpen, onEdit, onDelete, onRename }
             </a>
           )}
           <button className="icon-btn" title="Rename" aria-label="Rename" onClick={() => { setTo(e.name); setRenaming(true) }}><Pencil size={13} /></button>
+          {!e.is_dir && extractable(e.name) && (
+            <button className="icon-btn" title="Extract archive" aria-label="Extract archive" onClick={() => onAction('extract')}><PackageOpen size={13} /></button>
+          )}
+          <button className="icon-btn" title="Copy" aria-label="Copy" onClick={() => onAction('copy')}><Copy size={13} /></button>
+          <button className="icon-btn" title="Move to folder" aria-label="Move to folder" onClick={() => onAction('move')}><FolderInput size={13} /></button>
+          <button className="icon-btn" title="Compress to zip" aria-label="Compress to zip" onClick={() => onAction('compress')}><FileArchive size={13} /></button>
           <button className="icon-btn hover:!border-[#ffd0d7] hover:!bg-danger-soft hover:!text-danger" title="Delete" aria-label="Delete" onClick={onDelete}><Trash2 size={13} /></button>
         </div>
       </td>

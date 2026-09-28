@@ -52,6 +52,7 @@ const (
 	TypeResumeWebsite    Type = "resume_website"
 	TypeEnforceLimits    Type = "enforce_limits"
 	TypeRecalcBandwidth  Type = "recalc_bandwidth"
+	TypeRestartService   Type = "restart_service"
 )
 
 type Status string

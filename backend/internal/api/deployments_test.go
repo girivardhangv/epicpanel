@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/epicbyte/epicpanel/backend/internal/nginxcfg"
+	"github.com/epicbyte/epicpanel/backend/internal/websites"
 	"github.com/google/uuid"
 )
 
@@ -319,6 +321,36 @@ func TestDeployWebDirAndServingConverge(t *testing.T) {
 	}
 	if pp["web_dir"] != "public" {
 		t.Fatalf("reconcile must carry web_dir (vhost drift bug), got %v", pp["web_dir"])
+	}
+
+	// SiteConfig rides along too (anti-drift): the hourly serving reconcile
+	// used to re-render the vhost with the root_location.try_files override
+	// and every other structured setting silently reverted to defaults.
+	tryFiles := "$uri $uri/ /index.php?$query_string"
+	if _, err := (&websites.ConfigStore{Pool: srv.Pool}).SetConfig(context.Background(),
+		uuid.MustParse(websiteID), &nginxcfg.SiteConfig{
+			Schema:       2,
+			RootLocation: &nginxcfg.RootLocationCfg{TryFiles: tryFiles},
+		}, nil); err != nil {
+		t.Fatalf("set site config: %v", err)
+	}
+	srv.reconcileWebsiteServing(context.Background(), uuid.MustParse(websiteID),
+		uuid.MustParse(orgID), uuid.MustParse(enroll.body["server"].(map[string]any)["id"].(string)))
+	if err := srv.Pool.QueryRow(context.Background(),
+		`SELECT payload FROM jobs WHERE website_id = $1 AND type = 'provision_website'
+		 ORDER BY created_at DESC LIMIT 1`, uuid.MustParse(websiteID)).Scan(&payloadRaw); err != nil {
+		t.Fatalf("read reconciled provision payload: %v", err)
+	}
+	if err := json.Unmarshal(payloadRaw, &pp); err != nil {
+		t.Fatalf("reconciled payload json: %v", err)
+	}
+	sc, ok := pp["site_config"].(map[string]any)
+	if !ok {
+		t.Fatalf("reconcile must carry site_config (try_files drift bug), got %v", pp["site_config"])
+	}
+	rl, _ := sc["root_location"].(map[string]any)
+	if rl == nil || rl["try_files"] != tryFiles {
+		t.Fatalf("reconcile must carry root_location.try_files, got %v", sc)
 	}
 }
 

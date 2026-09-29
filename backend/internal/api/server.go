@@ -841,6 +841,11 @@ func (s *Server) reconcileWebsiteServing(ctx context.Context, websiteID, orgID, 
 	}
 	if cfg, err := (&websites.ConfigStore{Pool: s.Pool}).Get(ctx, ws.ID); err == nil {
 		payload.RewriteRules = cfg.RewriteRules
+		// SiteConfig must ride along like RewriteRules: dropping it here
+		// made the hourly serving reconcile (and every domain/SSL event)
+		// re-render the vhost with the root_location.try_files override
+		// and all structured settings silently reverted to defaults.
+		payload.SiteConfig = cfg.Config
 	}
 	// Application process port (node/python/go): keep the proxy vhost
 	// converged whenever serving is reconciled.

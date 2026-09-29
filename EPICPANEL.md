@@ -2251,3 +2251,29 @@ Session 2026-09-29 — try_files override wipe root cause (live AWS symptom):
   (user-driven). Lesson: every DesiredPayload field must ride along in
   reconcileWebsiteServing — extend TestDeployWebDirAndServingConverge when
   adding fields.
+
+Session 2026-09-30 — release v0.5.20 (try_files fix) + drift audit (WIP parked):
+- Released v0.5.20 @19b17c1: reconcile SiteConfig fix + regression test. Assets:
+  epicpanel-{api,agent}-linux-{amd64,arm64}, web-dist.tar.gz (3 SPA build),
+  SHA256SUMS (api-amd64 verified against upload). Installer fetches
+  ${f}-linux-${ARCH} — compatible.
+- RELEASE TAG TRAP FIXED THIS TIME: gh release create tags the DEFAULT branch —
+  remote default was stale `main` @5c6fee1 (v0.5.16-era), so v0.5.17..19 tags all
+  point at the wrong commit (binaries were fine; source browse mismatches). Forced
+  v0.5.20 tag → 19b17c1 AND fast-forwarded origin main → master (FF safe) so
+  future gh release creates tag correctly.
+- Drift audit (same bug class as try_files wipe): reconcileWebsiteServing ALSO
+  drops PHPSettings + RequestTerminateTimeout + FpmMemoryLimitMB/MaxChildren —
+  EnsurePool rewrites the pool file on EVERY provision, so hourly reconcile
+  resets per-site PHP ini overrides + pool sizing to agent defaults. App fields
+  (startup/build cmd, env) are NOT affected: provision only renders the proxy
+  vhost; deploys carry app fields in their own payload. Suspend/resume NOT
+  affected (resume restores .epicpanel-suspend-bak verbatim).
+- WIP PARKED IN STASH "wip: reconcile single-assembly refactor": exported
+  websites.Handler.BuildDesiredPayload + Server.wsHandler (wired in Handler())
+  + reconcileWebsiteServing rewritten to the single assembly path; contract test
+  extended (php_settings, request_terminate_timeout=180, fpm 256M/32). Blocked on
+  test fixture only: site create with install_if_missing chains install_runtime
+  and the provision job didn't reappear after draining it (check OnJobFinished
+  chain / ListPendingForRuntime status). Build+vet green; site_config assertions
+  green. Resume: git stash pop.

@@ -2234,3 +2234,20 @@ branched @ fdab823; parallel session owned the main checkout):
   billing terminate can switch to terminate_website + purge;
   per-site ingress attribution (request_length logging / netns) is the main
   accounting follow-up.
+
+Session 2026-09-29 — try_files override wipe root cause (live AWS symptom):
+- Symptom (giri, AWS box): root_location.try_files override worked after
+  save-settings, then silently reverted ~hourly. Save-settings re-applied it.
+- Root cause: reconcileWebsiteServing (api/server.go) rebuilt DesiredPayload
+  by hand — carried RewriteRules but NOT SiteConfig; hourly reconcileAllServing
+  (scheduler) re-enqueued provision_website with site_config missing, agent
+  re-rendered vhost with defaults. Cert renewals NOT involved (EnsureCertificate
+  never touches the vhost). Same drift class as the docroot_suffix/web_dir fix.
+- Fix bf3b5a9: payload.SiteConfig = cfg.Config in reconcileWebsiteServing;
+  contract test extended to pin site_config.root_location.try_files through
+  reconcile (red without fix, reproduced live on disposable PG).
+- Verified: build/vet green; api/websites/nginxcfg/agent green -p 1 on
+  disposable PG 54329. Deploy needs api + agent binary rebuild + restart
+  (user-driven). Lesson: every DesiredPayload field must ride along in
+  reconcileWebsiteServing — extend TestDeployWebDirAndServingConverge when
+  adding fields.
